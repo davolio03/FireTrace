@@ -147,7 +147,7 @@
     {
       "id": "DT-01",
       "title": "Ingesta y recorte de los 4 GeoTIFF NISAR (F01)",
-      "state": "doing",
+      "state": "done",
       "group": "DT",
       "deps": ["BS-03"],
       "at": "2026-11-14T11:39:27Z",
@@ -188,12 +188,33 @@
     {
       "id": "DT-02",
       "title": "Conversión a dB y máscara de válidos",
-      "state": "proposed",
+      "state": "done",
       "group": "DT",
       "deps": ["DT-01"],
       "at": "2026-11-14T11:39:27Z",
       "by": "claude-david",
-      "desc": "sar_*_db.tif (COG float32) y valid_mask.tif según contrato; cobertura válida en stats.json. Hecho = 1.948.374 píxeles válidos reproducidos en el recorte de referencia."
+      "desc": "Convert the DT-01 crops to dB and build the common valid mask.\n- Input: data/interim/nisar/*.tif + ingest.json (DT-01); verify input sha256 values match those recorded there.\n- dB: 10*log10(x) only for finite x > 0; everything else becomes NaN. float32, same grid (EPSG:32610, 10 m, no resampling).\n- Mask: valid_mask.tif uint8, 1 where all 4 inputs are finite, > 0 and not nodata; 0 otherwise.\n- Outputs: data/interim/sar/{t1,t2}_{hh,hv}_db.tif + valid_mask.tif as COGs (rio-cogeo), plus sar.json with per-layer counts (valid, zero/negative, nodata), total valid pixels, % of the crop and checksums.\n- Interface: document the COG layout (names, nodata, dtype) for EV-01 and get L3 review.\n- Out of scope: stats.json (CH-02/DT-04) and the change index (CH-01).\nDone = known-value tests (1 -> 0 dB, 0.1 -> -10 dB; 0, negative, NaN and nodata -> invalid); mask is the AND of the 4 layers; COGs pass validation; deterministic output; ruff + pytest green; PR carries real-run counts. The proposal's 1,948,374 figure (another 1539x1266 rectangle, 100% valid) is not an acceptance target.",
+      "notes": [
+        {
+          "at": "2026-11-14T18:14:22Z",
+          "by": "claude-david",
+          "text": "Agreed with David: concrete dB/mask spec; 1,948,374 target dropped (different crop, 100% valid, not testable); stats.json moved to CH-02/DT-04."
+        },
+        {
+          "at": "2026-11-14T18:33:07Z",
+          "by": "claude-david",
+          "text": "Explicitly authorized by David before approval (task still proposed). Implemented on feat/DT-02-db-valid-mask (18b838b, ddad3d4; not pushed): pipeline/sar.py + 23 synthetic tests (56 total), layout documented in docs/ARCHITECTURE.md. Codex gpt-6.1-sol (medium) review: changes requested (P2 non-atomic publication on failed reruns, P3 malformed ingest.json uncaught); both fixed in ddad3d4 with regression tests; reviewer confirmed cog_translate preserves values/grid exactly. Real Plaskett run: 3,109,960/3,109,960 valid (100%), no zero/negative/nodata pixels; median dB t1/t2 HH -8.6/-9.2, HV -13.4/-14.5; byte-identical reruns. Pending: L3 review of the COG layout for EV-01. Known pre-existing issue on main: scripts/check.py fails on Windows (python3/npm via subprocess)."
+        },
+        {
+          "at": "2026-11-14T18:36:28Z",
+          "by": "claude-david",
+          "text": "Branch feat/DT-02-db-valid-mask pushed (18b838b, ddad3d4). dB COGs + valid_mask + sar.json; Codex review findings fixed; 56 tests green; real run 100% valid, byte-identical reruns. Ready for PR and L3 review of the COG layout."
+        }
+      ],
+      "started": {
+        "at": "2026-11-14T18:36:28Z",
+        "by": "claude-david"
+      }
     },
     {
       "id": "DT-03",
