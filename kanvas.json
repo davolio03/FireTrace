@@ -246,12 +246,28 @@
     {
       "id": "CH-01",
       "title": "Índice de cambio log-ratio |ΔHH|+|ΔHV| (F04)",
-      "state": "proposed",
+      "state": "doing",
       "group": "CH",
       "deps": ["DT-02"],
       "at": "2026-11-14T11:39:27Z",
       "by": "claude-david",
-      "desc": "change_{hh,hv}_db.tif y change_index.tif con normalización robusta documentada (method en case.json). Índice continuo, sin umbral. Hecho = mapa reproducible + nota del método en docs/."
+      "desc": "Compute the continuous change index from the DT-02 dB layers. Observation only: no threshold, no burned-area claim.\n- Input: data/interim/sar/{t1,t2}_{hh,hv}_db.tif + valid_mask.tif + sar.json (DT-02); verify sha256 and grid against sar.json.\n- Per-polarization change: change_{hh,hv}_db.tif = t2_db - t1_db, signed (dB difference), NaN where valid_mask = 0.\n- Index: S = |dHH| + |dHV|; change_index.tif = (S - median(S)) / (1.4826 * MAD(S)), median and MAD over all valid pixels of the crop (decision A). No speckle filter (decision B), no clipping, no threshold. MAD = 0 or no valid pixels -> clear error.\n- Outputs: COG float32 (NaN nodata) in data/interim/change/ + change.json: method {id: abs-logratio-hhhv-v1, name, description, params {combination, normalization: median_mad, scale: 1.4826, domain: all_valid_crop, speckle_filter: none}}, median, MAD, percentiles (p1/p5/p25/p50/p75/p95/p99) of change_hh/hv and index, valid count, input/output sha256. DT-04 copies method into case.json; CH-02 builds stats.json.\n- Docs: docs/methods/change-index.md (formula, decisions A/B with rationale, worked example, confounders: moisture, slope/shadow/layover, phenology, speckle; what it is NOT: burned area or severity). Update the artifact layout in docs/ARCHITECTURE.md.\n- Quicklook: script/flag to render a PNG of change_index for PR evidence (not committed, not the web product).\nDone = known-value tests (dHH=+3, dHV=-4 -> S=7; robust z with hand-computed median/MAD; sign preserved; NaN where mask=0; MAD=0 -> error); deterministic byte-identical reruns; ruff + pytest + scripts/check.py green; PR carries quicklook + real percentiles.",
+      "notes": [
+        {
+          "at": "2026-11-14T19:01:26Z",
+          "by": "claude-david",
+          "text": "Agreed with David: decision A = normalization over all valid crop pixels; decision B = no speckle filter in v1; method lives in change.json and DT-04 copies it to case.json."
+        },
+        {
+          "at": "2026-11-14T19:13:42Z",
+          "by": "claude-david",
+          "text": "Implemented on feat/CH-01-change-index (6e59848, a884752; not pushed): pipeline/change.py, 25 tests (81 total), docs/methods/change-index.md, layout in docs/ARCHITECTURE.md. Codex gpt-6.1-sol (medium) review: changes requested, 5 findings, all fixed in a884752 with regression tests (quicklook could overwrite inputs; float32 rounding before MAD; non-finite inputs under mask; 10 m grid not enforced; quicklook failure after publication). Reviewer confirmed method object is compatible with case.schema.json and the worked example is correct. Real Plaskett run: 3,109,960 valid; median S 4.001 dB, MAD 1.780 dB; index p5/p50/p95/p99 -1.14/0.00/2.71/4.58; byte-identical reruns; quicklook shows a coherent high-change footprint in the centre and noisy open water (HV ~ -24 dB) to the west. scripts/check.py green on Windows."
+        }
+      ],
+      "started": {
+        "at": "2026-11-14T19:04:27Z",
+        "by": "claude-david"
+      }
     },
     {
       "id": "CH-02",
