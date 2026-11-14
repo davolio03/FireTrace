@@ -65,8 +65,10 @@ Internal, gitignored pipeline products on the 10 m EPSG:32610 crop grid. They ar
 | DT-03 perimeter | `data/interim/perimeter/perimeter.geojson` | EPSG:4326 WFIGS 58728 full geometry with contract properties; copied to the web by DT-04 ([method](methods/reference-perimeter.md)) |
 | DT-03 perimeter | `data/interim/perimeter/perimeter_{mask,edge}.tif` | COG uint8 on the crop grid: pixel-centre inside mask; 50 m boundary band for `near_perimeter_edge` |
 | DT-03 perimeter | `data/interim/perimeter/perimeter.json` | `reference` block for `case.json`, raw sha256, geometry summary, vector/raster/WFIGS areas, rasterization rule, checksums |
+| CH-02 stats | `data/interim/stats/stats.json` | Web contract (`stats.schema.json`): valid coverage, inside/outside index distributions with shared 30-bin histograms, `highlight: null`; copied unchanged by DT-04 ([method](methods/stats.md)) |
+| CH-02 stats | `data/interim/stats/stats_meta.json` | Input checksums, domain definitions, histogram range and out-of-range counts, sensitivity variant without the 50 m edge band |
 
-COGs use 256 px deflate blocks and nearest-neighbour overviews for display only; scientific lookups read the full-resolution level. DT-02, CH-01 and DT-03 build the whole set in a sibling staging directory and swaps it into place only when complete, so a failed run keeps the previous complete set; it refuses an output directory holding files it does not own.
+COGs use 256 px deflate blocks and nearest-neighbour overviews for display only; scientific lookups read the full-resolution level. DT-02, CH-01, DT-03 and CH-02 build the whole set in a sibling staging directory and swaps it into place only when complete, so a failed run keeps the previous complete set; it refuses an output directory holding files it does not own.
 
 ## Reproducibility, diagnostics and deployment
 
