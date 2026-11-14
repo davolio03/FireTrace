@@ -1,0 +1,48 @@
+[project]
+name = "firetrace"
+version = "0.1.0"
+description = "FireTrace Explorer offline pipeline and inspection API (Plaskett Fire, NISAR HH/HV)."
+readme = "README.md"
+requires-python = ">=3.11,<3.12"
+# Fixed stack from AGENTS.md / docs/ARCHITECTURE.md. Lower bounds are conservative
+# floors; exact versions are pinned by uv.lock once it is generated.
+dependencies = [
+    # pipeline/
+    "numpy>=1.26",
+    "rasterio>=1.3",
+    "xarray>=2024.1",
+    "geopandas>=0.14",
+    "shapely>=2.0",
+    "scikit-image>=0.22",
+    "rio-cogeo>=5.0",
+    # api/
+    "fastapi>=0.110",
+    "pydantic>=2.5",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6",
+]
+
+[tool.uv]
+# Virtual project: `pipeline` and `api` run from the repository root and are not
+# installed as top-level site-packages (avoids installing a generic `api` module).
+package = false
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+# Pre-existing repository tooling predates this configuration; bringing it under
+# ruff is a separate, reviewable change.
+extend-exclude = [".agents", "contracts/tools", "scripts"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["pipeline", "api"]
+pythonpath = ["."]
+addopts = ["-ra", "--strict-markers", "--strict-config", "--import-mode=importlib"]
