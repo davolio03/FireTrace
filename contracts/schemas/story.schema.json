@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://firetrace.local/contracts/story.schema.json",
   "title": "Story",
-  "description": "Guided story mode (AP-06). Hand-authored by the storytelling lane, NOT produced by the pipeline. Each step declares a map state (camera, layers, compare, focus) that the web applies through the same store actions a user would trigger, so the story never needs special code paths. Production file: web/src/story/story.json.",
+  "description": "Guided story mode (AP-07). Hand-authored by the storytelling lane, NOT produced by the pipeline. Each step declares a map state (camera, layers, compare, focus) that the web applies through the same store actions a user would trigger, so the story never needs special code paths. Production file: web/src/story/story.json.",
   "type": "object",
   "additionalProperties": false,
   "required": ["contract_version", "case_id", "title", "steps"],

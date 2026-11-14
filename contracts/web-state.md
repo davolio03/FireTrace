@@ -51,5 +51,5 @@ Reglas:
 1. `applyStoryStep` no tiene caminos especiales: un paso de la historia equivale exactamente a lo que haría un usuario. Si la historia funciona, la app funciona.
 2. Los datos remotos (case, stats, layers, zones, weather, inspect, profile) se piden con **TanStack Query** usando los tipos generados de `contracts/openapi.yaml` y los schemas. Nunca se guardan en el store.
 3. Las anotaciones viven en su propio store persistido (localStorage) con la forma de `annotations.schema.json`. La exportación es ese mismo documento.
-4. El store se crea en BS-06 con **implementaciones mínimas** de cada acción, para que L4 y L5 programen contra él desde el primer día. L4 sustituye después los stubs del mapa por la implementación real, sin cambiar las firmas.
+4. El store se crea en BS-07 con **implementaciones mínimas** de cada acción, para que L4 y L5 programen contra él desde el primer día. L4 sustituye después los stubs del mapa por la implementación real, sin cambiar las firmas.
 5. Cambiar una firma de este fichero sigue la misma regla que el resto del contrato: PR propio y revisión por ambos lados (L4 y L5).
