@@ -22,7 +22,7 @@ Each lane builds against the [contracts](../contracts/README.md) and fixtures, w
 | Lane | Owner | Produces | Main tasks |
 | --- | --- | --- | --- |
 | L1 Radar data + models | David | dB, change index, stats, review zones, SAR layers, analysis COGs | DT-01/02/04, CH, XP |
-| L2 Context data | Unassigned | Perimeter, DEM → hillshade/slope + terrain COG, `weather.json`, optical layers | DT-03, DT-05, DT-06, DT-07 |
+| L2 Context data | David | Perimeter, DEM → hillshade/slope + terrain COG, `weather.json`, optical layers | DT-03, DT-05, DT-06, DT-07 |
 | L3 API | Unassigned | Point inspection (+ terrain), transect endpoint, deterministic caveat rules | BS-03, EV-01, EV-02, EV-05 |
 | L4 Web: map | Unassigned | Map, layers, swipe, inspector, transect tool, context layers | BS-04, BS-05, BS-07, AP-02/03/05/06, EV-03 |
 | L5 Web: experience | Unassigned | Overview, metrics, review zones, guided story, annotations + report, demo | AP-01/04/07/08, EV-04, DL |
