@@ -19,8 +19,11 @@ contract with `npm run generate:types`.
 
 The map loads OpenStreetMap tiles in the browser; this requires a connection and
 shares the visitor's IP address with the tile service. When offline, geographic
-details are unavailable. Scientific layers and the Evidence Inspector interface
-belong to later tasks.
+details are unavailable. The viewer displays fixture SAR and observed-change
+layers and the reference perimeter with independent visibility and opacity
+controls. Its legends come from the layer manifest. The Evidence Inspector and
+before/after comparison belong to later tasks. Fixture display is not evidence
+of real-data alignment or scientific validation.
 
 ## Shared map state
 
