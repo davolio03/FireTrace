@@ -5,10 +5,14 @@ Run checks in the foreground from the repository root. Never claim success for a
 ## Current executable checks
 
 ```sh
+uv sync
 python3 scripts/check.py
+uv run ruff format --check .
 uv run contracts/tools/validate.py
 git diff --check
 ```
+
+The root [pyproject.toml](../pyproject.toml) is a virtual uv project (`package = false`) for Python 3.11 with empty `pipeline/` and `api/` packages and a `dev` dependency group (ruff, pytest). [quality.json](../quality.json) sets `lint` to `uv run ruff check .` and `test` to `uv run pytest`; pytest collects the smoke tests under `pipeline/tests/` and `api/tests/` with the repository root on `sys.path`. Runtime dependencies (rasterio, FastAPI, ...) are added by the tasks that need them. Ruff currently excludes pre-existing tooling (`.agents/`, `contracts/tools/`, `scripts/`).
 
 `scripts/check.py` checks required guidance, local inline link destination existence, the selected `firetrace` identity and configured quality commands. It executes argv lists without shell interpolation. Empty commands are allowed **only while no application source exists** under configured roots, including `pipeline/`, `api/` and `web/` as well as generic starter roots. Contracts/Kanvas tooling is not counted as an application.
 
@@ -18,7 +22,7 @@ The contract validator uses its existing inline dependency declaration, **`jsons
 
 ## Python 3.11 CI, separate from local evidence
 
-The `quality` workflow selects **Python 3.11**, runs the bootstrap gate and then the existing fixture validator through uv. It uses the starter's checkout/setup-python action versions and the immutable setup-uv reference documented by its publisher. No application dependencies/manifests are introduced here.
+The `quality` workflow selects **Python 3.11**, runs `uv sync`, the repository gate (which executes the `quality.json` lint and test commands), `uv run ruff format --check .` and then the existing fixture validator through uv, on pull requests and pushes to `main`. It uses the starter's checkout/setup-python action versions and the immutable setup-uv reference documented by its publisher. Until `uv.lock` is committed, CI resolves dependencies at run time; switch to `uv sync --locked` once the lockfile exists.
 
 The integration environment provides Python **3.14.4** and jsonschema **4.19.2**, below the declared `>=4.20`; `python` and uv are absent. No packages were installed or contract requirements weakened. Running the two direct Python3 scripts here is **not Python 3.11/uv, declared-dependency or hosted CI verification**. CI configuration is not a CI execution result; record the actual remote outcome only when an authorized run occurs.
 
@@ -26,11 +30,11 @@ The integration environment provides Python **3.14.4** and jsonschema **4.19.2**
 
 Configure real `lint` and `test` argv lists in [quality.json](../quality.json) in the same change as source; configure build for bundled web code. Add dependency manifests/lockfiles and CI runtime setup in the authorized scaffold work. The gate refuses source with unset lint/test, but cannot prove arbitrary configured commands are meaningful; reviewers must reject dummy success commands.
 
-Canonical upstream commands **after the corresponding scaffold/dependencies exist**:
+Canonical upstream commands (Python is wired; the others need their scaffold/dependencies first):
 
 | Boundary | Commands to wire into real quality gates |
 | --- | --- |
-| Python pipeline/API | `uv sync`; `uv run ruff check .`; `uv run ruff format --check .`; `uv run pytest` |
+| Python pipeline/API (wired) | `uv sync`; `uv run ruff check .`; `uv run ruff format --check .`; `uv run pytest` |
 | Web (run within `web/`) | `npm install`; `npm run lint`; `npm run test`; `npm run build`; add the selected prettier check to lint |
 | Real pipeline output | `uv run contracts/tools/validate.py data/processed/web` |
 
