@@ -22,7 +22,7 @@ from jsonschema import Draft202012Validator
 from rasterio.crs import CRS
 from rasterio.warp import transform as warp_transform
 
-from pipeline import export
+from pipeline import export, publishing
 from pipeline.change import METHOD
 from pipeline.export import (
     ExportConfig,
@@ -874,14 +874,15 @@ def test_backup_cleanup_failure_still_reports_the_published_bundle(
 ):
     config = write_inputs(tmp_path)
     run_export(config)
-    real_rmtree = shutil.rmtree
+    real_remove = publishing.remove_owned
+    backup = config.output_dir.with_name(".web.previous")
 
-    def flaky(path: Any, *args: Any, **kwargs: Any) -> None:
-        if Path(path).name == ".web.previous":
-            raise PermissionError("backup locked")
-        real_rmtree(path, *args, **kwargs)
+    def flaky(directory: Path, *args: Any, **kwargs: Any) -> None:
+        if directory == backup and directory.exists():
+            raise publishing.PublishError("backup locked")
+        real_remove(directory, *args, **kwargs)
 
-    monkeypatch.setattr(shutil, "rmtree", flaky)
+    monkeypatch.setattr(publishing, "remove_owned", flaky)
     monkeypatch.setenv("SOURCE_DATE_EPOCH", "1794355200")  # 2026-11-11T00:00:00Z
     run_export(config)
     assert _load(config.output_dir / "case.json")["generated_at"] == "2026-11-11T00:00:00Z"

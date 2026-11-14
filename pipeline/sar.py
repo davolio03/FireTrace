@@ -21,9 +21,8 @@ import argparse
 import hashlib
 import json
 import math
-import shutil
 import sys
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -293,14 +292,44 @@ def check_output_dir(output_dir: Path) -> None:
         raise SarError(str(exc)) from exc
 
 
-def publish(staging: Path, output_dir: Path) -> None:
+def publish(staging: Path, output_dir: Path, owned: Iterable[str], stage: str = "pipeline") -> None:
     """Swap a complete staging set into place (see :func:`pipeline.publishing.publish`).
 
-    The rename is the commit point: an earlier failure restores the previous set and raises;
-    a later backup-cleanup failure only emits a ``PublishWarning``.
+    The rename is the commit point: an earlier failure restores the previous set and raises
+    ``SarError``; a later backup-cleanup failure is only printed as ``<stage> warning``.
     """
     try:
-        publishing.publish(staging, output_dir)
+        message = publishing.publish(staging, output_dir, owned)
+    except PublishError as exc:
+        raise SarError(str(exc)) from exc
+    publishing.report(message, stage)
+
+
+def clear_staging(staging: Path, owned: Iterable[str]) -> None:
+    """Remove a stale owned staging set without recursion (``SarError`` on foreign entries)."""
+    try:
+        publishing.remove_owned(staging, owned)
+    except PublishError as exc:
+        raise SarError(str(exc)) from exc
+
+
+def discard_staging(staging: Path, owned: Iterable[str]) -> None:
+    """Best-effort, non-recursive cleanup of an unpublished staging set; never raises."""
+    publishing.discard_staging(staging, owned)
+
+
+def input_file(directory: Path, name: object, manifest: str) -> Path:
+    """A bare manifest-recorded file name inside ``directory`` (``SarError`` otherwise)."""
+    try:
+        return publishing.input_file(directory, name, manifest)
+    except PublishError as exc:
+        raise SarError(str(exc)) from exc
+
+
+def overlapping_input(output_dir: Path, inputs: Iterable[Path]) -> Path | None:
+    """:func:`pipeline.publishing.overlapping_input` raising ``SarError`` on I/O failure."""
+    try:
+        return publishing.overlapping_input(output_dir, inputs)
     except PublishError as exc:
         raise SarError(str(exc)) from exc
 
@@ -310,14 +339,16 @@ def publish(staging: Path, output_dir: Path) -> None:
 
 def run_sar(ingest_dir: Path, output_dir: Path) -> dict[str, Any]:
     """Convert the crops in ``ingest_dir`` and return the ``sar.json`` document written."""
-    if publishing.overlapping_input(output_dir, [ingest_dir]) is not None:
+    if overlapping_input(output_dir, [ingest_dir]) is not None:
         raise SarError("output_dir must differ from ingest_dir")
     check_output_dir(output_dir)
     ingest = load_ingest(ingest_dir)
     crop = ingest["grid"]["crop"]
     layers = {
         name: read_layer(
-            ingest_dir / ingest["outputs"][name]["file"], ingest["outputs"][name], crop
+            input_file(ingest_dir, ingest["outputs"][name]["file"], "ingest.json"),
+            ingest["outputs"][name],
+            crop,
         )
         for name in NAMES
     }
@@ -327,14 +358,12 @@ def run_sar(ingest_dir: Path, output_dir: Path) -> dict[str, Any]:
     # Build the complete set in a staging directory, then publish it in one swap, so a
     # failed run never leaves mixed-generation files or a stale sar.json behind.
     staging, _ = _staging_dirs(output_dir)
-    if staging.exists():
-        shutil.rmtree(staging)
+    clear_staging(staging, OUTPUT_FILES)
     try:
         document = _build(staging, ingest_dir, ingest, crop, layers, mask)
-        publish(staging, output_dir)
+        publish(staging, output_dir, OUTPUT_FILES, "sar")
     finally:
-        if staging.exists():
-            shutil.rmtree(staging, ignore_errors=True)
+        discard_staging(staging, OUTPUT_FILES)
     return document
 
 

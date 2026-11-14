@@ -33,10 +33,8 @@ import json
 import math
 import os
 import re
-import shutil
 import sys
 import tomllib
-import warnings
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
@@ -47,7 +45,7 @@ import numpy as np
 from affine import Affine
 
 from pipeline import publishing
-from pipeline.publishing import PublishError, PublishWarning, decode_raster, staging_dirs
+from pipeline.publishing import PublishError, decode_raster, staging_dirs
 from pipeline.sar import ANALYSIS_CRS, ANALYSIS_PIXEL_SIZE_M, SarError
 from pipeline.webexport import WebExportError, WebRaster, colorize, warp_to_web, write_png
 
@@ -72,6 +70,7 @@ TOP_FILES: frozenset[str] = frozenset(
     {"case.json", "layers.json", "stats.json", "perimeter.geojson", "weather.json", "export.json"}
 )
 LAYER_FILES: frozenset[str] = frozenset(f"{lid}.png" for lid in (*RASTER_IDS, *TERRAIN_IDS))
+LAYER_SUBDIRS: dict[str, frozenset[str]] = {"layers": LAYER_FILES}
 
 GREY = ("#000000", "#ffffff")
 RDBU = ("#2166ac", "#92c5de", "#f7f7f7", "#f4a582", "#b2182b")  # contract fixture stops
@@ -789,14 +788,17 @@ def check_output_dir(output_dir: Path) -> None:
     other directory, symlink or junction is foreign (``pipeline.publishing``).
     """
     try:
-        publishing.check_output_dir(output_dir, TOP_FILES, {"layers": LAYER_FILES})
+        publishing.check_output_dir(output_dir, TOP_FILES, LAYER_SUBDIRS)
     except PublishError as exc:
         raise ExportError(str(exc)) from exc
 
 
 def _check_separate(config: ExportConfig) -> None:
     """No input directory may be, or lie inside, the output or its staging/backup siblings."""
-    clash = publishing.overlapping_input(config.output_dir, config.input_dirs())
+    try:
+        clash = publishing.overlapping_input(config.output_dir, config.input_dirs())
+    except PublishError as exc:
+        raise ExportError(str(exc)) from exc
     if clash is not None:
         raise ExportError(
             "output_dir and its staging/backup siblings must be separate from every "
@@ -816,8 +818,7 @@ def run_export(config: ExportConfig, environ: Mapping[str, str] | None = None) -
 
     staging, _ = staging_dirs(config.output_dir)
     try:
-        if os.path.lexists(staging):
-            shutil.rmtree(staging)  # ownership checked by check_output_dir
+        publishing.remove_owned(staging, TOP_FILES, LAYER_SUBDIRS)
         (staging / "layers").mkdir(parents=True)
         layers, grid, domains = _render(staging, inputs)
         if terrain is not None:
@@ -883,18 +884,14 @@ def run_export(config: ExportConfig, environ: Mapping[str, str] | None = None) -
             "outputs": outputs,
         }
         _write_json(staging / "export.json", document)
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", PublishWarning)  # reported below instead
-            warning = publishing.publish(staging, config.output_dir)
+        warning = publishing.publish(staging, config.output_dir, TOP_FILES, LAYER_SUBDIRS)
     except (SarError, WebExportError, PublishError) as exc:
         raise ExportError(str(exc)) from exc
     except OSError as exc:
         raise ExportError(f"cannot write outputs: {exc}") from exc
     finally:
-        if staging.exists():
-            shutil.rmtree(staging, ignore_errors=True)
-    if warning is not None:
-        print(f"export warning: {warning}", file=sys.stderr)
+        publishing.discard_staging(staging, TOP_FILES, LAYER_SUBDIRS)
+    publishing.report(warning, "export")
     return document
 
 

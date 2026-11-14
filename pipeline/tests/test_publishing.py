@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import os
-import shutil
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -20,14 +20,17 @@ from rasterio.crs import CRS
 from pipeline import publishing
 from pipeline.publishing import (
     PublishError,
-    PublishWarning,
     check_output_dir,
+    clear_staging,
     decode_raster,
+    discard_staging,
     foreign_entries,
+    input_file,
     overlapping_input,
     publish,
     read_verified,
     read_verified_raster,
+    remove_owned,
     staging_dirs,
 )
 from pipeline.sar import write_cog
@@ -51,6 +54,18 @@ def _symlink(target: Path, link: Path) -> None:
         os.symlink(target, link, target_is_directory=target.is_dir())
     except OSError:
         pytest.skip("symlinks are not available on this system")
+
+
+def locked_after_commit(previous: Path) -> Any:
+    """remove_owned that fails on the backup once it holds the replaced set."""
+    real = publishing.remove_owned
+
+    def locked(directory: Path, *args: Any, **kwargs: Any) -> None:
+        if directory == previous and directory.exists():
+            raise PublishError("backup locked")
+        real(directory, *args, **kwargs)
+
+    return locked
 
 
 def _set(directory: Path, text: str) -> Path:
@@ -163,9 +178,9 @@ def test_overlap_follows_aliases(tmp_path: Path):
 def test_first_publish_and_replacement(tmp_path: Path):
     out = tmp_path / "out"
     staging, previous = staging_dirs(out)
-    assert publish(_set(staging, "one"), out) is None
+    assert publish(_set(staging, "one"), out, OWNED) is None
     assert (out / "a.json").read_text(encoding="utf-8") == "one"
-    assert publish(_set(staging, "two"), out) is None
+    assert publish(_set(staging, "two"), out, OWNED) is None
     assert (out / "a.json").read_text(encoding="utf-8") == "two"
     assert not staging.exists() and not previous.exists()
 
@@ -175,7 +190,7 @@ def test_stale_backup_is_replaced(tmp_path: Path):
     staging, previous = staging_dirs(out)
     _set(out, "current")
     _set(previous, "stale")
-    publish(_set(staging, "new"), out)
+    publish(_set(staging, "new"), out, OWNED)
     assert (out / "a.json").read_text(encoding="utf-8") == "new"
     assert not previous.exists()
 
@@ -193,7 +208,7 @@ def test_failed_swap_restores_the_previous_set(tmp_path: Path, monkeypatch: pyte
 
     monkeypatch.setattr(Path, "rename", blocked)
     with pytest.raises(PublishError, match="rename blocked"):
-        publish(_set(staging, "new"), out)
+        publish(_set(staging, "new"), out, OWNED)
     assert (out / "a.json").read_text(encoding="utf-8") == "old"
     assert not previous.exists()
 
@@ -204,17 +219,11 @@ def test_backup_cleanup_failure_after_the_commit_is_only_a_warning(
     out = tmp_path / "out"
     staging, previous = staging_dirs(out)
     _set(out, "old")
-    real = shutil.rmtree
-
-    def locked(path: Any, *args: Any, **kwargs: Any) -> None:
-        if Path(path).name == previous.name:
-            raise PermissionError("backup locked")
-        real(path, *args, **kwargs)
-
-    monkeypatch.setattr(publishing.shutil, "rmtree", locked)
-    with pytest.warns(PublishWarning, match="backup locked"):
-        message = publish(_set(staging, "new"), out)
-    assert message is not None and "kept" in message
+    monkeypatch.setattr(publishing, "remove_owned", locked_after_commit(previous))
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")  # a post-commit problem must never raise
+        message = publish(_set(staging, "new"), out, OWNED)
+    assert message is not None and "kept" in message and "backup locked" in message
     assert (out / "a.json").read_text(encoding="utf-8") == "new", "the new set is published"
     assert (previous / "a.json").read_text(encoding="utf-8") == "old", "and the backup kept"
 
@@ -258,3 +267,98 @@ def test_raster_is_decoded_from_the_hashed_bytes(tmp_path: Path, monkeypatch: py
 def test_decode_raster_rejects_garbage():
     with pytest.raises(PublishError, match="bad.tif: cannot read raster"):
         decode_raster(b"not a tiff", "bad.tif")
+
+
+# --------------------------------------------------------------------------- review round 2
+
+
+def test_remove_owned_deletes_only_owned_files_without_recursion(tmp_path: Path):
+    out = _set(tmp_path / "out", "x")
+    (out / "layers").mkdir()
+    (out / "layers" / "p.png").write_bytes(b"x")
+    remove_owned(out, OWNED, {"layers": {"p.png"}})
+    assert not out.exists()
+
+
+def test_remove_owned_leaves_a_late_foreign_tree_intact(tmp_path: Path):
+    out = _set(tmp_path / "out", "x")
+    (out / "b.tif").unlink()
+    (out / "b.tif").mkdir()  # appears after any earlier ownership check
+    (out / "b.tif" / "keep.txt").write_text("mine", encoding="utf-8")
+    with pytest.raises(PublishError, match="does not own"):
+        remove_owned(out, OWNED)
+    assert (out / "b.tif" / "keep.txt").is_file()
+
+
+def test_remove_owned_never_follows_a_junction(tmp_path: Path):
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "a.json").write_text("precious", encoding="utf-8")
+    out = tmp_path / "out"
+    out.mkdir()
+    _junction(elsewhere, out / "layers")
+    with pytest.raises(PublishError, match="does not own"):
+        remove_owned(out, OWNED, {"layers": {"a.json"}})
+    assert (elsewhere / "a.json").read_text(encoding="utf-8") == "precious"
+
+
+def test_stale_staging_with_foreign_content_is_kept(tmp_path: Path):
+    out = tmp_path / "out"
+    staging, _ = staging_dirs(out)
+    staging.mkdir()
+    (staging / "notes.txt").write_text("mine", encoding="utf-8")
+    with pytest.raises(PublishError, match="does not own"):
+        clear_staging(out, OWNED)
+    discard_staging(staging, OWNED)  # best effort: no exception, nothing foreign removed
+    assert (staging / "notes.txt").is_file()
+
+
+def test_backup_with_foreign_content_stops_publication_before_the_swap(tmp_path: Path):
+    out = _set(tmp_path / "out", "old")
+    staging, previous = staging_dirs(out)
+    previous.mkdir()
+    (previous / "notes.txt").write_text("mine", encoding="utf-8")
+    with pytest.raises(PublishError, match="does not own"):
+        publish(_set(staging, "new"), out, OWNED)
+    assert (out / "a.json").read_text(encoding="utf-8") == "old"
+    assert (previous / "notes.txt").is_file()
+
+
+@pytest.mark.parametrize(
+    "name", ["../x.tif", "/abs/x.tif", "C:\\x.tif", "sub/x.tif", "sub\\x.tif", "", "..", 3]
+)
+def test_input_file_accepts_only_bare_names(tmp_path: Path, name: object):
+    with pytest.raises(PublishError, match="bare name"):
+        input_file(tmp_path, name, "m.json")
+    assert input_file(tmp_path, "x.tif", "m.json") == tmp_path / "x.tif"
+
+
+def test_link_inside_an_input_directory_into_staging_is_caught(tmp_path: Path):
+    out = tmp_path / "out"
+    staging, _ = staging_dirs(out)
+    staging.mkdir()
+    inputs = tmp_path / "in"
+    inputs.mkdir()
+    _junction(staging, inputs / "crops")
+    assert overlapping_input(out, [inputs]) == inputs / "crops"
+
+
+def test_output_directly_inside_an_input_directory_is_allowed(tmp_path: Path):
+    parent = tmp_path / "data"
+    out = parent / "out"
+    out.mkdir(parents=True)
+    staging_dirs(out)[0].mkdir()
+    assert overlapping_input(out, [parent]) is None
+
+
+def test_filesystem_errors_become_publish_errors(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    out = _set(tmp_path / "out", "x")
+
+    def denied(*_args: Any, **_kwargs: Any) -> Any:
+        raise PermissionError("access denied")
+
+    monkeypatch.setattr(publishing.os, "lstat", denied)
+    with pytest.raises(PublishError, match="access denied"):
+        check_output_dir(out, OWNED)
+    with pytest.raises(PublishError, match="access denied"):
+        remove_owned(out, OWNED)

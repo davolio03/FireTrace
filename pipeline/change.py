@@ -24,7 +24,6 @@ from __future__ import annotations
 import argparse
 import json
 import math
-import shutil
 import sys
 import warnings
 from collections.abc import Mapping, Sequence
@@ -44,6 +43,10 @@ from pipeline.sar import (
     ANALYSIS_PIXEL_SIZE_M,
     SarError,
     _staging_dirs,
+    clear_staging,
+    discard_staging,
+    input_file,
+    overlapping_input,
     publish,
     sha256_file,
     write_cog,
@@ -239,6 +242,21 @@ def read_checked(
     return data
 
 
+def _input(directory: Path, name: object) -> Path:
+    try:
+        return input_file(directory, name, "sar.json")
+    except SarError as exc:
+        raise ChangeError(str(exc)) from exc
+
+
+def _overlaps(output_dir: Path, inputs: Sequence[Path]) -> bool:
+    """True if publishing to ``output_dir`` could move or delete one of ``inputs``."""
+    try:
+        return overlapping_input(output_dir, inputs) is not None
+    except SarError as exc:
+        raise ChangeError(str(exc)) from exc
+
+
 def check_output_dir(output_dir: Path) -> None:
     """Only missing or fully owned output, staging and backup directories may be replaced."""
     try:
@@ -305,7 +323,7 @@ def check_quicklook_path(quicklook: Path, sar_dir: Path, output_dir: Path) -> No
 
 def run_change(sar_dir: Path, output_dir: Path, quicklook: Path | None = None) -> dict[str, Any]:
     """Compute the change products from ``sar_dir`` and return the ``change.json`` written."""
-    if publishing.overlapping_input(output_dir, [sar_dir]) is not None:
+    if _overlaps(output_dir, [sar_dir]):
         raise ChangeError("output_dir must differ from sar_dir")
     if quicklook is not None:
         check_quicklook_path(quicklook, sar_dir, output_dir)
@@ -314,11 +332,13 @@ def run_change(sar_dir: Path, output_dir: Path, quicklook: Path | None = None) -
     grid = sar["grid"]
     layers = sar["db"]["layers"]
     db = {
-        name: read_checked(sar_dir / layers[name]["file"], layers[name]["sha256"], grid, "float32")
+        name: read_checked(
+            _input(sar_dir, layers[name]["file"]), layers[name]["sha256"], grid, "float32"
+        )
         for name in INPUT_NAMES
     }
     mask = read_checked(
-        sar_dir / sar["valid_mask"]["file"], sar["valid_mask"]["sha256"], grid, "uint8"
+        _input(sar_dir, sar["valid_mask"]["file"]), sar["valid_mask"]["sha256"], grid, "uint8"
     )
     if not np.isin(mask, (0, 1)).all():
         raise ChangeError(f"{sar['valid_mask']['file']}: values must be 0 or 1")
@@ -346,8 +366,7 @@ def run_change(sar_dir: Path, output_dir: Path, quicklook: Path | None = None) -
 
     staging, _ = _staging_dirs(output_dir)
     try:
-        if staging.exists():
-            shutil.rmtree(staging)
+        clear_staging(staging, OUTPUT_FILES)
         for name, data in products.items():
             write_cog(staging / name, data, crs=ANALYSIS_CRS, transform=transform, nodata=np.nan)
         document = {
@@ -386,14 +405,13 @@ def run_change(sar_dir: Path, output_dir: Path, quicklook: Path | None = None) -
         if quicklook is not None:
             # Rendered before publication: a failing preview never replaces the previous set.
             write_quicklook(quicklook, products["change_index.tif"])
-        publish(staging, output_dir)
+        publish(staging, output_dir, OUTPUT_FILES, "change")
     except SarError as exc:
         raise ChangeError(str(exc)) from exc
     except OSError as exc:
         raise ChangeError(f"cannot write outputs: {exc}") from exc
     finally:
-        if staging.exists():
-            shutil.rmtree(staging, ignore_errors=True)
+        discard_staging(staging, OUTPUT_FILES)
     return document
 
 

@@ -6,25 +6,37 @@ until the swap has succeeded. These helpers make that safe:
 
 - :func:`check_output_dir` refuses to run when the output directory or either sibling holds
   anything the stage does not own. Owned names must be regular files (or a plain owned
-  subdirectory); directories, symlinks and Windows junctions under owned names are foreign,
-  so ``shutil.rmtree`` never deletes something the stage did not write.
-- :func:`overlapping_input` finds an input directory that equals, contains or lies inside
-  the output directory or either sibling, so no input is ever deleted or replaced.
+  subdirectory of owned files); directories, symlinks and Windows junctions under owned
+  names are foreign.
+- Nothing is ever deleted recursively. :func:`remove_owned` unlinks owned regular files one
+  by one and then removes the emptied directories with ``rmdir``, so an entry that appears
+  after the check (a foreign file, directory or link) makes the removal fail instead of
+  being deleted. A single publisher per output directory is assumed; concurrent runs are
+  refused at the latest by this non-recursive removal.
+- :func:`overlapping_input` finds an input that is, or lies inside, the output directory or
+  either sibling. For input directories it also checks every entry, resolved, so a link
+  inside an input directory that points into a publication path is caught.
+  :func:`input_file` restricts manifest-recorded file names to bare names inside their
+  input directory, so a manifest cannot point anywhere else.
 - :func:`publish` treats the staging rename as the commit point: before it any failure
-  restores the previous set and raises; after it a failure to delete the backup is only
-  a :class:`PublishWarning` (the backup is kept), because the new set is already in place.
+  restores the previous set and raises; after it a failure to remove the backup only
+  returns a message (the backup is kept), because the new set is already in place.
 - :func:`read_verified_raster` hashes a file and decodes **the same bytes** in memory, so
   a file replaced between hashing and decoding cannot be read unverified. It is meant for
   interim products (crops and their derivatives, tens of MB); raw multi-GB inputs (full
-  GCOV scenes, HDF5) are still hashed and then opened by path, a documented limitation.
+  GCOV scenes, HDF5, the DEM tile) are still hashed and then opened by path, a documented
+  limitation.
+
+Every filesystem failure in these helpers is raised as :class:`PublishError`, which each
+stage translates into its own error (CLI exit code 2).
 """
 
 from __future__ import annotations
 
 import hashlib
 import os
-import shutil
 import stat
+import sys
 import warnings
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
@@ -38,13 +50,11 @@ from rasterio.io import MemoryFile
 
 _REPARSE_POINT = 0x400  # Windows FILE_ATTRIBUTE_REPARSE_POINT (symlinks and junctions)
 
+Subdirs = Mapping[str, Iterable[str]] | None
+
 
 class PublishError(Exception):
     """Raised when an output set cannot be checked, replaced or read faithfully."""
-
-
-class PublishWarning(UserWarning):
-    """The new set is published, but a non-essential cleanup step failed."""
 
 
 def staging_dirs(output_dir: Path) -> tuple[Path, Path]:
@@ -57,7 +67,10 @@ def staging_dirs(output_dir: Path) -> tuple[Path, Path]:
 
 def entry_kind(path: Path) -> str:
     """``'file'``, ``'dir'``, ``'link'`` or ``'other'``, never following links/junctions."""
-    st = os.lstat(path)
+    try:
+        st = os.lstat(path)
+    except OSError as exc:
+        raise PublishError(f"cannot inspect {path.name}: {exc}") from exc
     if stat.S_ISLNK(st.st_mode) or getattr(st, "st_file_attributes", 0) & _REPARSE_POINT:
         return "link"
     if stat.S_ISDIR(st.st_mode):
@@ -65,28 +78,46 @@ def entry_kind(path: Path) -> str:
     return "file" if stat.S_ISREG(st.st_mode) else "other"
 
 
-def foreign_entries(
-    directory: Path,
-    owned: Iterable[str],
-    subdirs: Mapping[str, Iterable[str]] | None = None,
-) -> list[str]:
+def _listing(directory: Path) -> list[Path]:
+    try:
+        return sorted(directory.iterdir())
+    except OSError as exc:
+        raise PublishError(f"cannot list {directory.name}: {exc}") from exc
+
+
+def _exists(path: Path) -> bool:
+    """Like ``os.path.lexists``, but a permission or I/O error is raised, not "missing"."""
+    try:
+        os.lstat(path)
+    except (FileNotFoundError, NotADirectoryError):
+        return False
+    except OSError as exc:
+        raise PublishError(f"cannot inspect {path.name}: {exc}") from exc
+    return True
+
+
+def _subdirs(subdirs: Subdirs) -> dict[str, frozenset[str]]:
+    return {k: frozenset(v) for k, v in (subdirs or {}).items()}
+
+
+def foreign_entries(directory: Path, owned: Iterable[str], subdirs: Subdirs = None) -> list[str]:
     """Entries of ``directory`` that the stage does not own (``[]`` if it is missing).
 
     ``owned`` are regular-file names; ``subdirs`` maps an owned plain subdirectory name to
     the regular-file names it may hold. Raises if ``directory`` itself is not plain.
     """
-    if not os.path.lexists(directory):
+    if not _exists(directory):
         return []
     if entry_kind(directory) != "dir":
         raise PublishError(f"{directory.name} is not a plain directory")
-    files, dirs = frozenset(owned), {k: frozenset(v) for k, v in (subdirs or {}).items()}
+    files, dirs = frozenset(owned), _subdirs(subdirs)
     foreign: list[str] = []
-    for entry in directory.iterdir():
+    for entry in _listing(directory):
         kind = entry_kind(entry)
         if entry.name in dirs and kind == "dir":
             foreign += [
                 f"{entry.name}/{p.name}"
-                for p in entry.iterdir()
+                for p in _listing(entry)
                 if p.name not in dirs[entry.name] or entry_kind(p) != "file"
             ]
         elif entry.name not in files or kind != "file":
@@ -94,11 +125,7 @@ def foreign_entries(
     return sorted(foreign)
 
 
-def check_output_dir(
-    output_dir: Path,
-    owned: Iterable[str],
-    subdirs: Mapping[str, Iterable[str]] | None = None,
-) -> None:
+def check_output_dir(output_dir: Path, owned: Iterable[str], subdirs: Subdirs = None) -> None:
     """Refuse unless the output and both siblings are missing or hold only owned files."""
     owned = frozenset(owned)
     for path in (output_dir, *staging_dirs(output_dir)):
@@ -109,66 +136,144 @@ def check_output_dir(
             )
 
 
-def overlapping_input(output_dir: Path, inputs: Iterable[Path]) -> Path | None:
-    """The first input (file or directory) that publication could move or delete.
+def remove_owned(directory: Path, owned: Iterable[str], subdirs: Subdirs = None) -> None:
+    """Delete an owned set without recursion: unlink owned files, then ``rmdir``.
 
-    Publication renames ``output_dir`` and deletes its staging/backup siblings, so an input
-    is at risk when it **is** one of those three paths or lies **inside** one. An output
-    nested inside an input directory deletes nothing of the input and is allowed. Pass raw
-    input files themselves, not their parent directories.
+    Any entry that is not an owned regular file (or owned subdirectory of owned files)
+    stops the removal with :class:`PublishError` and is left untouched. ``unlink`` never
+    deletes a directory tree and removes a link itself, never its target.
     """
-    targets = [p.resolve() for p in (output_dir, *staging_dirs(output_dir))]
-    for item in inputs:
-        p = item.resolve()
-        if any(p == t or p.is_relative_to(t) for t in targets):
-            return item
-    return None
-
-
-def clear_staging(output_dir: Path) -> Path:
-    """Remove a stale staging set (ownership already checked) and return the path."""
-    staging, _ = staging_dirs(output_dir)
+    if not _exists(directory):
+        return
+    if entry_kind(directory) != "dir":
+        raise PublishError(f"{directory.name} is not a plain directory")
+    files, dirs = frozenset(owned), _subdirs(subdirs)
     try:
-        if os.path.lexists(staging):
-            shutil.rmtree(staging)
+        for entry in _listing(directory):
+            kind = entry_kind(entry)
+            if entry.name in dirs and kind == "dir":
+                for p in _listing(entry):
+                    if p.name not in dirs[entry.name] or entry_kind(p) != "file":
+                        raise PublishError(
+                            f"{directory.name} holds files this stage does not own: "
+                            f"['{entry.name}/{p.name}']"
+                        )
+                    p.unlink()
+                entry.rmdir()
+            elif entry.name in files and kind == "file":
+                entry.unlink()
+            else:
+                raise PublishError(
+                    f"{directory.name} holds files this stage does not own: ['{entry.name}']"
+                )
+        directory.rmdir()
     except OSError as exc:
-        raise PublishError(f"cannot clear {staging.name}: {exc}") from exc
+        raise PublishError(f"cannot remove {directory.name}: {exc}") from exc
+
+
+def clear_staging(output_dir: Path, owned: Iterable[str], subdirs: Subdirs = None) -> Path:
+    """Remove a stale owned staging set and return the staging path."""
+    staging, _ = staging_dirs(output_dir)
+    remove_owned(staging, owned, subdirs)
     return staging
 
 
-def publish(staging: Path, output_dir: Path) -> str | None:
-    """Swap ``staging`` into ``output_dir``; return a warning if only the cleanup failed.
+def discard_staging(staging: Path, owned: Iterable[str], subdirs: Subdirs = None) -> None:
+    """Best-effort cleanup of an unpublished staging set; never raises, never recurses."""
+    try:
+        remove_owned(staging, owned, subdirs)
+    except PublishError:
+        pass
+
+
+def input_file(directory: Path, name: object, manifest: str) -> Path:
+    """``directory / name`` for a bare manifest-recorded file name; anything else is refused."""
+    if (
+        not isinstance(name, str)
+        or name in ("", ".", "..")
+        or Path(name).name != name
+        or Path(name).is_absolute()
+        or "/" in name
+        or "\\" in name
+    ):
+        raise PublishError(f"{manifest}: file name {name!r} must be a bare name in its directory")
+    return directory / name
+
+
+def overlapping_input(output_dir: Path, inputs: Iterable[Path]) -> Path | None:
+    """The first input (file, directory or directory entry) publication could move or delete.
+
+    Publication renames ``output_dir`` and removes its staging/backup siblings, so an input
+    is at risk when it **is** one of those three paths or lies **inside** one, after
+    resolving links and junctions. Existing input directories are also checked entry by
+    entry (resolved). An output nested inside an input directory removes nothing of the
+    input and is allowed. Pass raw input files themselves, not their parent directories.
+    """
+    try:
+        paths = (output_dir, *staging_dirs(output_dir))
+        targets = [p.resolve() for p in paths]
+        own = {os.path.normcase(str(p.absolute())) for p in paths}
+
+        def at_risk(path: Path) -> bool:
+            p = path.resolve()
+            return any(p == t or p.is_relative_to(t) for t in targets)
+
+        for item in inputs:
+            if at_risk(item):
+                return item
+            if item.is_dir():
+                for entry in item.iterdir():
+                    # The publication paths themselves may sit in an input directory.
+                    is_own = os.path.normcase(str(entry.absolute())) in own
+                    if is_own and entry_kind(entry) == "dir":
+                        continue
+                    if at_risk(entry):
+                        return entry
+    except OSError as exc:
+        raise PublishError(f"cannot check inputs against {output_dir.name}: {exc}") from exc
+    return None
+
+
+def publish(
+    staging: Path, output_dir: Path, owned: Iterable[str], subdirs: Subdirs = None
+) -> str | None:
+    """Swap ``staging`` into ``output_dir``; return a message if only the cleanup failed.
 
     Before the rename of ``staging`` any failure restores the previous set and raises
-    :class:`PublishError`. The rename is the commit point: afterwards a failure to delete
-    the backup returns a message (also emitted as :class:`PublishWarning`), and the backup
-    is kept for the next run to remove after its ownership check.
+    :class:`PublishError`. The rename is the commit point: afterwards a failure to remove
+    the backup is only returned (never raised, never a Python warning), and the backup is
+    kept for the next run to remove after its ownership check.
     """
     _, previous = staging_dirs(output_dir)
+    remove_owned(previous, owned, subdirs)
     try:
-        if os.path.lexists(previous):
-            shutil.rmtree(previous)  # ownership checked by check_output_dir
-        if os.path.lexists(output_dir):
+        if _exists(output_dir):
             output_dir.rename(previous)
         try:
             staging.rename(output_dir)
         except OSError:
-            if os.path.lexists(previous) and not os.path.lexists(output_dir):
+            if _exists(previous) and not _exists(output_dir):
                 previous.rename(output_dir)
             raise
     except OSError as exc:
         raise PublishError(f"cannot publish outputs to {output_dir.name}: {exc}") from exc
-    if os.path.lexists(previous):
-        try:
-            shutil.rmtree(previous)
-        except OSError as exc:
-            message = (
-                f"outputs published to {output_dir.name}, but the backup {previous.name} "
-                f"was kept: {exc}"
-            )
-            warnings.warn(message, PublishWarning, stacklevel=2)
-            return message
+    try:
+        remove_owned(previous, owned, subdirs)
+    except PublishError as exc:
+        return (
+            f"outputs published to {output_dir.name}, but the backup {previous.name} "
+            f"was kept: {exc}"
+        )
     return None
+
+
+def report(message: str | None, stage: str) -> None:
+    """Print a post-commit cleanup message to stderr (stages call this; never raises)."""
+    if message is not None:
+        try:
+            print(f"{stage} warning: {message}", file=sys.stderr)
+        except (OSError, ValueError):
+            pass
 
 
 def read_verified(path: Path, sha256: str, manifest: str, hint: str = "") -> bytes:

@@ -352,23 +352,58 @@ def test_crops_are_decoded_from_the_hashed_bytes(
 
 
 def test_backup_cleanup_failure_still_publishes(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    import shutil
+    import warnings
 
-    from pipeline.publishing import PublishWarning
+    from pipeline import publishing
 
     ingest = write_ingest_dir(tmp_path / "nisar")
     run_sar(ingest, tmp_path / "sar")
-    real = shutil.rmtree
+    real = publishing.remove_owned
+    backup = tmp_path / ".sar.previous"
 
-    def locked(path: Any, *args: Any, **kwargs: Any) -> None:
-        if Path(path).name == ".sar.previous":
-            raise PermissionError("backup locked")
-        real(path, *args, **kwargs)
+    def locked(directory: Path, *args: Any, **kwargs: Any) -> None:
+        if directory == backup and directory.exists():
+            raise publishing.PublishError("backup locked")
+        real(directory, *args, **kwargs)
 
-    monkeypatch.setattr(shutil, "rmtree", locked)
-    with pytest.warns(PublishWarning, match="backup locked"):
+    monkeypatch.setattr(publishing, "remove_owned", locked)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UserWarning)  # post-commit never raises
         run_sar(ingest, tmp_path / "sar")
     assert (tmp_path / "sar" / "sar.json").is_file()
-    assert (tmp_path / ".sar.previous" / "sar.json").is_file(), "backup kept"
+    assert (backup / "sar.json").is_file(), "backup kept"
+    assert "sar warning" in capsys.readouterr().err
+
+
+def test_manifest_path_outside_the_ingest_dir_is_rejected(tmp_path: Path) -> None:
+    ingest = write_ingest_dir(tmp_path / "nisar")
+    staging = tmp_path / ".sar.staging"
+    staging.mkdir()
+    victim = staging / "t1_hh_db.tif"  # owned name: ownership checks pass
+    victim.write_bytes((ingest / "t1_hh.tif").read_bytes())
+    doc = json.loads((ingest / "ingest.json").read_text(encoding="utf-8"))
+    doc["outputs"]["t1_hh"]["file"] = str(victim)
+    (ingest / "ingest.json").write_text(json.dumps(doc), encoding="utf-8")
+    with pytest.raises(SarError, match="bare name"):
+        run_sar(ingest, tmp_path / "sar")
+    assert victim.is_file(), "the referenced file must never be deleted"
+
+
+def test_permission_error_during_checks_exits_with_code_2(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from pipeline import publishing
+
+    ingest = write_ingest_dir(tmp_path / "nisar")
+    (tmp_path / "sar").mkdir()
+
+    def denied(*_args: Any, **_kwargs: Any) -> Any:
+        raise PermissionError("access denied")
+
+    monkeypatch.setattr(publishing.os, "lstat", denied)
+    code = sar.main(["--ingest-dir", str(ingest), "--output-dir", str(tmp_path / "sar")])
+    assert code == 2
+    err = capsys.readouterr().err
+    assert "access denied" in err, "the check itself fails, not a later step"

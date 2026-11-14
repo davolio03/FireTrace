@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import shutil
 import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -39,7 +38,17 @@ import numpy as np
 from pipeline import publishing
 from pipeline.change import ChangeError, read_checked
 from pipeline.publishing import PublishError
-from pipeline.sar import ANALYSIS_PIXEL_SIZE_M, SarError, _staging_dirs, publish, sha256_file
+from pipeline.sar import (
+    ANALYSIS_PIXEL_SIZE_M,
+    SarError,
+    _staging_dirs,
+    clear_staging,
+    discard_staging,
+    input_file,
+    overlapping_input,
+    publish,
+    sha256_file,
+)
 
 STATS_FORMAT_VERSION = 1
 SUPPORTED_INPUT_VERSIONS = {
@@ -167,8 +176,17 @@ def _read(
     manifest: str,
 ):
     try:
-        return read_checked(directory / record[0], record[1], grid, dtype, manifest)
-    except ChangeError as exc:
+        path = input_file(directory, record[0], manifest)
+        return read_checked(path, record[1], grid, dtype, manifest)
+    except (ChangeError, SarError) as exc:
+        raise StatsError(str(exc)) from exc
+
+
+def _overlaps(output_dir: Path, inputs: Sequence[Path]) -> bool:
+    """True if publishing to ``output_dir`` could move or delete one of ``inputs``."""
+    try:
+        return overlapping_input(output_dir, inputs) is not None
+    except SarError as exc:
         raise StatsError(str(exc)) from exc
 
 
@@ -188,7 +206,7 @@ def run_stats(
 ) -> dict[str, Any]:
     """Compute the statistics and return the ``stats.json`` document written."""
     inputs = (change_dir, sar_dir, perimeter_dir)
-    if publishing.overlapping_input(output_dir, inputs) is not None:
+    if _overlaps(output_dir, inputs):
         raise StatsError("output_dir must differ from the input directories")
     check_output_dir(output_dir)
     change = _load(change_dir / "change.json")
@@ -316,20 +334,18 @@ def run_stats(
 
     staging, _ = _staging_dirs(output_dir)
     try:
-        if staging.exists():
-            shutil.rmtree(staging)
+        clear_staging(staging, OUTPUT_FILES)
         staging.mkdir(parents=True)
         _write_json(staging / "stats.json", document)
         meta["outputs"] = {"stats.json": sha256_file(staging / "stats.json")}
         _write_json(staging / "stats_meta.json", meta)
-        publish(staging, output_dir)
+        publish(staging, output_dir, OUTPUT_FILES, "stats")
     except SarError as exc:
         raise StatsError(str(exc)) from exc
     except OSError as exc:
         raise StatsError(f"cannot write outputs: {exc}") from exc
     finally:
-        if staging.exists():
-            shutil.rmtree(staging, ignore_errors=True)
+        discard_staging(staging, OUTPUT_FILES)
     return document
 
 
