@@ -20,7 +20,7 @@ from rasterio.crs import CRS
 
 from pipeline import stats
 from pipeline.sar import SarError, write_cog
-from pipeline.stats import N_BINS, StatsError, main, run_stats
+from pipeline.stats import N_BINS, StatsError, main, out_of_range, run_stats
 
 ROOT = Path(__file__).resolve().parents[2]
 UTM10N = CRS.from_epsg(32610)
@@ -50,21 +50,13 @@ def write_inputs(
     inside: list[int] = INSIDE,
     edge: list[int] = EDGE,
     perimeter_transform: Affine = TRANSFORM,
+    rasterization: dict[str, Any] | None = None,
 ) -> dict[str, Path]:
     """Mimic the CH-01, DT-02 and DT-03 output directories with minimal manifests."""
+    rasterization = {"edge_distance_m": 50.0, **(rasterization or {})}
     dirs = {name: root / name for name in ("change", "sar", "perimeter")}
     for d in dirs.values():
         d.mkdir(parents=True, exist_ok=True)
-
-    idx_path = dirs["change"] / "change_index.tif"
-    write_cog(idx_path, _row(index, "float32"), crs=UTM10N, transform=TRANSFORM, nodata=np.nan)
-    change_doc = {
-        "change_format_version": 1,
-        "grid": GRID,
-        "method": {"id": "abs-logratio-hhhv-v1"},
-        "outputs": {"change_index": {"file": idx_path.name, "sha256": _sha(idx_path)}},
-    }
-    (dirs["change"] / "change.json").write_text(json.dumps(change_doc), encoding="utf-8")
 
     mask_path = dirs["sar"] / "valid_mask.tif"
     write_cog(mask_path, _row(valid, "uint8"), crs=UTM10N, transform=TRANSFORM, nodata=None)
@@ -74,6 +66,17 @@ def write_inputs(
         "valid_mask": {"file": mask_path.name, "sha256": _sha(mask_path)},
     }
     (dirs["sar"] / "sar.json").write_text(json.dumps(sar_doc), encoding="utf-8")
+
+    idx_path = dirs["change"] / "change_index.tif"
+    write_cog(idx_path, _row(index, "float32"), crs=UTM10N, transform=TRANSFORM, nodata=np.nan)
+    change_doc = {
+        "change_format_version": 1,
+        "grid": GRID,
+        "method": {"id": "abs-logratio-hhhv-v1"},
+        "source_sar": {"file": "sar.json", "sha256": _sha(dirs["sar"] / "sar.json")},
+        "outputs": {"change_index": {"file": idx_path.name, "sha256": _sha(idx_path)}},
+    }
+    (dirs["change"] / "change.json").write_text(json.dumps(change_doc), encoding="utf-8")
 
     outputs = {}
     for name, values in (("perimeter_mask.tif", inside), ("perimeter_edge.tif", edge)):
@@ -85,7 +88,7 @@ def write_inputs(
     perim_doc = {
         "perimeter_format_version": 1,
         "grid": {**GRID, "transform": list(perimeter_transform)[:6]},
-        "rasterization": {"rule": "pixel_centre", "edge_distance_m": 50.0},
+        "rasterization": {**{"rule": "pixel_centre", "all_touched": False}, **rasterization},
         "outputs": outputs,
     }
     (dirs["perimeter"] / "perimeter.json").write_text(json.dumps(perim_doc), encoding="utf-8")
@@ -247,3 +250,79 @@ def test_malformed_manifest_reported_by_cli(
     assert main(args) == 2
     assert "stats error" in capsys.readouterr().err
     assert not (tmp_path / "stats").exists()
+
+
+# --------------------------------------------------------------- review regressions
+
+
+def _edit_json(path: Path, **changes: Any) -> None:
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    doc.update(changes)
+    path.write_text(json.dumps(doc), encoding="utf-8")
+
+
+def test_mixed_generation_inputs_are_rejected(tmp_path: Path) -> None:
+    d = write_inputs(tmp_path)
+    # A newer, narrower but internally consistent DT-02 output on the same grid.
+    narrower = [*VALID[:2], 0, *VALID[3:]]
+    newer = write_inputs(tmp_path / "newer", valid=narrower)
+    with pytest.raises(StatsError, match="another sar.json"):
+        run_stats(d["change"], newer["sar"], d["perimeter"], tmp_path / "stats")
+    assert not (tmp_path / "stats").exists()
+
+
+def test_out_of_range_counts_use_float64_boundaries() -> None:
+    values = np.array([1.0, 2.0], dtype=np.float32)
+    lo = 1.0000000041723252  # rounds to 1.0 in float32, so a float32 comparison misses it
+    assert float(np.float32(lo)) == 1.0
+    assert out_of_range(values, lo, 1.5) == (1, 1)
+
+
+def test_empty_sensitivity_group_is_null(tmp_path: Path) -> None:
+    edge = [1, 1, 1, 1, 1, 0, 0, 0, 0]  # every inside pixel lies in the edge band
+    doc, meta = run(tmp_path, edge=edge)
+    variant = meta["sensitivity"]["without_edge_band"]
+    assert variant["inside_perimeter"] is None
+    assert variant["outside_perimeter"]["valid_pixels"] == 3
+    assert doc["inside_perimeter"]["valid_pixels"] == 5
+
+
+@pytest.mark.parametrize(
+    ("rasterization", "message"),
+    [
+        ({"edge_distance_m": 100.0}, "edge_distance_m"),
+        ({"all_touched": True}, "all_touched"),
+        ({"rule": "touched"}, "rule"),
+    ],
+    ids=["band_100m", "all_touched", "rule"],
+)
+def test_unexpected_perimeter_semantics_are_rejected(
+    tmp_path: Path, rasterization: dict[str, Any], message: str
+) -> None:
+    with pytest.raises(StatsError, match=message):
+        run(tmp_path, rasterization=rasterization)
+    assert not (tmp_path / "stats").exists()
+
+
+@pytest.mark.parametrize(
+    ("manifest", "changes", "message"),
+    [
+        ("change", {"change_format_version": 2}, "change_format_version"),
+        ("sar", {"sar_format_version": 2}, "sar_format_version"),
+        ("perimeter", {"perimeter_format_version": 2}, "perimeter_format_version"),
+        ("change", {"method": {"id": "other-v1"}}, "method"),
+    ],
+    ids=["change_version", "sar_version", "perimeter_version", "method_id"],
+)
+def test_unsupported_manifest_versions_and_method_are_rejected(
+    tmp_path: Path, manifest: str, changes: dict[str, Any], message: str
+) -> None:
+    d = write_inputs(tmp_path)
+    _edit_json(d[manifest] / f"{manifest}.json", **changes)
+    if manifest == "sar":  # keep the change -> sar link valid to reach the version check
+        _edit_json(
+            d["change"] / "change.json",
+            source_sar={"file": "sar.json", "sha256": _sha(d["sar"] / "sar.json")},
+        )
+    with pytest.raises(StatsError, match=message):
+        run_stats(d["change"], d["sar"], d["perimeter"], tmp_path / "stats")

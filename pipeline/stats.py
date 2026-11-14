@@ -40,6 +40,13 @@ from pipeline.change import ChangeError, read_checked
 from pipeline.sar import ANALYSIS_PIXEL_SIZE_M, SarError, _staging_dirs, publish, sha256_file
 
 STATS_FORMAT_VERSION = 1
+SUPPORTED_INPUT_VERSIONS = {
+    "change.json": ("change_format_version", 1),
+    "sar.json": ("sar_format_version", 1),
+    "perimeter.json": ("perimeter_format_version", 1),
+}
+EXPECTED_METHOD_ID = "abs-logratio-hhhv-v1"
+EXPECTED_RASTERIZATION = {"rule": "pixel_centre", "all_touched": False, "edge_distance_m": 50.0}
 CONTRACT_VERSION = "1.2.0"
 N_BINS = 30
 RANGE_PERCENTILES = (0.5, 99.5)
@@ -79,6 +86,17 @@ def distribution(values: np.ndarray, edges: np.ndarray) -> dict[str, Any]:
         "counts": [int(c) for c in counts],
     }
     return result
+
+
+def out_of_range(values: np.ndarray, lo: float, hi: float) -> tuple[int, int]:
+    """Counts below ``lo`` and above ``hi`` in float64, the precision used for clamping."""
+    v = values.astype(np.float64)
+    return int((v < lo).sum()), int((v > hi).sum())
+
+
+def optional_zone(values: np.ndarray, edges: np.ndarray) -> dict[str, Any] | None:
+    """Like ``zone`` but ``None`` when the group is empty (sensitivity variants only)."""
+    return zone(values, edges) if values.size else None
 
 
 def zone(values: np.ndarray, edges: np.ndarray) -> dict[str, Any]:
@@ -172,6 +190,30 @@ def run_stats(
     sar = _load(sar_dir / "sar.json")
     perimeter = _load(perimeter_dir / "perimeter.json")
 
+    for doc, source in ((change, "change.json"), (sar, "sar.json"), (perimeter, "perimeter.json")):
+        key, version = SUPPORTED_INPUT_VERSIONS[source]
+        if doc.get(key) != version:
+            raise StatsError(f"{source}: unsupported {key} {doc.get(key)!r}")
+    # Same generation: the change index must have been computed from this sar.json.
+    linked = _get(change, ("source_sar", "sha256"), "change.json")
+    actual_sar = sha256_file(sar_dir / "sar.json")
+    if linked != actual_sar:
+        raise StatsError(
+            "change.json was computed from another sar.json (source_sar sha256 differs); "
+            "re-run CH-01 on these DT-02 outputs"
+        )
+    method_id = _get(change, ("method", "id"), "change.json")
+    if method_id != EXPECTED_METHOD_ID:
+        raise StatsError(f"change.json: method {method_id!r} is not {EXPECTED_METHOD_ID}")
+    rasterization = _get(perimeter, ("rasterization",), "perimeter.json")
+    for key, expected in EXPECTED_RASTERIZATION.items():
+        value = rasterization.get(key) if isinstance(rasterization, Mapping) else None
+        if value != expected:
+            raise StatsError(
+                f"perimeter.json: rasterization.{key} is {value!r}, expected {expected!r} "
+                "(decisions C/E1)"
+            )
+
     grid = _grid(change, "change.json")
     for doc, source in ((sar, "sar.json"), (perimeter, "perimeter.json")):
         if _grid(doc, source) != grid:
@@ -230,7 +272,7 @@ def run_stats(
         "stats_format_version": STATS_FORMAT_VERSION,
         "inputs": {
             "change.json": sha256_file(change_dir / "change.json"),
-            "sar.json": sha256_file(sar_dir / "sar.json"),
+            "sar.json": actual_sar,
             "perimeter.json": sha256_file(perimeter_dir / "perimeter.json"),
         },
         "method_id": change.get("method", {}).get("id")
@@ -248,14 +290,15 @@ def run_stats(
             "range_percentiles": list(RANGE_PERCENTILES),
             "range": [lo, hi],
             "rule": "shared edges; values outside the range are counted in the first/last bin",
-            "below_range": {k: int((index[s] < lo).sum()) for k, s in groups.items()},
-            "above_range": {k: int((index[s] > hi).sum()) for k, s in groups.items()},
+            "below_range": {k: out_of_range(index[s], lo, hi)[0] for k, s in groups.items()},
+            "above_range": {k: out_of_range(index[s], lo, hi)[1] for k, s in groups.items()},
         },
         "sensitivity": {
             "without_edge_band": {
                 "note": "pixels in the DT-03 50 m boundary band removed; not in stats.json",
-                "inside_perimeter": zone(index[is_inside & not_edge], edges),
-                "outside_perimeter": zone(index[is_outside & not_edge], edges),
+                "empty_group": "null when no valid pixel of the group lies outside the band",
+                "inside_perimeter": optional_zone(index[is_inside & not_edge], edges),
+                "outside_perimeter": optional_zone(index[is_outside & not_edge], edges),
             }
         },
     }

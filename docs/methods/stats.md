@@ -10,7 +10,7 @@ These numbers summarise **observed radar change** ([change index](change-index.m
 | --- | --- |
 | Valid | DT-02 `valid_mask == 1`: all four GCOV inputs finite, positive and not no-data. Invalid pixels never enter any statistic. |
 | Coverage | `valid_coverage_pct = valid pixels / all pixels of the DT-01 crop × 100`. |
-| Inside | Valid and DT-03 pixel-centre perimeter mask = 1. The 50 m boundary band is **included** (decision E1), so inside areas equal the DT-03 mask area. |
+| Inside | Valid and DT-03 pixel-centre perimeter mask = 1. The 50 m boundary band is **included** (decision E1), so the inside area equals the DT-03 mask area whenever every inside pixel is valid (as on Plaskett, 100 % coverage); invalid inside pixels are excluded. |
 | Outside | Valid and perimeter mask = 0. **Open water is included** (decision F1): there is no land mask yet; revisit with DT-05 terrain data. |
 | Area | `area_ha = valid pixels × 100 m² / 10,000` (`pixel_area_m2 = 100`, the 10 m analysis grid; never Web Mercator pixels). |
 
@@ -20,11 +20,15 @@ These numbers summarise **observed radar change** ([change index](change-index.m
 
 For all valid pixels, inside and outside: p5, p25, p50, p75, p95 (NumPy linear interpolation) and the mean, computed in float64 over the stored float32 index values, as in CH-01.
 
-**Histogram (decision D1).** One set of 30 equal-width bins is shared by the three distributions, so the web can overlay them. Its range is the global p0.5 to p99.5 of all valid pixels. Values outside that range are counted in the first or last bin, so every histogram's counts sum to its group's valid pixels. The edge bins therefore mean "≤ first edge" and "≥ last edge". `stats_meta.json` records the range and how many values were below or above it per group.
+**Histogram (decision D1).** One set of 30 equal-width bins is shared by the three distributions, so the web can overlay them. Its range is the global p0.5 to p99.5 of all valid pixels. Values outside that range are counted in the first or last bin, so every histogram's counts sum to its group's valid pixels. The first bin therefore covers `(-∞, edges[1])` and the last bin `[edges[-2], +∞)`: each holds its ordinary interval plus the clamped tail. `stats_meta.json` records the range and how many values were below or above it per group, compared in float64 like the clamping.
 
 ## Sensitivity variant
 
-`stats_meta.json` → `sensitivity.without_edge_band` repeats the inside/outside zones without the pixels in the DT-03 50 m boundary band, where the reference itself is least precise. It is a check on how much the boundary matters, not part of the contract.
+`stats_meta.json` → `sensitivity.without_edge_band` repeats the inside/outside zones without the pixels in the DT-03 50 m boundary band, where the reference itself is least precise. It is a check on how much the boundary matters, not part of the contract. A group with no valid pixel outside the band is reported as `null`.
+
+## Input checks
+
+Besides checksums and the shared 10 m grid, CH-02 refuses mixed generations and unexpected semantics: `change.json` must name this `sar.json` (`source_sar.sha256`), the method must be `abs-logratio-hhhv-v1`, the DT-03 rasterization must be the agreed pixel-centre rule (`all_touched: false`) with a 50 m band, and every manifest must have a supported format version.
 
 ## Plaskett results (real run, 2026-11-14)
 
