@@ -62,8 +62,11 @@ Internal, gitignored pipeline products on the 10 m EPSG:32610 crop grid. They ar
 | CH-01 change | `data/interim/change/change_{hh,hv}_db.tif` | COG, float32 signed dB difference (after − before), NaN where `valid_mask` = 0 |
 | CH-01 change | `data/interim/change/change_index.tif` | COG, float32 continuous robust z-score of `abs(ΔHH) + abs(ΔHV)`; no threshold or clipping ([method](methods/change-index.md)) |
 | CH-01 change | `data/interim/change/change.json` | `method` (copied to `case.json` by DT-04), median, MAD, percentiles, valid count, sha256 of `sar.json` and outputs |
+| DT-03 perimeter | `data/interim/perimeter/perimeter.geojson` | EPSG:4326 WFIGS 58728 full geometry with contract properties; copied to the web by DT-04 ([method](methods/reference-perimeter.md)) |
+| DT-03 perimeter | `data/interim/perimeter/perimeter_{mask,edge}.tif` | COG uint8 on the crop grid: pixel-centre inside mask; 50 m boundary band for `near_perimeter_edge` |
+| DT-03 perimeter | `data/interim/perimeter/perimeter.json` | `reference` block for `case.json`, raw sha256, geometry summary, vector/raster/WFIGS areas, rasterization rule, checksums |
 
-COGs use 256 px deflate blocks and nearest-neighbour overviews for display only; scientific lookups read the full-resolution level. DT-02 and CH-01 build the whole set in a sibling staging directory and swaps it into place only when complete, so a failed run keeps the previous complete set; it refuses an output directory holding files it does not own.
+COGs use 256 px deflate blocks and nearest-neighbour overviews for display only; scientific lookups read the full-resolution level. DT-02, CH-01 and DT-03 build the whole set in a sibling staging directory and swaps it into place only when complete, so a failed run keeps the previous complete set; it refuses an output directory holding files it does not own.
 
 ## Reproducibility, diagnostics and deployment
 
