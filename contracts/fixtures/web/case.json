@@ -1,5 +1,5 @@
 {
-  "contract_version": "1.0.0",
+  "contract_version": "1.2.0",
   "data_status": "mock",
   "case_id": "plaskett-2026",
   "name": "Plaskett Fire",
@@ -67,6 +67,6 @@
       "url": "https://cmr.earthdata.nasa.gov/search/granules.umm_json?concept_id=G4340499432-ASF"
     }
   ],
-  "generated_at": "2026-11-14T11:49:35Z",
+  "generated_at": "2026-11-14T12:55:01Z",
   "pipeline_version": "mock-generator"
 }

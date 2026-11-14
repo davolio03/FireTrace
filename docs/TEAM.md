@@ -15,6 +15,20 @@
 
 Roles may overlap, but every task and shared boundary needs one accountable human. DL cannot block P0. Maintainers must select actual GitHub reviewers/handles before enabling CODEOWNERS; no placeholder assignment grants review authority.
 
+## Parallel work lanes (4–5 people)
+
+Each lane builds against the [contracts](../contracts/README.md) and fixtures, without waiting for the others. Lanes only meet in the `IN-*` integration tasks (mock → real), done jointly by producer and consumer. With four people, one person owns L2 and L3.
+
+| Lane | Owner | Produces | Main tasks |
+| --- | --- | --- | --- |
+| L1 Radar data + models | David | dB, change index, stats, review zones, SAR layers, analysis COGs | DT-01/02/04, CH, XP |
+| L2 Context data | Unassigned | Perimeter, DEM → hillshade/slope + terrain COG, `weather.json`, optical layers | DT-03, DT-05, DT-06, DT-07 |
+| L3 API | Unassigned | Point inspection (+ terrain), transect endpoint, deterministic caveat rules | BS-03, EV-01, EV-02, EV-05 |
+| L4 Web: map | Unassigned | Map, layers, swipe, inspector, transect tool, context layers | BS-04, BS-05, BS-07, AP-02/03/05/06, EV-03 |
+| L5 Web: experience | Unassigned | Overview, metrics, review zones, guided story, annotations + report, demo | AP-01/04/07/08, EV-04, DL |
+
+L4 and L5 coordinate through the shared store in [web-state](../contracts/web-state.md): nobody touches MapLibre outside `features/map/`. The role table above stays the accountability view; lanes are how the work is split in time.
+
 ## One board, isolated writers, human decisions
 
 - **Kanvas is the only canonical task state.** Use the board in the main checkout via the [Kanvas CLI/skill](../.agents/skills/kanvas/SKILL.md); feature worktrees point to it with `-b <main-checkout>/kanvas.json`. Never edit a branch copy by hand.

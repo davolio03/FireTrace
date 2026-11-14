@@ -2,7 +2,7 @@
 
 Explore what changed in NISAR HH/HV observations before and after **Plaskett Fire, Big Sur, 2026**, inspect the radar values and compare them with a dated official perimeter. Radar change is not confirmed fire, burned area or ecological severity.
 
-**Current state:** executable v1.0.0 contracts, synthetic fixtures and Kanvas tooling exist. The pipeline, FastAPI service and React application are not implemented here. Neither real processing nor a running demo is claimed. See the [in-repo proposal](docs/propuesta.md) and [product acceptance criteria](docs/PRODUCT.md).
+**Current state:** executable v1.2.0 contracts, synthetic fixtures and Kanvas tooling exist. The pipeline, FastAPI service and React application are not implemented here. Neither real processing nor a running demo is claimed. See the [in-repo proposal](docs/propuesta.md) and [product acceptance criteria](docs/PRODUCT.md).
 
 ## Start here
 

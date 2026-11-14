@@ -7,7 +7,7 @@
   "additionalProperties": false,
   "required": ["contract_version", "data_status", "case_id", "name", "location", "fire_start", "aoi_bbox", "epochs", "acquisition", "product", "reference", "method", "generated_at", "pipeline_version"],
   "properties": {
-    "contract_version": { "const": "1.0.0" },
+    "contract_version": { "const": "1.2.0" },
     "data_status": { "enum": ["mock", "real"], "description": "The web must show a visible MOCK banner when this is 'mock'." },
     "case_id": { "type": "string", "pattern": "^[a-z0-9-]+$" },
     "name": { "type": "string" },

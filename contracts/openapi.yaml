@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: FireTrace Explorer API
-  version: 1.0.0
+  version: 1.2.0
   description: >
     Contract between the FastAPI service (api/) and the web (web/).
     Schemas live in contracts/schemas/*.schema.json and are the single source of truth.
@@ -66,3 +66,27 @@ paths:
               schema: { $ref: "./schemas/inspect-point.schema.json" }
         "422":
           description: Invalid query parameters
+  /api/inspect/profile:
+    post:
+      operationId: inspectProfile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [line]
+              properties:
+                line:
+                  type: array
+                  minItems: 2
+                  items: { type: array, prefixItems: [{ type: number }, { type: number }], minItems: 2, maxItems: 2 }
+                spacing_m: { type: number, exclusiveMinimum: 0, default: 10 }
+      responses:
+        "200":
+          description: Values sampled along the line (transect)
+          content:
+            application/json:
+              schema: { $ref: "./schemas/profile.schema.json" }
+        "422":
+          description: Invalid line
