@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -94,6 +95,19 @@ def validate_command(name: str, value: object) -> list[str]:
     return value
 
 
+def resolve_argv(command: list[str]) -> list[str]:
+    """Make a quality.json argv launchable on every OS without a shell.
+
+    ``python3``/``python`` run with the current interpreter (Windows has no ``python3``
+    by default), and other programs resolve through PATH/PATHEXT so Windows finds
+    ``npm.cmd``. Unresolvable names are left unchanged and fail with the usual error.
+    """
+    program, *args = command
+    if program in ("python3", "python"):
+        return [sys.executable, *args]
+    return [shutil.which(program) or program, *args]
+
+
 def main() -> int:
     problems = []
     for rel in REQUIRED_FILES:
@@ -149,7 +163,7 @@ def main() -> int:
             continue
         print(f"RUN {name}: {command}", flush=True)
         try:
-            result = subprocess.run(command, cwd=ROOT, check=False)
+            result = subprocess.run(resolve_argv(command), cwd=ROOT, check=False)
         except OSError as exc:
             fail(f"unable to launch {name}: {exc}")
             return 1
