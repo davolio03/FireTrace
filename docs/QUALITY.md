@@ -18,7 +18,7 @@ The contract validator uses its existing inline dependency declaration, **`jsons
 
 ## Python 3.11 CI, separate from local evidence
 
-The `quality` workflow selects **Python 3.11**, runs the bootstrap gate and then the existing fixture validator through uv. It uses the starter's checkout/setup-python action versions and the immutable setup-uv reference documented by its publisher. No application dependencies/manifests are introduced here.
+The `quality` workflow selects **Python 3.11** and **Node 24**, installs the web dependencies, runs the configured application checks and then the existing fixture validator through uv. It uses the starter's checkout/setup-python action versions and the immutable setup-uv reference documented by its publisher.
 
 The integration environment provides Python **3.14.4** and jsonschema **4.19.2**, below the declared `>=4.20`; `python` and uv are absent. No packages were installed or contract requirements weakened. Running the two direct Python3 scripts here is **not Python 3.11/uv, declared-dependency or hosted CI verification**. CI configuration is not a CI execution result; record the actual remote outcome only when an authorized run occurs.
 
@@ -34,7 +34,7 @@ Canonical upstream commands **after the corresponding scaffold/dependencies exis
 | Web (run within `web/`) | `npm install`; `npm run lint`; `npm run test`; `npm run build`; add the selected prettier check to lint |
 | Real pipeline output | `uv run contracts/tools/validate.py data/processed/web` |
 
-`uv run python -m pipeline.run --all`, `uv run uvicorn api.main:app --reload` and `npm run dev` within `web/` are planned upstream processing/start targets, **not working commands in this checkout**. Do not run or document them as implemented until their scaffold task supplies evidence.
+`npm run dev` within `web/` starts the web scaffold. `uv run python -m pipeline.run --all` and `uv run uvicorn api.main:app --reload` remain planned processing/start targets, **not working commands in this checkout**.
 
 Cover deterministic numerical rules and realistic failure paths with small synthetic rasters. Application integration must verify actual lookup/display alignment, no-data, coverage arithmetic, provenance and mock-to-real switching. Real science requires separate reproducible sample evidence and an agreed method/domain; schema-valid mocks are not that evidence.
 

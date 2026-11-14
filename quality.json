@@ -2,8 +2,8 @@
   "version": 1,
   "source_roots": ["pipeline", "api", "web", "src", "app", "apps", "packages", "backend", "frontend"],
   "commands": {
-    "lint": [],
-    "test": [],
-    "build": []
+    "lint": ["npm", "--prefix", "web", "run", "lint"],
+    "test": ["npm", "--prefix", "web", "run", "test"],
+    "build": ["npm", "--prefix", "web", "run", "build"]
   }
 }
