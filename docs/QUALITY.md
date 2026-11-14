@@ -44,6 +44,8 @@ The first implemented pipeline stage is the DT-01 NISAR ingest/crop: `uv run pyt
 
 The DT-02 stage converts those crops to dB and builds the common valid mask: `uv run python -m pipeline.sar --ingest-dir data/interim/nisar --output-dir data/interim/sar`. It verifies the crops against the sha256 values in `ingest.json` and writes dB COGs, `valid_mask.tif` and `sar.json` (layout in [ARCHITECTURE](ARCHITECTURE.md)). Like DT-01 it needs local data, is not run in CI and is tested with synthetic rasters.
 
+The CH-01 stage computes the continuous change index: `uv run python -m pipeline.change --sar-dir data/interim/sar --output-dir data/interim/change` (add `--quicklook <png>` outside the output directory for a review preview). The method is documented in [change-index](methods/change-index.md).
+
 `npm run dev` within `web/` starts the web scaffold. `uv run python -m pipeline.run --all` and `uv run uvicorn api.main:app --reload` remain planned processing/start targets, **not working commands in this checkout**.
 
 Cover deterministic numerical rules and realistic failure paths with small synthetic rasters. Application integration must verify actual lookup/display alignment, no-data, coverage arithmetic, provenance and mock-to-real switching. Real science requires separate reproducible sample evidence and an agreed method/domain; schema-valid mocks are not that evidence.
