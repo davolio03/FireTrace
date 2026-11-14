@@ -1,0 +1,481 @@
+{
+  "contract_version": "1.0.0",
+  "data_status": "mock",
+  "layers": [
+    {
+      "id": "sar_t1_hh",
+      "title": "SAR backscatter HH — before",
+      "kind": "raster",
+      "group": "sar",
+      "url": "layers/sar_t1_hh.png",
+      "coordinates": [
+        [
+          -121.495,
+          35.992
+        ],
+        [
+          -121.278,
+          35.992
+        ],
+        [
+          -121.278,
+          35.84
+        ],
+        [
+          -121.495,
+          35.84
+        ]
+      ],
+      "width_px": 480,
+      "height_px": 415,
+      "default_visible": true,
+      "default_opacity": 1.0,
+      "legend": {
+        "type": "continuous",
+        "units": "dB",
+        "domain": [
+          -25.0,
+          0.0
+        ],
+        "stops": [
+          {
+            "value": -25.0,
+            "color": "#000000"
+          },
+          {
+            "value": 0.0,
+            "color": "#ffffff"
+          }
+        ]
+      },
+      "epoch": "t1",
+      "polarization": "HH"
+    },
+    {
+      "id": "sar_t2_hh",
+      "title": "SAR backscatter HH — after",
+      "kind": "raster",
+      "group": "sar",
+      "url": "layers/sar_t2_hh.png",
+      "coordinates": [
+        [
+          -121.495,
+          35.992
+        ],
+        [
+          -121.278,
+          35.992
+        ],
+        [
+          -121.278,
+          35.84
+        ],
+        [
+          -121.495,
+          35.84
+        ]
+      ],
+      "width_px": 480,
+      "height_px": 415,
+      "default_visible": false,
+      "default_opacity": 1.0,
+      "legend": {
+        "type": "continuous",
+        "units": "dB",
+        "domain": [
+          -25.0,
+          0.0
+        ],
+        "stops": [
+          {
+            "value": -25.0,
+            "color": "#000000"
+          },
+          {
+            "value": 0.0,
+            "color": "#ffffff"
+          }
+        ]
+      },
+      "epoch": "t2",
+      "polarization": "HH"
+    },
+    {
+      "id": "sar_t1_hv",
+      "title": "SAR backscatter HV — before",
+      "kind": "raster",
+      "group": "sar",
+      "url": "layers/sar_t1_hv.png",
+      "coordinates": [
+        [
+          -121.495,
+          35.992
+        ],
+        [
+          -121.278,
+          35.992
+        ],
+        [
+          -121.278,
+          35.84
+        ],
+        [
+          -121.495,
+          35.84
+        ]
+      ],
+      "width_px": 480,
+      "height_px": 415,
+      "default_visible": false,
+      "default_opacity": 1.0,
+      "legend": {
+        "type": "continuous",
+        "units": "dB",
+        "domain": [
+          -30.0,
+          -5.0
+        ],
+        "stops": [
+          {
+            "value": -30.0,
+            "color": "#000000"
+          },
+          {
+            "value": -5.0,
+            "color": "#ffffff"
+          }
+        ]
+      },
+      "epoch": "t1",
+      "polarization": "HV"
+    },
+    {
+      "id": "sar_t2_hv",
+      "title": "SAR backscatter HV — after",
+      "kind": "raster",
+      "group": "sar",
+      "url": "layers/sar_t2_hv.png",
+      "coordinates": [
+        [
+          -121.495,
+          35.992
+        ],
+        [
+          -121.278,
+          35.992
+        ],
+        [
+          -121.278,
+          35.84
+        ],
+        [
+          -121.495,
+          35.84
+        ]
+      ],
+      "width_px": 480,
+      "height_px": 415,
+      "default_visible": false,
+      "default_opacity": 1.0,
+      "legend": {
+        "type": "continuous",
+        "units": "dB",
+        "domain": [
+          -30.0,
+          -5.0
+        ],
+        "stops": [
+          {
+            "value": -30.0,
+            "color": "#000000"
+          },
+          {
+            "value": -5.0,
+            "color": "#ffffff"
+          }
+        ]
+      },
+      "epoch": "t2",
+      "polarization": "HV"
+    },
+    {
+      "id": "change_hh",
+      "title": "Observed radar changes — HH",
+      "kind": "raster",
+      "group": "observed_change",
+      "url": "layers/change_hh.png",
+      "coordinates": [
+        [
+          -121.495,
+          35.992
+        ],
+        [
+          -121.278,
+          35.992
+        ],
+        [
+          -121.278,
+          35.84
+        ],
+        [
+          -121.495,
+          35.84
+        ]
+      ],
+      "width_px": 480,
+      "height_px": 415,
+      "default_visible": false,
+      "default_opacity": 0.85,
+      "legend": {
+        "type": "continuous",
+        "units": "dB difference (after − before)",
+        "domain": [
+          -6.0,
+          6.0
+        ],
+        "stops": [
+          {
+            "value": -6.0,
+            "color": "#2166ac"
+          },
+          {
+            "value": -3.0,
+            "color": "#92c5de"
+          },
+          {
+            "value": 0.0,
+            "color": "#f7f7f7"
+          },
+          {
+            "value": 3.0,
+            "color": "#f4a582"
+          },
+          {
+            "value": 6.0,
+            "color": "#b2182b"
+          }
+        ]
+      },
+      "polarization": "HH"
+    },
+    {
+      "id": "change_hv",
+      "title": "Observed radar changes — HV",
+      "kind": "raster",
+      "group": "observed_change",
+      "url": "layers/change_hv.png",
+      "coordinates": [
+        [
+          -121.495,
+          35.992
+        ],
+        [
+          -121.278,
+          35.992
+        ],
+        [
+          -121.278,
+          35.84
+        ],
+        [
+          -121.495,
+          35.84
+        ]
+      ],
+      "width_px": 480,
+      "height_px": 415,
+      "default_visible": false,
+      "default_opacity": 0.85,
+      "legend": {
+        "type": "continuous",
+        "units": "dB difference (after − before)",
+        "domain": [
+          -6.0,
+          6.0
+        ],
+        "stops": [
+          {
+            "value": -6.0,
+            "color": "#2166ac"
+          },
+          {
+            "value": -3.0,
+            "color": "#92c5de"
+          },
+          {
+            "value": 0.0,
+            "color": "#f7f7f7"
+          },
+          {
+            "value": 3.0,
+            "color": "#f4a582"
+          },
+          {
+            "value": 6.0,
+            "color": "#b2182b"
+          }
+        ]
+      },
+      "polarization": "HV"
+    },
+    {
+      "id": "change_index",
+      "title": "Observed radar changes — combined index",
+      "kind": "raster",
+      "group": "observed_change",
+      "url": "layers/change_index.png",
+      "coordinates": [
+        [
+          -121.495,
+          35.992
+        ],
+        [
+          -121.278,
+          35.992
+        ],
+        [
+          -121.278,
+          35.84
+        ],
+        [
+          -121.495,
+          35.84
+        ]
+      ],
+      "width_px": 480,
+      "height_px": 415,
+      "default_visible": true,
+      "default_opacity": 0.85,
+      "legend": {
+        "type": "continuous",
+        "units": "index (unitless, robust z-score)",
+        "domain": [
+          0.0,
+          5.89
+        ],
+        "stops": [
+          {
+            "value": 0.0,
+            "color": "#440154"
+          },
+          {
+            "value": 1.472,
+            "color": "#3b528b"
+          },
+          {
+            "value": 2.945,
+            "color": "#21918c"
+          },
+          {
+            "value": 4.417,
+            "color": "#5ec962"
+          },
+          {
+            "value": 5.89,
+            "color": "#fde725"
+          }
+        ]
+      }
+    },
+    {
+      "id": "highlight_mask",
+      "title": "Highlighted radar changes",
+      "kind": "raster",
+      "group": "highlighted_change",
+      "url": "layers/highlight_mask.png",
+      "coordinates": [
+        [
+          -121.495,
+          35.992
+        ],
+        [
+          -121.278,
+          35.992
+        ],
+        [
+          -121.278,
+          35.84
+        ],
+        [
+          -121.495,
+          35.84
+        ]
+      ],
+      "width_px": 480,
+      "height_px": 415,
+      "default_visible": false,
+      "default_opacity": 0.8,
+      "p1": true,
+      "legend": {
+        "type": "categorical",
+        "items": [
+          {
+            "value": 1,
+            "label": "Change above exploratory threshold",
+            "color": "#e66101"
+          }
+        ],
+        "note": "Exploratory threshold, not a validated burned-area mask."
+      }
+    },
+    {
+      "id": "valid_mask",
+      "title": "No-data / invalid pixels",
+      "kind": "raster",
+      "group": "quality",
+      "url": "layers/valid_mask.png",
+      "coordinates": [
+        [
+          -121.495,
+          35.992
+        ],
+        [
+          -121.278,
+          35.992
+        ],
+        [
+          -121.278,
+          35.84
+        ],
+        [
+          -121.495,
+          35.84
+        ]
+      ],
+      "width_px": 480,
+      "height_px": 415,
+      "default_visible": false,
+      "default_opacity": 1.0,
+      "legend": {
+        "type": "categorical",
+        "items": [
+          {
+            "value": 0,
+            "label": "Invalid in at least one layer",
+            "color": "#7f7f7f"
+          }
+        ]
+      }
+    },
+    {
+      "id": "perimeter",
+      "title": "Official fire perimeter",
+      "kind": "vector",
+      "group": "reference",
+      "url": "perimeter.geojson",
+      "default_visible": true,
+      "default_opacity": 1.0,
+      "legend": {
+        "type": "categorical",
+        "items": [
+          {
+            "value": "WFIGS 58728",
+            "label": "WFIGS perimeter, 2026-09-14 20:44 UTC",
+            "color": "#000000"
+          }
+        ],
+        "note": "Reference only, not pixel-level truth."
+      }
+    }
+  ]
+}

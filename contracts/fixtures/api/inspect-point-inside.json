@@ -1,0 +1,47 @@
+{
+  "contract_version": "1.0.0",
+  "data_status": "mock",
+  "query": {
+    "lon": -121.380849,
+    "lat": 35.965833
+  },
+  "method_id": "abs-logratio-hhhv-v1",
+  "pixel": {
+    "row": 71,
+    "col": 252,
+    "x": 602520.0,
+    "y": 3974290.0,
+    "crs": "EPSG:32610",
+    "center_lon": -121.380849,
+    "center_lat": 35.965833
+  },
+  "valid": true,
+  "hh_db": {
+    "t1": -9.0,
+    "t2": -11.61,
+    "delta": -2.61
+  },
+  "hv_db": {
+    "t1": -18.87,
+    "t2": -23.91,
+    "delta": -5.04
+  },
+  "change_index": 4.41,
+  "change_index_percentile": 95.3,
+  "highlighted": null,
+  "perimeter_relation": "inside",
+  "caveats": [
+    {
+      "id": "soil_moisture_change",
+      "label": "Soil moisture change between dates",
+      "triggered": false,
+      "reason": "Generic caution: moisture changes alter L-band backscatter regardless of fire."
+    },
+    {
+      "id": "vegetation_structure",
+      "label": "Vegetation structure",
+      "triggered": false,
+      "reason": "Generic caution: HV responds to canopy volume; unburned stand changes also affect it."
+    }
+  ]
+}

@@ -7,7 +7,7 @@ Instrucciones para **cualquier agente de IA** (Claude Code, Codex, Cursor, Gemin
 App web para el NASA Space Apps Challenge 2026 (reto *Dancing with the SARs*). Muestra **qué cambió en el radar NISAR antes y después del Plaskett Fire** (Big Sur, 2026), permite inspeccionar la señal HH/HV píxel a píxel y contrastarla con el perímetro oficial WFIGS 58728.
 
 - Propuesta completa, alcance y criterios: [`docs/propuesta.md`](docs/propuesta.md). **Léela antes de tu primera tarea.**
-- Contratos entre pipeline, API y web: [`docs/contracts/`](docs/contracts/).
+- Contrato entre pipeline, API y web: [`contracts/README.md`](contracts/README.md). **Es lo que permite trabajar en paralelo.**
 
 ### Reglas científicas innegociables
 
@@ -24,9 +24,10 @@ App web para el NASA Space Apps Challenge 2026 (reto *Dancing with the SARs*). M
 pipeline/        Python. GeoTIFF NISAR → productos precalculados (dB, índice de cambio, tiles, stats)
 api/             Python FastAPI. Consultas del Evidence Inspector (píxel/región) sobre los productos
 web/             React + TypeScript + Vite. Mapa, comparador, capas, métricas, inspector
-docs/            Propuesta, contratos, decisiones (docs/decisions/NNN-titulo.md)
+contracts/       JSON Schemas + OpenAPI + fixtures mock + validate.py (fuente de verdad de interfaces)
+docs/            Propuesta y decisiones (docs/decisions/NNN-titulo.md)
 data/raw/        GeoTIFF originales (NO versionado)
-data/processed/  Salidas del pipeline (NO versionado; se regeneran con un comando)
+data/processed/  Salidas del pipeline (NO versionado). data/processed/web/ tiene la misma forma que contracts/fixtures/web/
 kanvas.json      Tablero de tareas (ver §4)
 .engram/         Memoria compartida de agentes (ver §6)
 ```
@@ -48,6 +49,11 @@ Cambiar una pieza del stack requiere un ADR corto en `docs/decisions/` y aprobac
 ### Comandos (se irán completando según exista cada parte)
 
 ```bash
+# Contrato
+uv run contracts/tools/validate.py                  # fixtures
+uv run contracts/tools/validate.py data/processed/web   # salida real del pipeline
+uv run contracts/tools/generate_mocks.py            # regenerar mocks
+
 # Pipeline / API
 uv sync
 uv run pytest
@@ -77,7 +83,7 @@ Si añades o cambias un comando, actualiza esta sección en el mismo PR.
    `<tipo>`: `feat`, `fix`, `data`, `docs`, `chore`, `exp` (experimentos ML).
 3. **Trabaja solo dentro de tu worktree** y solo en el alcance de la tarea. Si descubres trabajo extra, propónlo en el tablero en vez de hacerlo.
 4. **Commits** pequeños con Conventional Commits y el ID de la tarea: `feat(web): add before/after swipe [AP-03]`.
-5. **Antes del PR:** lint + tests de las partes tocadas en verde; si cambias un contrato, actualiza `docs/contracts/` y avisa en Engram.
+5. **Antes del PR:** lint + tests de las partes tocadas en verde y `uv run contracts/tools/validate.py` en verde. Un cambio de contrato va en su propio PR (ver §5).
 6. **PR contra `main`** con título `[<ID>] Descripción` y la plantilla:
    - Qué cambia para el usuario / para otros módulos
    - Cómo se ha verificado (comandos, capturas)
@@ -102,13 +108,18 @@ python .agents/skills/kanvas/kanvas.py finish <ID> --file resumen.md
 - Firma siempre con `--as <herramienta>-<persona>` (ej. `--as claude-david`, `--as codex-lucia`) o exporta `KANVAS_AGENT`.
 - **Un único tablero de verdad:** el del checkout principal en `main`. Desde un worktree, apunta a él con `-b <ruta-checkout-principal>/kanvas.json`. No modifiques `kanvas.json` dentro de tu rama de feature (provoca conflictos de merge).
 - Los humanos aprueban propuestas y marcan `done`; los agentes proponen, empiezan, anotan y pasan a `review`.
-- Grupos: `BS` Base · `DT` Datos/pipeline · `CH` Índice de cambio · `AP` App web · `EV` Evidencia y métricas · `XP` Exploratorio P1 · `DL` Entrega.
+- Grupos: `BS` Base · `DT` Datos/pipeline · `CH` Índice de cambio · `AP` App web · `EV` Evidencia y métricas · `IN` Integración mock→real · `XP` Exploratorio P1 · `DL` Entrega.
 
-## 5. Contratos entre módulos
+## 5. Contratos entre módulos (trabajo en paralelo)
 
-Los ficheros de `docs/contracts/` definen rutas, formatos, unidades y esquemas JSON que producen el pipeline y consumen la API y la web. Son el punto de coordinación entre personas: **mientras el pipeline real no exista, la web y la API trabajan con datos mock que cumplen el contrato** (`web/src/mocks/`, `api/tests/fixtures/`).
+[`contracts/`](contracts/README.md) define qué produce el pipeline y qué consumen la API y la web: JSON Schemas, `openapi.yaml` y **fixtures mock que ya cumplen el contrato**.
 
-Cambiar un contrato = PR propio (`docs/contract-...`) revisado por al menos un miembro de cada lado afectado.
+- **Web:** desarrolla contra `contracts/fixtures/` con `VITE_USE_MOCKS=true` (MSW para `/api/*`). Los tipos TypeScript se generan desde `contracts/openapi.yaml`; no se escriben a mano.
+- **API:** sus tests usan `contracts/fixtures/` y validan las respuestas contra los schemas.
+- **Pipeline:** una tarea de datos está hecha cuando `uv run contracts/tools/validate.py data/processed/web` pasa.
+- **Integración** (tareas `IN-*`): solo se cambia la fuente de datos de mock a real, sin tocar código de features.
+- Nunca enseñes datos con `data_status: "mock"` sin el aviso visible de MOCK.
+- **Cambiar el contrato = PR propio** (`docs/contract-<tema>`), con versión subida y revisado por ambos lados. Consulta las reglas en `contracts/README.md`.
 
 ## 6. Memoria compartida: Engram
 
@@ -128,7 +139,7 @@ engram sync               # al terminar: exporta tus memorias nuevas a .engram/ 
 
 Si el equipo levanta un servidor Engram Cloud, se documentará aquí (`engram cloud config --server <url>` + `engram cloud enroll firetrace`).
 
-Las **decisiones que cambian interfaces** van además a `docs/contracts/` o `docs/decisions/` vía PR: Engram es memoria de trabajo, el repo es la fuente de verdad.
+Las **decisiones que cambian interfaces** van además a `contracts/` o `docs/decisions/` vía PR: Engram es memoria de trabajo, el repo es la fuente de verdad.
 
 ## 7. Convenciones de código
 

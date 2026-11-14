@@ -29,27 +29,45 @@
     {
       "id": "DL",
       "name": "Entrega"
+    },
+    {
+      "id": "IN",
+      "name": "Integración"
     }
   ],
   "tasks": [
     {
       "id": "BS-01",
-      "title": "Bootstrap repo: AGENTS.md, Kanvas, Engram, contrato v0",
+      "title": "Bootstrap repo: AGENTS.md, Kanvas, Engram, contrato ejecutable",
       "state": "proposed",
       "group": "BS",
       "at": "2026-11-14T11:39:27Z",
       "by": "claude-david",
-      "desc": "Repo listo para trabajar en paralelo: AGENTS.md con flujo worktree→PR, CLAUDE.md que redirige, tablero, Engram (proyecto firetrace) y borrador de contrato. Hecho = PR mergeado en main."
+      "desc": "Repo listo para trabajar en paralelo: AGENTS.md con el flujo worktree→PR, CLAUDE.md que redirige a él, tablero, Engram (proyecto firetrace) y contracts/ con JSON Schemas, OpenAPI, fixtures mock validados y validate.py. Hecho = PR mergeado en main.",
+      "notes": [
+        {
+          "at": "2026-11-14T11:50:36Z",
+          "by": "claude-david",
+          "text": "Contrato convertido en ejecutable para desbloquear el trabajo en paralelo"
+        }
+      ]
     },
     {
       "id": "BS-02",
-      "title": "Aprobar contrato de datos v0",
+      "title": "Revisión del contrato v1 (Datos + Web + API)",
       "state": "proposed",
       "group": "BS",
       "deps": ["BS-01"],
       "at": "2026-11-14T11:39:27Z",
       "by": "claude-david",
-      "desc": "Datos, API y Frontend revisan docs/contracts/data-products.md y fijan rutas, unidades, esquemas JSON y paletas. Hecho = contrato marcado v1 en main. Desbloquea el trabajo en paralelo con mocks."
+      "desc": "Reunión corta (~30 min) para repasar contracts/README.md, los schemas y las capas mock. Lo que haya que cambiar va en un PR docs/contract-*. No bloquea a nadie: todos empiezan ya contra los fixtures.",
+      "notes": [
+        {
+          "at": "2026-11-14T11:50:37Z",
+          "by": "claude-david",
+          "text": "Ya no bloquea: los fixtures existen"
+        }
+      ]
     },
     {
       "id": "BS-03",
@@ -59,7 +77,7 @@
       "deps": ["BS-01"],
       "at": "2026-11-14T11:39:27Z",
       "by": "claude-david",
-      "desc": "pyproject con uv, paquetes pipeline/ y api/ vacíos, ruff+pytest y GitHub Actions que lo ejecuta en cada PR. Hecho = `uv run pytest` pasa en local y en CI."
+      "desc": "pyproject con uv, paquetes pipeline/ y api/ vacíos, ruff + pytest y GitHub Actions que en cada PR ejecuta tests y contracts/tools/validate.py. Hecho = verde en local y en CI."
     },
     {
       "id": "BS-04",
@@ -69,17 +87,17 @@
       "deps": ["BS-01"],
       "at": "2026-11-14T11:39:27Z",
       "by": "claude-david",
-      "desc": "web/ con Vite, React, TypeScript estricto, MapLibre mostrando un mapa base centrado en Big Sur, Tailwind+shadcn, eslint/prettier/vitest y job de CI. Hecho = `npm run build` y tests en verde."
+      "desc": "web/ con Vite, React, TypeScript estricto, MapLibre con un mapa base centrado en Big Sur, Tailwind + shadcn, eslint/prettier/vitest y job de CI. Hecho = npm run build y tests en verde."
     },
     {
       "id": "BS-05",
-      "title": "Mocks que cumplen el contrato",
+      "title": "Modo mock en la web: MSW + tipos generados + banner MOCK",
       "state": "proposed",
       "group": "BS",
-      "deps": ["BS-02", "BS-04"],
+      "deps": ["BS-04"],
       "at": "2026-11-14T11:39:27Z",
       "by": "claude-david",
-      "desc": "case.json, stats.json, perímetro real y tiles/respuestas de inspector sintéticas en web/src/mocks y api/tests/fixtures, para que frontend y API avancen sin esperar al pipeline."
+      "desc": "Tipos TS generados desde contracts/openapi.yaml (openapi-typescript). VITE_DATA_BASE_URL apunta a contracts/fixtures/web y MSW responde a /api/* con contracts/fixtures/api (inspect-grid para cualquier clic). Banner visible cuando data_status=mock. Hecho = la app carga case/stats/layers mock sin backend."
     },
     {
       "id": "DT-01",
@@ -113,13 +131,13 @@
     },
     {
       "id": "DT-04",
-      "title": "Generación de tiles web y leyendas",
+      "title": "Exportar data/processed/web (PNG EPSG:3857 + layers.json)",
       "state": "proposed",
       "group": "DT",
-      "deps": ["DT-02"],
+      "deps": ["DT-02", "CH-01", "DT-03"],
       "at": "2026-11-14T11:39:27Z",
       "by": "claude-david",
-      "desc": "tiles XYZ PNG por capa (SAR t1/t2 HH/HV, cambio) con paletas fijas y legends.json. Hecho = las capas se ven bien alineadas sobre MapLibre."
+      "desc": "Una PNG RGBA por capa reproyectada a EPSG:3857 con paleta fija, layers.json con coordenadas y leyendas, case.json, stats.json y perimeter.geojson. Hecho = uv run contracts/tools/validate.py data/processed/web pasa."
     },
     {
       "id": "CH-01",
@@ -186,10 +204,10 @@
       "title": "API FastAPI de inspección por punto",
       "state": "proposed",
       "group": "EV",
-      "deps": ["BS-02", "BS-03"],
+      "deps": ["BS-03"],
       "at": "2026-11-14T11:39:27Z",
       "by": "claude-david",
-      "desc": "/api/case, /api/stats, /api/inspect/point leyendo los COG con rasterio según contrato; tests con fixtures."
+      "desc": "FastAPI con /api/health, /api/case, /api/stats, /api/layers y /api/inspect/point según contracts/openapi.yaml, leyendo los COG con rasterio. Tests con contracts/fixtures que validan las respuestas contra los schemas."
     },
     {
       "id": "EV-02",
@@ -206,10 +224,10 @@
       "title": "Evidence Inspector en la web (F08)",
       "state": "proposed",
       "group": "EV",
-      "deps": ["AP-02", "EV-01"],
+      "deps": ["AP-02", "BS-05"],
       "at": "2026-11-14T11:39:27Z",
       "by": "claude-david",
-      "desc": "Clic en el mapa → panel con HH/HV t1/t2 en dB, delta, índice, relación con el perímetro, método, cautelas y fuentes. Funciona también sin máscara."
+      "desc": "Clic en el mapa → panel con HH/HV antes y después en dB, delta, índice y percentil, relación con el perímetro, método, cautelas y fuentes. Se desarrolla contra MSW; también funciona sin máscara y en píxeles inválidos (explica por qué no hay dato)."
     },
     {
       "id": "XP-01",
@@ -246,7 +264,7 @@
       "title": "Despliegue de la demo",
       "state": "proposed",
       "group": "DL",
-      "deps": ["EV-03"],
+      "deps": ["IN-01", "IN-02"],
       "at": "2026-11-14T11:39:27Z",
       "by": "claude-david",
       "desc": "Web estática + API desplegadas (o build local reproducible) con datos precalculados; sin descargas ni entrenamiento en directo."
@@ -270,6 +288,26 @@
       "at": "2026-11-14T11:39:27Z",
       "by": "claude-david",
       "desc": "Recorrido del §6 de la propuesta en unos 2 minutos, grabado y subido."
+    },
+    {
+      "id": "IN-01",
+      "title": "Web con datos reales del pipeline",
+      "state": "proposed",
+      "group": "IN",
+      "deps": ["DT-04", "CH-02", "AP-02", "AP-04"],
+      "at": "2026-11-14T11:50:39Z",
+      "by": "claude-david",
+      "desc": "Apuntar VITE_DATA_BASE_URL a data/processed/web y comprobar visualmente capas, alineación con el mapa base, leyendas y métricas reales. No debería requerir cambios de código; si los requiere, es un bug del contrato."
+    },
+    {
+      "id": "IN-02",
+      "title": "Inspector con API real",
+      "state": "proposed",
+      "group": "IN",
+      "deps": ["EV-01", "EV-03", "CH-01", "EV-02"],
+      "at": "2026-11-14T11:50:39Z",
+      "by": "claude-david",
+      "desc": "Desactivar MSW y usar la API FastAPI sobre los productos reales; comprobar los valores de varios píxeles contra el ráster original (dentro, fuera e inválido)."
     }
   ]
 }

@@ -1,0 +1,34 @@
+{
+  "contract_version": "1.0.0",
+  "data_status": "mock",
+  "query": {
+    "lon": -121.4516,
+    "lat": 35.894754
+  },
+  "method_id": "abs-logratio-hhhv-v1",
+  "pixel": {
+    "row": 265,
+    "col": 96,
+    "x": 600960.0,
+    "y": 3972350.0,
+    "crs": "EPSG:32610",
+    "center_lon": -121.451374,
+    "center_lat": 35.89479
+  },
+  "valid": false,
+  "hh_db": {
+    "t1": null,
+    "t2": null,
+    "delta": null
+  },
+  "hv_db": {
+    "t1": null,
+    "t2": null,
+    "delta": null
+  },
+  "change_index": null,
+  "change_index_percentile": null,
+  "highlighted": null,
+  "perimeter_relation": "inside",
+  "caveats": []
+}

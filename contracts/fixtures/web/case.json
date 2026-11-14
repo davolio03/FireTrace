@@ -1,0 +1,72 @@
+{
+  "contract_version": "1.0.0",
+  "data_status": "mock",
+  "case_id": "plaskett-2026",
+  "name": "Plaskett Fire",
+  "location": "Big Sur, Monterey County, California, USA",
+  "fire_start": "2026-08-26",
+  "aoi_bbox": [
+    -121.495,
+    35.84,
+    -121.278,
+    35.992
+  ],
+  "epochs": {
+    "t1": {
+      "label": "Before",
+      "datetime": "2026-08-16T02:56:39Z",
+      "granule_id": "G4284560161-ASF",
+      "absolute_orbit": 5504
+    },
+    "t2": {
+      "label": "After",
+      "datetime": "2026-10-03T02:56:38Z",
+      "granule_id": "G4340499432-ASF",
+      "absolute_orbit": 6196
+    }
+  },
+  "acquisition": {
+    "track": 42,
+    "frame": 70,
+    "direction": "descending",
+    "frequency": "A",
+    "polarizations": [
+      "HH",
+      "HV"
+    ],
+    "pixel_size_m": 10,
+    "crs": "EPSG:32610"
+  },
+  "product": "NISAR_L2_GCOV_PROVISIONAL_V1",
+  "reference": {
+    "source": "NIFC WFIGS Interagency Perimeters",
+    "objectid": 58728,
+    "datetime": "2026-09-14T20:44:00Z",
+    "url": "https://services3.arcgis.com/T4QMspbfLg3qTGWY/arcgis/rest/services/WFIGS_Interagency_Perimeters_YearToDate/FeatureServer/0",
+    "note": "Operational perimeter dated before the 'after' acquisition. Reference for contrast, not pixel-level truth."
+  },
+  "method": {
+    "id": "abs-logratio-hhhv-v1",
+    "name": "Absolute log-ratio change, HH + HV",
+    "description": "MOCK: |ΔdB HH| + |ΔdB HV| normalised with a robust z-score (median/MAD) over valid pixels.",
+    "params": {
+      "normalisation": "median_mad"
+    }
+  },
+  "sources": [
+    {
+      "label": "CAL FIRE incident page",
+      "url": "https://www.fire.ca.gov/incidents/2026/8/26/plaskett-fire"
+    },
+    {
+      "label": "NISAR GCOV before (CMR)",
+      "url": "https://cmr.earthdata.nasa.gov/search/granules.umm_json?concept_id=G4284560161-ASF"
+    },
+    {
+      "label": "NISAR GCOV after (CMR)",
+      "url": "https://cmr.earthdata.nasa.gov/search/granules.umm_json?concept_id=G4340499432-ASF"
+    }
+  ],
+  "generated_at": "2026-11-14T11:49:35Z",
+  "pipeline_version": "mock-generator"
+}
