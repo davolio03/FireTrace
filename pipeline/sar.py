@@ -21,6 +21,7 @@ import argparse
 import hashlib
 import json
 import math
+import shutil
 import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -48,6 +49,9 @@ COG_BLOCKSIZE = 256
 OVERVIEW_RESAMPLING = "nearest"
 
 _RASTER_IO_ERRORS = (RasterioError, OSError)
+OUTPUT_FILES: frozenset[str] = frozenset(
+    {*(f"{n}_db.tif" for n in NAMES), "valid_mask.tif", "sar.json"}
+)
 
 
 class SarError(Exception):
@@ -130,13 +134,57 @@ def load_ingest(ingest_dir: Path) -> dict[str, Any]:
         doc = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise SarError(f"cannot read {path.name}: {exc}") from exc
-    version = doc.get("ingest_format_version")
-    if version != SUPPORTED_INGEST_FORMAT_VERSION:
-        raise SarError(f"unsupported ingest_format_version {version!r}")
-    missing = [n for n in NAMES if n not in doc.get("outputs", {})]
-    if missing:
-        raise SarError(f"ingest.json lacks outputs {missing}")
+    validate_ingest(doc)
     return doc
+
+
+def _expect(cond: bool, what: str) -> None:
+    if not cond:
+        raise SarError(f"ingest.json: {what}")
+
+
+def _is_number(v: Any) -> bool:
+    return isinstance(v, int | float) and not isinstance(v, bool)
+
+
+def validate_ingest(doc: Any) -> None:
+    """Check every ingest.json field DT-02 relies on, before anything is written."""
+    _expect(isinstance(doc, dict), "top level must be an object")
+    version = doc.get("ingest_format_version")
+    _expect(
+        version == SUPPORTED_INGEST_FORMAT_VERSION,
+        f"unsupported ingest_format_version {version!r}",
+    )
+    _expect(isinstance(doc.get("case_id"), str), "'case_id' must be a string")
+    grid = doc.get("grid")
+    crop = grid.get("crop") if isinstance(grid, dict) else None
+    _expect(isinstance(crop, dict), "'grid.crop' must be an object")
+    transform = crop.get("transform")
+    _expect(
+        isinstance(transform, list) and len(transform) == 6 and all(map(_is_number, transform)),
+        "'grid.crop.transform' must be 6 numbers",
+    )
+    for key in ("width", "height"):
+        value = crop.get(key)
+        _expect(
+            isinstance(value, int) and not isinstance(value, bool) and value > 0,
+            f"'grid.crop.{key}' must be a positive integer",
+        )
+    outputs = doc.get("outputs")
+    _expect(isinstance(outputs, dict), "'outputs' must be an object")
+    for name in NAMES:
+        record = outputs.get(name)
+        _expect(isinstance(record, dict), f"'outputs.{name}' is missing")
+        _expect(isinstance(record.get("file"), str), f"'outputs.{name}.file' must be a string")
+        sha = record.get("sha256")
+        _expect(
+            isinstance(sha, str) and len(sha) == 64, f"'outputs.{name}.sha256' must be a sha256"
+        )
+        nodata = record.get("nodata")
+        _expect(
+            nodata is None or nodata == "nan" or _is_number(nodata),
+            f"'outputs.{name}.nodata' must be null, 'nan' or a number",
+        )
 
 
 @dataclass(frozen=True)
@@ -229,9 +277,51 @@ def write_cog(dst: Path, data: np.ndarray, *, crs: CRS, transform: Affine, nodat
 
 
 def write_json(path: Path, document: Mapping[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
     text = json.dumps(document, indent=2, sort_keys=True, ensure_ascii=True, allow_nan=False)
-    path.write_text(text + "\n", encoding="utf-8", newline="\n")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text + "\n", encoding="utf-8", newline="\n")
+    except OSError as exc:
+        raise SarError(f"{path.name}: cannot write: {exc}") from exc
+
+
+def _staging_dirs(output_dir: Path) -> tuple[Path, Path]:
+    return (
+        output_dir.with_name(f".{output_dir.name}.staging"),
+        output_dir.with_name(f".{output_dir.name}.previous"),
+    )
+
+
+def check_output_dir(output_dir: Path) -> None:
+    """Only a missing directory or one holding exactly our products may be replaced."""
+    if output_dir.exists():
+        if not output_dir.is_dir():
+            raise SarError(f"output_dir {output_dir.name} is not a directory")
+        foreign = sorted(p.name for p in output_dir.iterdir() if p.name not in OUTPUT_FILES)
+        if foreign:
+            raise SarError(
+                f"output_dir {output_dir.name} holds files this stage does not own: {foreign}"
+            )
+
+
+def publish(staging: Path, output_dir: Path) -> None:
+    """Swap a complete staging set into place; the previous set survives a failed swap."""
+    _, previous = _staging_dirs(output_dir)
+    try:
+        if previous.exists():
+            shutil.rmtree(previous)
+        if output_dir.exists():
+            output_dir.rename(previous)
+        try:
+            staging.rename(output_dir)
+        except OSError:
+            if previous.exists() and not output_dir.exists():
+                previous.rename(output_dir)
+            raise
+        if previous.exists():
+            shutil.rmtree(previous)
+    except OSError as exc:
+        raise SarError(f"cannot publish outputs to {output_dir.name}: {exc}") from exc
 
 
 # --------------------------------------------------------------------------- run
@@ -241,6 +331,7 @@ def run_sar(ingest_dir: Path, output_dir: Path) -> dict[str, Any]:
     """Convert the crops in ``ingest_dir`` and return the ``sar.json`` document written."""
     if output_dir.resolve() == ingest_dir.resolve():
         raise SarError("output_dir must differ from ingest_dir")
+    check_output_dir(output_dir)
     ingest = load_ingest(ingest_dir)
     crop = ingest["grid"]["crop"]
     layers = {
@@ -249,12 +340,34 @@ def run_sar(ingest_dir: Path, output_dir: Path) -> dict[str, Any]:
         )
         for name in NAMES
     }
-    ref = layers[NAMES[0]]
     nodata = {name: layer.nodata for name, layer in layers.items()}
     mask = common_valid_mask({n: lyr.data for n, lyr in layers.items()}, nodata)
+
+    # Build the complete set in a staging directory, then publish it in one swap, so a
+    # failed run never leaves mixed-generation files or a stale sar.json behind.
+    staging, _ = _staging_dirs(output_dir)
+    if staging.exists():
+        shutil.rmtree(staging)
+    try:
+        document = _build(staging, ingest_dir, ingest, crop, layers, mask)
+        publish(staging, output_dir)
+    finally:
+        if staging.exists():
+            shutil.rmtree(staging, ignore_errors=True)
+    return document
+
+
+def _build(
+    output_dir: Path,
+    ingest_dir: Path,
+    ingest: Mapping[str, Any],
+    crop: Mapping[str, Any],
+    layers: Mapping[str, Layer],
+    mask: np.ndarray,
+) -> dict[str, Any]:
+    ref = layers[NAMES[0]]
     total = int(mask.size)
     valid_total = int(mask.sum())
-
     layer_records: dict[str, Any] = {}
     for name, layer in layers.items():
         out = output_dir / f"{name}_db.tif"

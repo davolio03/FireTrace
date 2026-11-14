@@ -60,7 +60,7 @@ Internal, gitignored pipeline products on the 10 m EPSG:32610 crop grid. They ar
 | DT-02 dB | `data/interim/sar/valid_mask.tif` | COG, uint8 (no nodata): 1 = valid in all four layers, 0 = invalid in at least one |
 | DT-02 dB | `data/interim/sar/sar.json` | formula, mask rule, per-layer counts (valid / nodata / non_positive), valid pixels and coverage %, sha256 of ingest.json, sources and outputs |
 
-COGs use 256 px deflate blocks and nearest-neighbour overviews for display only; scientific lookups read the full-resolution level.
+COGs use 256 px deflate blocks and nearest-neighbour overviews for display only; scientific lookups read the full-resolution level. DT-02 builds the whole set in a sibling staging directory and swaps it into place only when complete, so a failed run keeps the previous complete set; it refuses an output directory holding files it does not own.
 
 ## Reproducibility, diagnostics and deployment
 

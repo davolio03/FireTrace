@@ -18,6 +18,7 @@ from affine import Affine
 from rasterio.crs import CRS
 from rio_cogeo.cogeo import cog_validate
 
+from pipeline import sar
 from pipeline.sar import NAMES, SarError, classify, common_valid_mask, main, run_sar, to_db
 
 UTM10N = CRS.from_epsg(32610)
@@ -196,3 +197,97 @@ def test_cli_reports_errors_with_exit_code(
 ) -> None:
     assert main(["--ingest-dir", str(tmp_path / "missing"), "--output-dir", str(tmp_path)]) == 2
     assert "sar error" in capsys.readouterr().err
+
+
+# --------------------------------------------------------------- publication safety
+
+
+def _snapshot(directory: Path) -> dict[str, bytes]:
+    return {p.name: p.read_bytes() for p in sorted(directory.iterdir())}
+
+
+def _fail_on_second_cog(monkeypatch: pytest.MonkeyPatch) -> None:
+    real = sar.write_cog
+    calls = {"n": 0}
+
+    def flaky(*args: Any, **kwargs: Any) -> None:
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise SarError("injected write failure")
+        real(*args, **kwargs)
+
+    monkeypatch.setattr(sar, "write_cog", flaky)
+
+
+def test_failed_first_run_leaves_no_outputs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ingest = write_ingest_dir(tmp_path / "nisar")
+    _fail_on_second_cog(monkeypatch)
+    with pytest.raises(SarError, match="injected"):
+        run_sar(ingest, tmp_path / "sar")
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["nisar"]
+
+
+def test_failed_rerun_keeps_the_previous_complete_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ingest = write_ingest_dir(tmp_path / "nisar")
+    run_sar(ingest, tmp_path / "sar")
+    before = _snapshot(tmp_path / "sar")
+    write_ingest_dir(tmp_path / "nisar", {"t1_hh": base_power(42)})  # new, valid input
+    _fail_on_second_cog(monkeypatch)
+    with pytest.raises(SarError, match="injected"):
+        run_sar(ingest, tmp_path / "sar")
+    assert _snapshot(tmp_path / "sar") == before
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["nisar", "sar"]
+
+
+def test_output_dir_with_foreign_files_is_rejected(tmp_path: Path) -> None:
+    ingest = write_ingest_dir(tmp_path / "nisar")
+    (tmp_path / "sar").mkdir()
+    (tmp_path / "sar" / "notes.txt").write_text("keep me", encoding="utf-8")
+    with pytest.raises(SarError, match="does not own"):
+        run_sar(ingest, tmp_path / "sar")
+    assert (tmp_path / "sar" / "notes.txt").read_text(encoding="utf-8") == "keep me"
+
+
+@pytest.mark.parametrize(
+    ("mutate", "message"),
+    [
+        (lambda d: [], "top level must be an object"),
+        (lambda d: {k: v for k, v in d.items() if k != "case_id"}, "'case_id'"),
+        (lambda d: {**d, "grid": {"crop": {**d["grid"]["crop"], "width": "50"}}}, "width"),
+        (lambda d: {**d, "outputs": {"t1_hh": d["outputs"]["t1_hh"]}}, "outputs.t1_hv"),
+    ],
+    ids=["not_object", "no_case_id", "bad_width", "missing_layer"],
+)
+def test_malformed_ingest_manifest_is_rejected_before_writing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], mutate: Any, message: str
+) -> None:
+    ingest = write_ingest_dir(tmp_path / "nisar")
+    doc = json.loads((ingest / "ingest.json").read_text(encoding="utf-8"))
+    (ingest / "ingest.json").write_text(json.dumps(mutate(doc)), encoding="utf-8")
+    out = tmp_path / "sar"
+    assert main(["--ingest-dir", str(ingest), "--output-dir", str(out)]) == 2
+    assert message in capsys.readouterr().err
+    assert not out.exists()
+
+
+def test_cog_with_overviews_keeps_full_resolution_values(tmp_path: Path) -> None:
+    size = (1200, 1100)  # large enough for rio-cogeo to build overviews
+    data = {
+        n: np.random.default_rng(i).uniform(0.001, 2.0, size).astype(np.float32)
+        for i, n in enumerate(NAMES)
+    }
+    data["t1_hv"][700:720, 900:950] = np.nan
+    root = tmp_path / "nisar"
+    write_ingest_dir(root, data)
+    record = json.loads((root / "ingest.json").read_text(encoding="utf-8"))
+    record["grid"]["crop"].update({"width": size[1], "height": size[0]})
+    (root / "ingest.json").write_text(json.dumps(record), encoding="utf-8")
+    run_sar(root, tmp_path / "sar")
+    with rasterio.open(tmp_path / "sar" / "t1_hv_db.tif") as ds:
+        assert ds.overviews(1), "expected internal overviews"
+        assert ds.transform == TRANSFORM and (ds.height, ds.width) == size
+        np.testing.assert_array_equal(ds.read(1), to_db(data["t1_hv"], float("nan")))
