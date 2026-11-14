@@ -1,0 +1,34 @@
+# DT-04 web export configuration for the Plaskett Fire case.
+# Run from the repository root:
+#   uv run python -m pipeline.export --config pipeline/configs/case_plaskett.toml
+# Relative paths resolve against the current working directory. Every input is verified
+# against its upstream manifest; terrain_dir and weather_dir are optional and are merged
+# only when their manifest (terrain.json / weather_meta.json) exists.
+# Case identity fields below are not produced by any pipeline stage: name, location and
+# fire_start come from docs/PRODUCT.md and the CAL FIRE incident page.
+
+case_id = "plaskett-2026"
+name = "Plaskett Fire"
+location = "Big Sur, Monterey County, California, USA"
+fire_start = "2026-08-26"
+
+ingest_dir = "data/interim/nisar"
+sar_dir = "data/interim/sar"
+change_dir = "data/interim/change"
+perimeter_dir = "data/interim/perimeter"
+stats_dir = "data/interim/stats"
+terrain_dir = "data/interim/terrain"
+weather_dir = "data/interim/weather"
+output_dir = "data/processed/web"
+
+[[sources]]
+label = "CAL FIRE incident page"
+url = "https://www.fire.ca.gov/incidents/2026/8/26/plaskett-fire"
+
+[[sources]]
+label = "NISAR GCOV before (CMR)"
+url = "https://cmr.earthdata.nasa.gov/search/granules.umm_json?concept_id=G4284560161-ASF"
+
+[[sources]]
+label = "NISAR GCOV after (CMR)"
+url = "https://cmr.earthdata.nasa.gov/search/granules.umm_json?concept_id=G4340499432-ASF"

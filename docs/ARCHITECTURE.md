@@ -74,8 +74,11 @@ Internal, gitignored pipeline products on the 10 m EPSG:32610 crop grid. They ar
 | DT-06 weather | `data/raw/imerg/` | IMERG Late daily V07 granules downloaded once by `pipeline.weather fetch` + `imerg_manifest.json` (URLs, sha256) |
 | DT-06 weather | `data/interim/weather/weather.json` | Web contract (`weather.schema.json`): AOI area-weighted daily precipitation, summary up to the day before t2; copied by DT-04 ([method](methods/weather.md)) |
 | DT-06 weather | `data/interim/weather/weather_meta.json` | Input checksums, IMERG version, cells and weights, date and rain-day rules, missing days |
+| DT-04 export | `data/processed/web/{case,layers}.json` + `layers/<id>.png` | Web contract bundle: EPSG:3857 RGBA PNGs (nearest, common-mask transparency, shared stretches), corners and legends, `case.json` from the upstream manifests ([method](methods/web-export.md)) |
+| DT-04 export | `data/processed/web/{stats.json,perimeter.geojson,weather.json}` | Byte-for-byte copies of the CH-02, DT-03 and (optional) DT-06 products, plus merged DT-05 terrain layers when present |
+| DT-04 export | `data/processed/web/export.json` | Not a contract file: input and output sha256, optional inputs merged, web grid, resampling, stretch rules and domains |
 
-COGs use 256 px deflate blocks and nearest-neighbour overviews for display only; scientific lookups read the full-resolution level. DT-02, CH-01, DT-03, CH-02, DT-05 and DT-06 build the whole set in a sibling staging directory and swap it into place only when complete, so a failed run keeps the previous complete set; each stage refuses an output directory holding files it does not own.
+COGs use 256 px deflate blocks and nearest-neighbour overviews for display only; scientific lookups read the full-resolution level. DT-02, CH-01, DT-03, CH-02, DT-05, DT-06 and DT-04 build the whole set in a sibling staging directory and swap it into place only when complete, so a failed run keeps the previous complete set; each stage refuses an output directory holding files it does not own.
 
 ## Reproducibility, diagnostics and deployment
 
