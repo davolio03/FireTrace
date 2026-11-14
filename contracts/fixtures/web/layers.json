@@ -1,5 +1,5 @@
 {
-  "contract_version": "1.0.0",
+  "contract_version": "1.1.0",
   "data_status": "mock",
   "layers": [
     {
@@ -351,7 +351,7 @@
         "units": "index (unitless, robust z-score)",
         "domain": [
           0.0,
-          5.89
+          5.71
         ],
         "stops": [
           {
@@ -359,19 +359,19 @@
             "color": "#440154"
           },
           {
-            "value": 1.472,
+            "value": 1.427,
             "color": "#3b528b"
           },
           {
-            "value": 2.945,
+            "value": 2.855,
             "color": "#21918c"
           },
           {
-            "value": 4.417,
+            "value": 4.282,
             "color": "#5ec962"
           },
           {
-            "value": 5.89,
+            "value": 5.71,
             "color": "#fde725"
           }
         ]
@@ -475,6 +475,37 @@
           }
         ],
         "note": "Reference only, not pixel-level truth."
+      }
+    },
+    {
+      "id": "review_zones",
+      "title": "Zones to review",
+      "kind": "vector",
+      "group": "highlighted_change",
+      "url": "review_zones.geojson",
+      "default_visible": false,
+      "default_opacity": 1.0,
+      "p1": true,
+      "legend": {
+        "type": "categorical",
+        "items": [
+          {
+            "value": "change_outside_perimeter",
+            "label": "Radar change outside the perimeter",
+            "color": "#e66101"
+          },
+          {
+            "value": "no_change_inside_perimeter",
+            "label": "Little radar change inside the perimeter",
+            "color": "#5e3c99"
+          },
+          {
+            "value": "change_inside_perimeter",
+            "label": "Radar change inside the perimeter (agreement)",
+            "color": "#1b7837"
+          }
+        ],
+        "note": "Derived from an exploratory threshold. Discrepancies are prompts to investigate, not errors."
       }
     }
   ]

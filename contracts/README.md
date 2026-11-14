@@ -1,4 +1,4 @@
-# Contrato de datos y API — v1.0.0
+# Contrato de datos y API — v1.1.0
 
 El contrato permite que **pipeline, API y web avancen en paralelo**. Cada lado programa contra el contrato, no contra el código de los demás.
 
@@ -25,6 +25,7 @@ stats.json         métricas sobre píxeles válidos        → stats.schema.jso
 layers.json        manifiesto de capas + leyendas        → layers.schema.json
 perimeter.geojson  perímetro WFIGS 58728 (EPSG:4326)
 layers/<id>.png    una PNG RGBA por capa ráster, ya en EPSG:3857 (transparente = nodata)
+review_zones.geojson  (P1, opcional) zonas a revisar   → review-zones.schema.json
 ```
 
 - **Web:** la ruta base de datos se elige con `VITE_DATA_BASE_URL` y la API con `VITE_API_BASE_URL`; con `VITE_USE_MOCKS=true`, MSW responde a `/api/*` usando `contracts/fixtures/api/`. Pasar de mock a real es cambiar variables de entorno, no código.
@@ -37,9 +38,21 @@ Todos los ficheros llevan `data_status: "mock" | "real"`. **La web debe mostrar 
 
 Cada capa es una imagen que MapLibre pinta con una fuente `image` y sus 4 esquinas (`coordinates` en `layers.json`). No hay servidor de tiles. Al tamaño del AOI (~20 × 17 km a 10 m, unos 2000 × 1700 px) es sencillo y rápido. La paleta y el rango los fija el pipeline y se describen en `legend`, así que la web pinta la leyenda sin conocer los datos.
 
-IDs de capa fijos: `sar_t1_hh`, `sar_t2_hh`, `sar_t1_hv`, `sar_t2_hv`, `change_hh`, `change_hv`, `change_index`, `highlight_mask` (P1), `valid_mask`, `perimeter`. El campo `group` (`sar`, `observed_change`, `highlighted_change`, `reference`, `quality`) mantiene en la UI la separación observación / interpretación / contraste.
+IDs de capa fijos: `sar_t1_hh`, `sar_t2_hh`, `sar_t1_hv`, `sar_t2_hv`, `change_hh`, `change_hv`, `change_index`, `highlight_mask` (P1), `valid_mask`, `perimeter`, `review_zones` (P1). El campo `group` (`sar`, `observed_change`, `highlighted_change`, `reference`, `quality`) mantiene en la UI la separación observación / interpretación / contraste.
 
 Los valores numéricos de cada píxel no salen de las PNG, sino de `GET /api/inspect/point`.
+
+## Zonas a revisar (P1 · EV-04)
+
+`review_zones.geojson` lista regiones conectadas, precalculadas y ordenadas, para que el analista sepa **dónde mirar primero**:
+
+| `kind` | Prefijo | Qué es |
+|---|---|---|
+| `change_outside_perimeter` | `CO` | Cambio radar destacado **fuera** del perímetro → discrepancia |
+| `no_change_inside_perimeter` | `NI` | Poco cambio radar **dentro** del perímetro → discrepancia (¿isla sin quemar?, ¿límite del radar?) |
+| `change_inside_perimeter` | `CI` | Cambio destacado dentro → ejemplos de **acuerdo** |
+
+Cada zona trae la superficie, el centroide y la bbox (para que el mapa vuele a ella), las medianas de HH y HV antes, después y delta, el índice, la distancia al perímetro y la fracción de píxeles en los que se activa cada cautela. `method` documenta los umbrales usados. Todo sale del pipeline: la web no recalcula nada. Las discrepancias se presentan como **"para investigar"**, nunca como errores del radar ni del perímetro.
 
 ## Fixtures (todo sintético salvo la geometría del perímetro)
 

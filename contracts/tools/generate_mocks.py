@@ -34,7 +34,7 @@ FIX = ROOT / "contracts" / "fixtures"
 WEB = FIX / "web"
 API = FIX / "api"
 
-CONTRACT_VERSION = "1.0.0"
+CONTRACT_VERSION = "1.1.0"
 # AOI = perimeter bbox + ~2 km margin (the real pipeline recomputes it).
 AOI = (-121.495, 35.840, -121.278, 35.992)
 WIDTH = 480  # mock resolution; real layers are ~10 m/px
@@ -141,14 +141,16 @@ def build_fields(h: int, w: int) -> dict[str, np.ndarray]:
     # A non-fire change outside the perimeter (e.g. soil moisture) to show discrepancies.
     yy, xx = np.mgrid[0:h, 0:w]
     moisture = np.exp(-(((xx - 0.85 * w) / (0.07 * w)) ** 2 + ((yy - 0.2 * h) / (0.08 * h)) ** 2)).astype(np.float32)
+    # A small non-fire structural change (e.g. a landslide on the coast side), also outside the perimeter.
+    moisture += 1.3 * np.exp(-(((xx - 0.12 * w) / (0.025 * w)) ** 2 + ((yy - 0.85 * h) / (0.04 * h)) ** 2)).astype(np.float32)
 
     def speckle(sd: float) -> np.ndarray:
         return RNG.normal(0, sd, (h, w)).astype(np.float32)
 
     hh_t1 = -11.0 + terrain + speckle(1.2)
     hv_t1 = -18.0 + 0.8 * terrain + speckle(1.2)
-    hh_t2 = hh_t1 - 2.5 * effect + 1.8 * moisture + speckle(1.0)
-    hv_t2 = hv_t1 - 4.0 * effect + 1.2 * moisture + speckle(1.0)
+    hh_t2 = hh_t1 - 2.5 * effect + 3.5 * moisture + speckle(1.0)
+    hv_t2 = hv_t1 - 4.0 * effect + 2.5 * moisture + speckle(1.0)
 
     valid = np.ones((h, w), dtype=bool)
     # Fake radar shadow strip + scattered invalid pixels.
@@ -210,6 +212,119 @@ def distribution(a: np.ndarray) -> dict:
         "p5": round(float(q[0]), 3), "p25": round(float(q[1]), 3), "p50": round(float(q[2]), 3),
         "p75": round(float(q[3]), 3), "p95": round(float(q[4]), 3), "mean": round(float(v.mean()), 3),
         "histogram": {"bin_edges": [round(float(e), 3) for e in edges], "counts": [int(c) for c in counts]},
+    }
+
+
+def box_mean(a: np.ndarray, r: int) -> np.ndarray:
+    """Mean filter of radius r (NaN filled with the median first)."""
+    a = np.where(np.isnan(a), np.nanmedian(a), a)
+    p = np.pad(a, r, mode="edge")
+    c = p.cumsum(0).cumsum(1)
+    c = np.pad(c, ((1, 0), (1, 0)))
+    k = 2 * r + 1
+    s = c[k:, k:] - c[:-k, k:] - c[k:, :-k] + c[:-k, :-k]
+    return s / (k * k)
+
+
+def label_components(mask: np.ndarray) -> list[np.ndarray]:
+    """4-connected components; returns a list of (N, 2) arrays of (row, col)."""
+    h, w = mask.shape
+    seen = np.zeros_like(mask, dtype=bool)
+    comps = []
+    for r0, c0 in np.argwhere(mask):
+        if seen[r0, c0]:
+            continue
+        stack, pix = [(r0, c0)], []
+        seen[r0, c0] = True
+        while stack:
+            r, c = stack.pop()
+            pix.append((r, c))
+            for rr, cc in ((r + 1, c), (r - 1, c), (r, c + 1), (r, c - 1)):
+                if 0 <= rr < h and 0 <= cc < w and mask[rr, cc] and not seen[rr, cc]:
+                    seen[rr, cc] = True
+                    stack.append((rr, cc))
+        comps.append(np.array(pix))
+    return comps
+
+
+def convex_hull(points: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    pts = sorted(set(points))
+    if len(pts) < 3:
+        return pts
+
+    def cross(o, a, b):
+        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+
+    lower, upper = [], []
+    for p in pts:
+        while len(lower) >= 2 and cross(lower[-2], lower[-1], p) <= 0:
+            lower.pop()
+        lower.append(p)
+    for p in reversed(pts):
+        while len(upper) >= 2 and cross(upper[-2], upper[-1], p) <= 0:
+            upper.pop()
+        upper.append(p)
+    return lower[:-1] + upper[:-1]
+
+
+def build_review_zones(f: dict, h: int, w: int, px_area: float, thr: float) -> dict:
+    """MOCK zones. Geometry = convex hull of the region's pixels (the real pipeline vectorises the mask)."""
+    valid, inside, idx = f["valid"], f["inside"], f["change_index"]
+    sm = box_mean(idx, 3)
+    no_change_thr = float(np.nanpercentile(idx[inside & valid], 25))
+    min_area_ha, max_per_kind = 15.0, 6
+    px_m = math.sqrt(px_area)
+    # Perimeter boundary pixels, for distances and the near-edge caveat.
+    edge = inside & ~(np.roll(inside, 1, 0) & np.roll(inside, -1, 0) & np.roll(inside, 1, 1) & np.roll(inside, -1, 1))
+    edge_pts = np.argwhere(edge).astype(np.float32)
+    kinds = [
+        ("change_outside_perimeter", "CO", (sm > thr) & ~inside & valid),
+        ("no_change_inside_perimeter", "NI", (sm < no_change_thr) & inside & valid),
+        ("change_inside_perimeter", "CI", (sm > thr) & inside & valid),
+    ]
+    features = []
+    for kind, prefix, mask in kinds:
+        comps = [c for c in label_components(mask) if len(c) * px_area / 1e4 >= min_area_ha]
+        comps.sort(key=len, reverse=True)
+        for rank, pix in enumerate(comps[:max_per_kind], start=1):
+            rows, cols = pix[:, 0], pix[:, 1]
+            corners = [(c + dc, r + dr) for r, c in pix for dr in (0, 1) for dc in (0, 1)]
+            hull = [px_to_lonlat(c, r, h, w) for c, r in convex_hull(corners)]
+            ring = [[round(x, 6), round(y, 6)] for x, y in hull] + [[round(hull[0][0], 6), round(hull[0][1], 6)]]
+            lons, lats = [p[0] for p in ring], [p[1] for p in ring]
+            cen = px_to_lonlat(cols.mean() + 0.5, rows.mean() + 0.5, h, w)
+            sample = pix[:: max(1, len(pix) // 400)].astype(np.float32)
+            d = np.sqrt(((sample[:, None, :] - edge_pts[None, :, :]) ** 2).sum(-1)).min(1)
+            dist_m = 0.0 if d.min() <= 1.5 else round(float(d.min() * px_m), 0)
+
+            def med(k: str) -> float:
+                return round(float(np.nanmedian(f[k][rows, cols])), 2)
+
+            cav = [{"id": "near_perimeter_edge", "label": "Near the perimeter edge", "fraction": round(float((d * px_m < 200).mean()), 2)}]
+            steep = float(((rows > 0.55 * h) & (rows < 0.75 * h)).mean())
+            if steep > 0:
+                cav.append({"id": "steep_slope", "label": "Steep slope", "fraction": round(steep, 2)})
+            features.append({
+                "type": "Feature", "id": f"{prefix}-{rank:02d}",
+                "geometry": {"type": "Polygon", "coordinates": [ring]},
+                "properties": {
+                    "zone_id": f"{prefix}-{rank:02d}", "kind": kind, "rank": rank,
+                    "area_ha": round(len(pix) * px_area / 1e4, 1),
+                    "centroid": [round(cen[0], 6), round(cen[1], 6)],
+                    "bbox": [min(lons), min(lats), max(lons), max(lats)],
+                    "valid_fraction": round(float(valid[rows, cols].mean()), 3),
+                    "hh_db": {"t1_median": med("sar_t1_hh"), "t2_median": med("sar_t2_hh"), "delta_median": med("change_hh")},
+                    "hv_db": {"t1_median": med("sar_t1_hv"), "t2_median": med("sar_t2_hv"), "delta_median": med("change_hv")},
+                    "change_index": {"median": med("change_index"), "p90": round(float(np.nanpercentile(idx[rows, cols], 90)), 2)},
+                    "distance_to_perimeter_m": dist_m,
+                    "caveats": cav,
+                },
+            })
+    return {
+        "type": "FeatureCollection", "contract_version": CONTRACT_VERSION, "data_status": "mock",
+        "method": {"change_threshold": round(thr, 3), "no_change_threshold": round(no_change_thr, 3),
+                   "smoothing": "7x7 mean of change_index (mock)", "min_area_ha": min_area_ha, "max_zones_per_kind": max_per_kind},
+        "features": features,
     }
 
 
@@ -391,6 +506,19 @@ def main() -> None:
         "inside": [[bool(inside[r, c]) for c in cols] for r in rows],
     }
     (API / "inspect-grid.json").write_text(json.dumps(grid, separators=(",", ":")), encoding="utf-8")
+
+    # Review zones (P1, EV-04): discrepancies and agreement examples between radar change and perimeter.
+    zones_fc = build_review_zones(f, h, w, px_area, float(f["_thr"]))
+    (WEB / "review_zones.geojson").write_text(json.dumps(zones_fc, ensure_ascii=False) + "\n", encoding="utf-8")
+    layers.append({
+        "id": "review_zones", "title": "Zones to review", "kind": "vector", "group": "highlighted_change", "url": "review_zones.geojson",
+        "default_visible": False, "default_opacity": 1.0, "p1": True,
+        "legend": {"type": "categorical", "items": [
+            {"value": "change_outside_perimeter", "label": "Radar change outside the perimeter", "color": "#e66101"},
+            {"value": "no_change_inside_perimeter", "label": "Little radar change inside the perimeter", "color": "#5e3c99"},
+            {"value": "change_inside_perimeter", "label": "Radar change inside the perimeter (agreement)", "color": "#1b7837"},
+        ], "note": "Derived from an exploratory threshold. Discrepancies are prompts to investigate, not errors."},
+    })
 
     for name, obj in (("case", case), ("stats", stats), ("layers", {"contract_version": CONTRACT_VERSION, "data_status": "mock", "layers": layers})):
         (WEB / f"{name}.json").write_text(json.dumps(obj, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")

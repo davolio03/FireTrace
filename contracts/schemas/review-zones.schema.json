@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://firetrace.local/contracts/review-zones.schema.json",
+  "title": "ReviewZones",
+  "description": "P1 (EV-04). web/review_zones.geojson: connected regions where the radar change and the reference perimeter agree or disagree, ranked so the analyst knows where to look first. Precomputed by the pipeline; the web lists them, flies to them and shows their evidence. Kinds describe the relation between OBSERVED radar change and the REFERENCE perimeter, never 'burned' / 'unburned'.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["type", "contract_version", "data_status", "method", "features"],
+  "properties": {
+    "type": { "const": "FeatureCollection" },
+    "contract_version": { "const": "1.1.0" },
+    "data_status": { "enum": ["mock", "real"] },
+    "method": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["change_threshold", "no_change_threshold", "smoothing", "min_area_ha", "max_zones_per_kind"],
+      "description": "How zones were derived, shown to the analyst next to the list.",
+      "properties": {
+        "change_threshold": { "type": "number", "description": "change_index above which a pixel counts as 'changed' (same threshold as highlight_mask)." },
+        "no_change_threshold": { "type": "number", "description": "change_index below which a pixel inside the perimeter counts as 'little change'." },
+        "smoothing": { "type": "string" },
+        "min_area_ha": { "type": "number", "minimum": 0 },
+        "max_zones_per_kind": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "features": { "type": "array", "items": { "$ref": "#/$defs/zone" } }
+  },
+  "$defs": {
+    "zone": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id", "geometry", "properties"],
+      "properties": {
+        "type": { "const": "Feature" },
+        "id": { "type": "string" },
+        "geometry": {
+          "type": "object",
+          "required": ["type", "coordinates"],
+          "properties": { "type": { "enum": ["Polygon", "MultiPolygon"] }, "coordinates": { "type": "array" } }
+        },
+        "properties": { "$ref": "#/$defs/zoneProps" }
+      }
+    },
+    "zoneProps": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["zone_id", "kind", "rank", "area_ha", "centroid", "bbox", "valid_fraction", "hh_db", "hv_db", "change_index", "distance_to_perimeter_m", "caveats"],
+      "properties": {
+        "zone_id": { "type": "string", "pattern": "^(CO|NI|CI)-[0-9]{2,}$", "description": "CO = change outside, NI = little change inside, CI = change inside." },
+        "kind": {
+          "enum": ["change_outside_perimeter", "no_change_inside_perimeter", "change_inside_perimeter"],
+          "description": "change_outside_perimeter and no_change_inside_perimeter are DISCREPANCIES to review; change_inside_perimeter are AGREEMENT examples."
+        },
+        "rank": { "type": "integer", "minimum": 1, "description": "1 = review first, within its kind (by area)." },
+        "area_ha": { "type": "number", "minimum": 0 },
+        "centroid": { "type": "array", "prefixItems": [{ "type": "number" }, { "type": "number" }], "minItems": 2, "maxItems": 2, "description": "[lon, lat] for the list and map label." },
+        "bbox": { "type": "array", "items": { "type": "number" }, "minItems": 4, "maxItems": 4, "description": "[min_lon, min_lat, max_lon, max_lat] for map fitBounds." },
+        "valid_fraction": { "type": "number", "minimum": 0, "maximum": 1 },
+        "hh_db": { "$ref": "#/$defs/polStats" },
+        "hv_db": { "$ref": "#/$defs/polStats" },
+        "change_index": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["median", "p90"],
+          "properties": { "median": { "type": "number" }, "p90": { "type": "number" } }
+        },
+        "distance_to_perimeter_m": { "type": "number", "minimum": 0, "description": "0 if the zone touches the perimeter line." },
+        "caveats": {
+          "type": "array",
+          "description": "Deterministic rules summarised over the zone (same ids as inspect-point caveats).",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "label", "fraction"],
+            "properties": {
+              "id": { "enum": ["steep_slope", "radar_shadow_layover", "soil_moisture_change", "vegetation_structure", "near_perimeter_edge", "low_backscatter", "other_disturbance"] },
+              "label": { "type": "string" },
+              "fraction": { "type": "number", "minimum": 0, "maximum": 1, "description": "Share of the zone's valid pixels where the rule fired." }
+            }
+          }
+        }
+      }
+    },
+    "polStats": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t1_median", "t2_median", "delta_median"],
+      "description": "Medians over the zone's valid pixels, in dB.",
+      "properties": {
+        "t1_median": { "type": "number" },
+        "t2_median": { "type": "number" },
+        "delta_median": { "type": "number" }
+      }
+    }
+  }
+}

@@ -7,7 +7,7 @@
   "additionalProperties": false,
   "required": ["contract_version", "data_status", "layers"],
   "properties": {
-    "contract_version": { "const": "1.0.0" },
+    "contract_version": { "const": "1.1.0" },
     "data_status": { "enum": ["mock", "real"] },
     "layers": { "type": "array", "items": { "$ref": "#/$defs/layer" }, "minItems": 1 }
   },
@@ -27,7 +27,7 @@
           "enum": [
             "sar_t1_hh", "sar_t2_hh", "sar_t1_hv", "sar_t2_hv",
             "change_hh", "change_hv", "change_index",
-            "highlight_mask", "valid_mask", "perimeter"
+            "highlight_mask", "valid_mask", "perimeter", "review_zones"
           ]
         },
         "title": { "type": "string", "description": "UI label in English, e.g. 'Observed radar changes'." },

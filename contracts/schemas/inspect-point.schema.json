@@ -7,7 +7,7 @@
   "additionalProperties": false,
   "required": ["contract_version", "data_status", "query", "pixel", "valid", "hh_db", "hv_db", "change_index", "highlighted", "perimeter_relation", "method_id", "caveats"],
   "properties": {
-    "contract_version": { "const": "1.0.0" },
+    "contract_version": { "const": "1.1.0" },
     "data_status": { "enum": ["mock", "real"] },
     "query": {
       "type": "object",

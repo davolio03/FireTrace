@@ -53,6 +53,11 @@ def check_web_dir(web: Path, errors: list[str]) -> None:
         url = layer.get("url")
         if url and not (web / url).exists():
             errors.append(f"layers.json: {layer['id']}: file not found: {url}")
+    # Optional P1 product: validated whenever it is published.
+    if (web / "review_zones.geojson").exists():
+        zones = check(web / "review_zones.geojson", "review-zones", errors)
+        if zones and case and zones.get("data_status") != case.get("data_status"):
+            errors.append("review_zones.geojson: data_status differs from case.json")
 
 
 def main() -> int:

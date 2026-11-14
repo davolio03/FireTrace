@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: FireTrace Explorer API
-  version: 1.0.0
+  version: 1.1.0
   description: >
     Contract between the FastAPI service (api/) and the web (web/).
     Schemas live in contracts/schemas/*.schema.json and are the single source of truth.
