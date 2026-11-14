@@ -1,5 +1,5 @@
 {
-  "contract_version": "1.1.0",
+  "contract_version": "1.2.0",
   "data_status": "mock",
   "query": {
     "lon": -121.380849,
@@ -43,5 +43,10 @@
       "triggered": false,
       "reason": "Generic caution: HV responds to canopy volume; unburned stand changes also affect it."
     }
-  ]
+  ],
+  "terrain": {
+    "elevation_m": 579.5,
+    "slope_deg": 22.6,
+    "aspect_deg": 242.4
+  }
 }

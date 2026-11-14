@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://firetrace.local/contracts/weather.schema.json",
+  "title": "Weather",
+  "description": "web/weather.json (DT-06). Daily precipitation averaged over the AOI between the two NISAR acquisitions, to back the soil-moisture caveat with data (e.g. NASA GPM IMERG).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract_version", "data_status", "variable", "units", "aggregation", "source", "period", "daily", "total"],
+  "properties": {
+    "contract_version": { "const": "1.2.0" },
+    "data_status": { "enum": ["mock", "real"] },
+    "variable": { "const": "precipitation" },
+    "units": { "const": "mm/day" },
+    "aggregation": { "type": "string", "description": "e.g. 'AOI mean of IMERG Final daily'" },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["label", "url"],
+      "properties": { "label": { "type": "string" }, "url": { "type": "string", "format": "uri" }, "product": { "type": "string" } }
+    },
+    "period": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start", "end"],
+      "properties": { "start": { "type": "string", "format": "date" }, "end": { "type": "string", "format": "date" } }
+    },
+    "daily": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["date", "value"],
+        "properties": { "date": { "type": "string", "format": "date" }, "value": { "type": ["number", "null"], "minimum": 0 } }
+      }
+    },
+    "total": { "type": "number", "minimum": 0 },
+    "rain_days_over_1mm": { "type": "integer", "minimum": 0 },
+    "last_rain_before_t2": { "type": ["string", "null"], "format": "date", "description": "Last day >1 mm before the 'after' acquisition: recent rain makes moisture a stronger caveat." },
+    "notes": { "type": "string" }
+  }
+}

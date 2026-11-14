@@ -7,6 +7,7 @@
 Usage (from the repo root):
     uv run contracts/tools/validate.py                         # fixtures (web + api)
     uv run contracts/tools/validate.py data/processed/web      # real pipeline output
+    uv run contracts/tools/validate.py --story web/src/story/story.json
 
 Exit code 1 on any violation. Run it in CI for fixtures and in pipeline tests for real outputs.
 """
@@ -53,7 +54,11 @@ def check_web_dir(web: Path, errors: list[str]) -> None:
         url = layer.get("url")
         if url and not (web / url).exists():
             errors.append(f"layers.json: {layer['id']}: file not found: {url}")
-    # Optional P1 product: validated whenever it is published.
+    # Optional products: validated whenever they are published.
+    if (web / "weather.json").exists():
+        check(web / "weather.json", "weather", errors)
+    if (web / "story.json").exists():
+        check(web / "story.json", "story", errors)
     if (web / "review_zones.geojson").exists():
         zones = check(web / "review_zones.geojson", "review-zones", errors)
         if zones and case and zones.get("data_status") != case.get("data_status"):
@@ -62,7 +67,9 @@ def check_web_dir(web: Path, errors: list[str]) -> None:
 
 def main() -> int:
     errors: list[str] = []
-    if len(sys.argv) > 1:
+    if len(sys.argv) > 2 and sys.argv[1] == "--story":
+        check(Path(sys.argv[2]), "story", errors)
+    elif len(sys.argv) > 1:
         check_web_dir(Path(sys.argv[1]), errors)
     else:
         fixtures = ROOT / "contracts" / "fixtures"
@@ -70,6 +77,8 @@ def main() -> int:
         check(fixtures / "api" / "stats-with-highlight.json", "stats", errors)
         for p in sorted((fixtures / "api").glob("inspect-point-*.json")):
             check(p, "inspect-point", errors)
+        check(fixtures / "api" / "profile-example.json", "profile", errors)
+        check(fixtures / "exports" / "annotations.geojson", "annotations", errors)
     for e in errors:
         print(f"ERROR {e}")
     print("OK: contract satisfied" if not errors else f"FAILED: {len(errors)} error(s)")

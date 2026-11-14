@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://firetrace.local/contracts/story.schema.json",
+  "title": "Story",
+  "description": "Guided story mode (AP-06). Hand-authored by the storytelling lane, NOT produced by the pipeline. Each step declares a map state (camera, layers, compare, focus) that the web applies through the same store actions a user would trigger, so the story never needs special code paths. Production file: web/src/story/story.json.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract_version", "case_id", "title", "steps"],
+  "properties": {
+    "contract_version": { "const": "1.2.0" },
+    "case_id": { "type": "string" },
+    "title": { "type": "string" },
+    "steps": { "type": "array", "items": { "$ref": "#/$defs/step" }, "minItems": 1, "maxItems": 10 }
+  },
+  "$defs": {
+    "layerId": {
+      "enum": [
+        "sar_t1_hh", "sar_t2_hh", "sar_t1_hv", "sar_t2_hv",
+        "change_hh", "change_hv", "change_index",
+        "highlight_mask", "valid_mask", "perimeter", "review_zones",
+        "optical_during", "optical_after", "hillshade", "slope"
+      ]
+    },
+    "lonlat": { "type": "array", "prefixItems": [{ "type": "number" }, { "type": "number" }], "minItems": 2, "maxItems": 2 },
+    "step": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title", "body_md", "camera", "layers"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9-]+$" },
+        "title": { "type": "string", "maxLength": 80 },
+        "body_md": { "type": "string", "maxLength": 600, "description": "Short Markdown text in English. Claims must match the data (no invented numbers)." },
+        "camera": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["center", "zoom"],
+          "properties": {
+            "center": { "$ref": "#/$defs/lonlat" },
+            "zoom": { "type": "number", "minimum": 0, "maximum": 20 },
+            "bearing": { "type": "number" },
+            "pitch": { "type": "number", "minimum": 0, "maximum": 85 },
+            "duration_ms": { "type": "integer", "minimum": 0, "description": "flyTo animation duration." }
+          }
+        },
+        "layers": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["visible"],
+          "properties": {
+            "visible": { "type": "array", "items": { "$ref": "#/$defs/layerId" }, "uniqueItems": true },
+            "opacity": { "type": "object", "propertyNames": { "$ref": "#/$defs/layerId" }, "additionalProperties": { "type": "number", "minimum": 0, "maximum": 1 } }
+          }
+        },
+        "compare": {
+          "description": "Side-by-side swipe. Omit for a single map.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["left", "right", "position"],
+          "properties": {
+            "left": { "$ref": "#/$defs/layerId" },
+            "right": { "$ref": "#/$defs/layerId" },
+            "position": { "type": "number", "minimum": 0, "maximum": 1 },
+            "animate_to": { "type": "number", "minimum": 0, "maximum": 1, "description": "Optional: slide the swipe to this position during the step." }
+          }
+        },
+        "focus": {
+          "description": "What gets selected (and shown in the inspector) at this step.",
+          "oneOf": [
+            { "type": "object", "additionalProperties": false, "required": ["type", "zone_id"], "properties": { "type": { "const": "zone" }, "zone_id": { "type": "string" } } },
+            { "type": "object", "additionalProperties": false, "required": ["type", "point"], "properties": { "type": { "const": "point" }, "point": { "$ref": "#/$defs/lonlat" } } },
+            { "type": "object", "additionalProperties": false, "required": ["type", "line"], "properties": { "type": { "const": "profile" }, "line": { "type": "array", "items": { "$ref": "#/$defs/lonlat" }, "minItems": 2 } } }
+          ]
+        },
+        "panel": { "enum": ["none", "inspector", "zones", "metrics", "weather", "profile"], "description": "Side panel to open." }
+      }
+    }
+  }
+}

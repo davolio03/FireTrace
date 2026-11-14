@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://firetrace.local/contracts/annotations.schema.json",
+  "title": "AnnotationsExport",
+  "description": "Analyst annotations exported by the web (AP-08) as GeoJSON. Annotations are created and stored client-side (no backend in the MVP); this schema fixes the export/import format so the report generator and any later backend agree. The report (Markdown/PDF) is rendered from this document.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["type", "contract_version", "case_id", "exported_at", "data_status", "features"],
+  "properties": {
+    "type": { "const": "FeatureCollection" },
+    "contract_version": { "const": "1.2.0" },
+    "case_id": { "type": "string" },
+    "exported_at": { "type": "string", "format": "date-time" },
+    "data_status": { "enum": ["mock", "real"], "description": "Copied from case.json: a report built on mock data must say so." },
+    "method_id": { "type": "string" },
+    "features": { "type": "array", "items": { "$ref": "#/$defs/annotation" } }
+  },
+  "$defs": {
+    "annotation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id", "geometry", "properties"],
+      "properties": {
+        "type": { "const": "Feature" },
+        "id": { "type": "string" },
+        "geometry": {
+          "type": "object",
+          "required": ["type", "coordinates"],
+          "properties": { "type": { "enum": ["Point", "LineString", "Polygon", "MultiPolygon"] }, "coordinates": { "type": "array" } }
+        },
+        "properties": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["target", "verdict", "note", "author", "created_at", "evidence"],
+          "properties": {
+            "target": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["type"],
+              "properties": {
+                "type": { "enum": ["zone", "point", "profile", "area"] },
+                "zone_id": { "type": "string" }
+              }
+            },
+            "verdict": {
+              "enum": ["consistent_with_fire", "doubtful", "not_fire_related", "needs_field_check"],
+              "description": "The ANALYST's judgement. Labels in the UI: 'Consistent with fire effects', 'Doubtful', 'Likely not fire-related', 'Needs field check'."
+            },
+            "note": { "type": "string", "maxLength": 2000 },
+            "author": { "type": "string" },
+            "created_at": { "type": "string", "format": "date-time" },
+            "updated_at": { "type": "string", "format": "date-time" },
+            "evidence": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "Snapshot of the computed values when the annotation was made, so the report is self-contained.",
+              "required": ["change_index", "hh_delta_db", "hv_delta_db", "perimeter_relation"],
+              "properties": {
+                "change_index": { "type": ["number", "null"] },
+                "hh_delta_db": { "type": ["number", "null"] },
+                "hv_delta_db": { "type": ["number", "null"] },
+                "perimeter_relation": { "enum": ["inside", "outside", "crosses", "unknown"] },
+                "caveat_ids": { "type": "array", "items": { "type": "string" } }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

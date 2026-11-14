@@ -1,5 +1,5 @@
 {
-  "contract_version": "1.1.0",
+  "contract_version": "1.2.0",
   "data_status": "mock",
   "layers": [
     {
@@ -455,6 +455,183 @@
             "color": "#7f7f7f"
           }
         ]
+      }
+    },
+    {
+      "kind": "raster",
+      "coordinates": [
+        [
+          -121.495,
+          35.992
+        ],
+        [
+          -121.278,
+          35.992
+        ],
+        [
+          -121.278,
+          35.84
+        ],
+        [
+          -121.495,
+          35.84
+        ]
+      ],
+      "width_px": 480,
+      "height_px": 415,
+      "default_visible": false,
+      "id": "hillshade",
+      "title": "Terrain relief (hillshade)",
+      "group": "terrain",
+      "url": "layers/hillshade.png",
+      "default_opacity": 0.5,
+      "source": {
+        "label": "MOCK DEM (real: NASADEM / Copernicus GLO-30)",
+        "url": "https://lpdaac.usgs.gov/products/nasadem_hgtv001/"
+      },
+      "legend": {
+        "type": "rgb",
+        "note": "Shaded relief from the DEM, sun at 315°/45°."
+      }
+    },
+    {
+      "kind": "raster",
+      "coordinates": [
+        [
+          -121.495,
+          35.992
+        ],
+        [
+          -121.278,
+          35.992
+        ],
+        [
+          -121.278,
+          35.84
+        ],
+        [
+          -121.495,
+          35.84
+        ]
+      ],
+      "width_px": 480,
+      "height_px": 415,
+      "default_visible": false,
+      "id": "slope",
+      "title": "Terrain slope",
+      "group": "terrain",
+      "url": "layers/slope.png",
+      "default_opacity": 0.8,
+      "source": {
+        "label": "MOCK DEM (real: NASADEM / Copernicus GLO-30)",
+        "url": "https://lpdaac.usgs.gov/products/nasadem_hgtv001/"
+      },
+      "legend": {
+        "type": "continuous",
+        "units": "degrees",
+        "domain": [
+          0.0,
+          45.0
+        ],
+        "stops": [
+          {
+            "value": 0.0,
+            "color": "#ffffd4"
+          },
+          {
+            "value": 11.25,
+            "color": "#fed98e"
+          },
+          {
+            "value": 22.5,
+            "color": "#fe9929"
+          },
+          {
+            "value": 33.75,
+            "color": "#d95f0e"
+          },
+          {
+            "value": 45.0,
+            "color": "#993404"
+          }
+        ],
+        "note": "Slopes above 30° trigger the steep-slope caveat."
+      }
+    },
+    {
+      "kind": "raster",
+      "coordinates": [
+        [
+          -121.495,
+          35.992
+        ],
+        [
+          -121.278,
+          35.992
+        ],
+        [
+          -121.278,
+          35.84
+        ],
+        [
+          -121.495,
+          35.84
+        ]
+      ],
+      "width_px": 480,
+      "height_px": 415,
+      "default_visible": false,
+      "id": "optical_during",
+      "title": "Optical image during the fire",
+      "group": "optical_context",
+      "url": "layers/optical_during.png",
+      "default_opacity": 1.0,
+      "acquired": "2026-09-05T18:59:00Z",
+      "source": {
+        "label": "MOCK optical (real: Sentinel-2 L2A, Copernicus)",
+        "url": "https://dataspace.copernicus.eu/"
+      },
+      "legend": {
+        "type": "rgb",
+        "note": "True colour. Smoke hides the ground; compare with the radar."
+      }
+    },
+    {
+      "kind": "raster",
+      "coordinates": [
+        [
+          -121.495,
+          35.992
+        ],
+        [
+          -121.278,
+          35.992
+        ],
+        [
+          -121.278,
+          35.84
+        ],
+        [
+          -121.495,
+          35.84
+        ]
+      ],
+      "width_px": 480,
+      "height_px": 415,
+      "default_visible": false,
+      "id": "optical_after",
+      "title": "Optical image after the fire",
+      "group": "optical_context",
+      "url": "layers/optical_after.png",
+      "default_opacity": 1.0,
+      "acquired": "2026-10-05T18:59:00Z",
+      "source": {
+        "label": "MOCK optical (real: Sentinel-2 L2A, Copernicus)",
+        "url": "https://dataspace.copernicus.eu/"
+      },
+      "legend": {
+        "type": "rgb",
+        "note": "True colour, after the fire."
       }
     },
     {

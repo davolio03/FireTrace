@@ -34,7 +34,7 @@ FIX = ROOT / "contracts" / "fixtures"
 WEB = FIX / "web"
 API = FIX / "api"
 
-CONTRACT_VERSION = "1.1.0"
+CONTRACT_VERSION = "1.2.0"
 # AOI = perimeter bbox + ~2 km margin (the real pipeline recomputes it).
 AOI = (-121.495, 35.840, -121.278, 35.992)
 WIDTH = 480  # mock resolution; real layers are ~10 m/px
@@ -157,6 +157,16 @@ def build_fields(h: int, w: int) -> dict[str, np.ndarray]:
     valid[int(0.62 * h) : int(0.66 * h), int(0.05 * w) : int(0.35 * w)] = False
     valid &= RNG.random((h, w)) > 0.002
 
+    # Mock DEM: coast to the west, ridges inland (Big Sur is steep). Slope/aspect/hillshade derived from it.
+    elev = np.clip(80 + 1100 * (xx / w) ** 0.8 + smooth_noise(h, w, 18, 140), 0, None).astype(np.float32)
+    px_m = pixel_size_m(h, w)
+    gy, gx = np.gradient(elev, px_m)
+    slope = np.degrees(np.arctan(np.hypot(gx, gy))).astype(np.float32)
+    aspect = ((np.degrees(np.arctan2(-gx, gy)) + 360) % 360).astype(np.float32)
+    az, alt = math.radians(315), math.radians(45)
+    sl, asp = np.radians(slope), np.arctan2(-gx, gy)
+    hillshade = np.clip(np.sin(alt) * np.cos(sl) + np.cos(alt) * np.sin(sl) * np.cos(az - asp), 0, 1).astype(np.float32)
+
     d_hh, d_hv = hh_t2 - hh_t1, hv_t2 - hv_t1
     raw_idx = np.abs(d_hh) + np.abs(d_hv)
     med = np.median(raw_idx[valid])
@@ -171,7 +181,27 @@ def build_fields(h: int, w: int) -> dict[str, np.ndarray]:
         "sar_t1_hh": hh_t1, "sar_t2_hh": hh_t2, "sar_t1_hv": hv_t1, "sar_t2_hv": hv_t2,
         "change_hh": d_hh, "change_hv": d_hv, "change_index": idx,
         "highlight_mask": highlight, "valid": valid, "inside": inside, "_thr": np.float32(thr),
+        "elevation": elev, "slope": slope, "aspect": aspect, "hillshade": hillshade, "effect": effect,
     }
+
+
+def pixel_size_m(h: int, w: int) -> float:
+    lat0 = math.radians((AOI[1] + AOI[3]) / 2)
+    return math.sqrt(((AOI[2] - AOI[0]) * 111320 * math.cos(lat0) / w) * ((AOI[3] - AOI[1]) * 110540 / h))
+
+
+def optical_images(f: dict, h: int, w: int) -> tuple[Image.Image, Image.Image]:
+    """MOCK Sentinel-2-like true colour: during the fire (smoke plume) and after (burn scar)."""
+    shade = 0.55 + 0.45 * f["hillshade"]
+    veg = np.stack([70 + 40 * shade, 95 + 50 * shade, 55 + 25 * shade], -1)
+    yy, xx = np.mgrid[0:h, 0:w]
+    plume = np.exp(-(((xx - 0.55 * w) / (0.45 * w)) ** 2 + ((yy - 0.35 * h) / (0.5 * h)) ** 2))
+    plume = np.clip(plume * (0.85 + 0.25 * smooth_noise(h, w, 30, 1)), 0, 0.97)[..., None]
+    during = veg * (1 - plume) + np.array([205, 200, 192]) * plume
+    scar = np.clip(f["effect"], 0, 1)[..., None]
+    after = veg * (1 - 0.75 * scar) + np.array([45, 35, 30]) * 0.75 * scar
+    return (Image.fromarray(np.clip(during, 0, 255).astype(np.uint8), "RGB"),
+            Image.fromarray(np.clip(after, 0, 255).astype(np.uint8), "RGB"))
 
 
 # ---------------------------------------------------------------- rendering
@@ -301,7 +331,7 @@ def build_review_zones(f: dict, h: int, w: int, px_area: float, thr: float) -> d
                 return round(float(np.nanmedian(f[k][rows, cols])), 2)
 
             cav = [{"id": "near_perimeter_edge", "label": "Near the perimeter edge", "fraction": round(float((d * px_m < 200).mean()), 2)}]
-            steep = float(((rows > 0.55 * h) & (rows < 0.75 * h)).mean())
+            steep = float((f["slope"][rows, cols] > 30).mean())
             if steep > 0:
                 cav.append({"id": "steep_slope", "label": "Steep slope", "fraction": round(steep, 2)})
             features.append({
@@ -326,6 +356,121 @@ def build_review_zones(f: dict, h: int, w: int, px_area: float, thr: float) -> d
                    "smoothing": "7x7 mean of change_index (mock)", "min_area_ha": min_area_ha, "max_zones_per_kind": max_per_kind},
         "features": features,
     }
+
+
+def write_context_fixtures(f: dict, h: int, w: int, zones_fc: dict) -> None:
+    """weather.json, story.json (example), profile and annotations examples. All MOCK."""
+    from datetime import date, timedelta
+
+    # Weather: dry season with one rain event before t2 (MOCK values).
+    start, end = date(2026, 8, 16), date(2026, 10, 3)
+    days = [start + timedelta(d) for d in range((end - start).days + 1)]
+    rain = {date(2026, 9, 24): 6.2, date(2026, 9, 25): 14.8, date(2026, 9, 26): 3.1}
+    weather = {
+        "contract_version": CONTRACT_VERSION, "data_status": "mock", "variable": "precipitation", "units": "mm/day",
+        "aggregation": "AOI mean (mock)",
+        "source": {"label": "MOCK (real: NASA GPM IMERG Final daily)", "url": "https://gpm.nasa.gov/data/imerg", "product": "GPM_3IMERGDF"},
+        "period": {"start": start.isoformat(), "end": end.isoformat()},
+        "daily": [{"date": d.isoformat(), "value": rain.get(d, 0.0)} for d in days],
+        "total": round(sum(rain.values()), 1), "rain_days_over_1mm": sum(v > 1 for v in rain.values()),
+        "last_rain_before_t2": max(d for d, v in rain.items() if v > 1).isoformat(),
+        "notes": "MOCK values for UI development.",
+    }
+    (WEB / "weather.json").write_text(json.dumps(weather, indent=2) + "\n", encoding="utf-8")
+
+    # Profile: a line crossing the perimeter edge near the largest agreement zone.
+    zones = {z["id"]: z["properties"] for z in zones_fc["features"]}
+    ci = zones.get("CI-01") or next(iter(zones.values()))
+    px_m = pixel_size_m(h, w)
+    # Cross the perimeter edge closest to CI-01: ~2.5 km outside -> ~2.5 km inside.
+    ins_m = f["inside"]
+    edge = ins_m & ~(np.roll(ins_m, 1, 0) & np.roll(ins_m, -1, 0) & np.roll(ins_m, 1, 1) & np.roll(ins_m, -1, 1))
+    cc, cr = lonlat_to_px(*ci["centroid"], h, w)
+    er, ec = min(np.argwhere(edge), key=lambda p: (p[0] - cr) ** 2 + (p[1] - cc) ** 2)
+    dr, dc = cr - er, cc - ec
+    norm = math.hypot(dr, dc) or 1.0
+    half = 2500 / px_m
+    p0 = (ec - dc / norm * half, er - dr / norm * half)
+    p1 = (ec + dc / norm * half, er + dr / norm * half)
+    line = [[round(v, 6) for v in px_to_lonlat(*p0, h, w)], [round(v, 6) for v in px_to_lonlat(*p1, h, w)]]
+    (x0, y0), (x1, y1) = lonlat_to_px(*line[0], h, w), lonlat_to_px(*line[1], h, w)
+    n = int(math.hypot(x1 - x0, y1 - y0)) + 1
+    samples, crossings, prev = [], [], None
+
+    def val(k: str, r: int, c: int, ok: bool):
+        return round(float(f[k][r, c]), 2) if ok else None
+
+    for i in range(n):
+        t = i / max(1, n - 1)
+        col, row = x0 + t * (x1 - x0), y0 + t * (y1 - y0)
+        r, c = min(h - 1, max(0, int(row))), min(w - 1, max(0, int(col)))
+        ok = bool(f["valid"][r, c])
+        lon, lat = px_to_lonlat(col, row, h, w)
+        ins = bool(f["inside"][r, c])
+        dist = round(t * (n - 1) * px_m, 1)
+        if prev is not None and ins != prev:
+            crossings.append(dist)
+        prev = ins
+        samples.append({"distance_m": dist, "lon": round(lon, 6), "lat": round(lat, 6), "valid": ok,
+                        "hh_t1": val("sar_t1_hh", r, c, ok), "hh_t2": val("sar_t2_hh", r, c, ok),
+                        "hv_t1": val("sar_t1_hv", r, c, ok), "hv_t2": val("sar_t2_hv", r, c, ok),
+                        "change_index": val("change_index", r, c, ok), "inside_perimeter": ins,
+                        "elevation_m": round(float(f["elevation"][r, c]), 1)})
+    profile = {"contract_version": CONTRACT_VERSION, "data_status": "mock", "line": line,
+               "length_m": samples[-1]["distance_m"], "spacing_m": round(px_m, 1), "truncated": False,
+               "samples": samples, "perimeter_crossings_m": crossings}
+    (API / "profile-example.json").write_text(json.dumps(profile) + "\n", encoding="utf-8")
+
+    # Story: 5-step example the storytelling lane starts from (texts are drafts to finalise with real data).
+    case_c = [round((AOI[0] + AOI[2]) / 2, 5), round((AOI[1] + AOI[3]) / 2, 5)]
+    co = zones.get("CO-01")
+    steps = [
+        {"id": "context", "title": "A wildfire in Big Sur", "panel": "none",
+         "body_md": "The **Plaskett Fire** started on 26 August 2026 in the Santa Lucia Mountains. NISAR observed the area before and after it.",
+         "camera": {"center": case_c, "zoom": 10, "duration_ms": 2500}, "layers": {"visible": ["perimeter"]}},
+        {"id": "smoke", "title": "Smoke hides the ground, radar does not", "panel": "none",
+         "body_md": "During the fire, smoke covers optical imagery. NISAR L-band microwaves (about 24 cm) pass through smoke and clouds.",
+         "camera": {"center": case_c, "zoom": 11.5, "duration_ms": 2000},
+         "layers": {"visible": ["optical_during", "sar_t2_hv"]},
+         "compare": {"left": "optical_during", "right": "sar_t2_hv", "position": 0.9, "animate_to": 0.3}},
+        {"id": "before-after", "title": "What changed in the radar signal", "panel": "none",
+         "body_md": "Before (16 Aug) vs after (3 Oct), same orbit and geometry. HV drops where vegetation volume was lost.",
+         "camera": {"center": case_c, "zoom": 12, "duration_ms": 2000},
+         "layers": {"visible": ["sar_t1_hv", "sar_t2_hv", "perimeter"]},
+         "compare": {"left": "sar_t1_hv", "right": "sar_t2_hv", "position": 0.5, "animate_to": 0.15}},
+        {"id": "agreement", "title": "Where radar and perimeter agree", "panel": "profile",
+         "body_md": "The change index is high inside the official perimeter. Along this transect, HV falls as it crosses the perimeter edge.",
+         "camera": {"center": ci["centroid"], "zoom": 12.5, "duration_ms": 2000},
+         "layers": {"visible": ["change_index", "perimeter"], "opacity": {"change_index": 0.8}},
+         "focus": {"type": "profile", "line": line}},
+    ]
+    if co:
+        steps.append({"id": "discrepancy", "title": "Where they disagree, and why", "panel": "inspector",
+                      "body_md": "Outside the perimeter, backscatter **increased**: closer to wetter soil than to fire. The inspector lists the caveats.",
+                      "camera": {"center": co["centroid"], "zoom": 13, "duration_ms": 2500},
+                      "layers": {"visible": ["change_index", "perimeter", "review_zones"]},
+                      "focus": {"type": "zone", "zone_id": "CO-01"}})
+    story = {"contract_version": CONTRACT_VERSION, "case_id": "plaskett-2026", "title": "Plaskett Fire through the eyes of NISAR", "steps": steps}
+    (WEB / "story.json").write_text(json.dumps(story, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+    # Annotations export example.
+    def ann(zid: str, verdict: str, note: str) -> dict:
+        z = zones[zid]
+        return {"type": "Feature", "id": f"ann-{zid.lower()}", "geometry": {"type": "Point", "coordinates": z["centroid"]},
+                "properties": {"target": {"type": "zone", "zone_id": zid}, "verdict": verdict, "note": note, "author": "analyst-demo",
+                               "created_at": "2026-11-15T10:00:00Z",
+                               "evidence": {"change_index": z["change_index"]["median"], "hh_delta_db": z["hh_db"]["delta_median"],
+                                            "hv_delta_db": z["hv_db"]["delta_median"],
+                                            "perimeter_relation": "outside" if zid.startswith("CO") else "inside",
+                                            "caveat_ids": [c["id"] for c in z["caveats"] if c["fraction"] > 0.2]}}}
+
+    feats = [ann("CI-01", "consistent_with_fire", "Strong HV decrease, inside the perimeter.")]
+    if co:
+        feats.append(ann("CO-01", "not_fire_related", "Backscatter increase in both polarizations; rain on 24-26 Sep. Check moisture."))
+    annotations = {"type": "FeatureCollection", "contract_version": CONTRACT_VERSION, "case_id": "plaskett-2026",
+                   "exported_at": "2026-11-15T10:05:00Z", "data_status": "mock", "method_id": METHOD_ID, "features": feats}
+    (FIX / "exports").mkdir(exist_ok=True)
+    (FIX / "exports" / "annotations.geojson").write_text(json.dumps(annotations, indent=2) + "\n", encoding="utf-8")
 
 
 def main() -> None:
@@ -388,6 +533,30 @@ def main() -> None:
         "default_visible": False, "default_opacity": 1.0,
         "legend": {"type": "categorical", "items": [{"value": 0, "label": "Invalid in at least one layer", "color": "#7f7f7f"}]},
     })
+    # Complementary context layers (non-NISAR): terrain and optical. MOCK images.
+    hs = (np.clip(f["hillshade"], 0, 1) * 255).astype(np.uint8)
+    Image.fromarray(np.stack([hs, hs, hs], -1), "RGB").save(WEB / "layers" / "hillshade.png", optimize=True)
+    slope_dom, slope_ramp = (0.0, 45.0), [(0, "#ffffd4"), (0.25, "#fed98e"), (0.5, "#fe9929"), (0.75, "#d95f0e"), (1, "#993404")]
+    colorize(f["slope"], slope_dom, slope_ramp).save(WEB / "layers" / "slope.png", optimize=True)
+    dem_src = {"label": "MOCK DEM (real: NASADEM / Copernicus GLO-30)", "url": "https://lpdaac.usgs.gov/products/nasadem_hgtv001/"}
+    s2_src = {"label": "MOCK optical (real: Sentinel-2 L2A, Copernicus)", "url": "https://dataspace.copernicus.eu/"}
+    opt_during, opt_after = optical_images(f, h, w)
+    opt_during.save(WEB / "layers" / "optical_during.png", optimize=True)
+    opt_after.save(WEB / "layers" / "optical_after.png", optimize=True)
+    base = {"kind": "raster", "coordinates": coords, "width_px": w, "height_px": h, "default_visible": False}
+    layers += [
+        {**base, "id": "hillshade", "title": "Terrain relief (hillshade)", "group": "terrain", "url": "layers/hillshade.png",
+         "default_opacity": 0.5, "source": dem_src, "legend": {"type": "rgb", "note": "Shaded relief from the DEM, sun at 315°/45°."}},
+        {**base, "id": "slope", "title": "Terrain slope", "group": "terrain", "url": "layers/slope.png", "default_opacity": 0.8,
+         "source": dem_src, "legend": {"type": "continuous", "units": "degrees", "domain": list(slope_dom), "stops": stops(slope_dom, slope_ramp),
+                                       "note": "Slopes above 30° trigger the steep-slope caveat."}},
+        {**base, "id": "optical_during", "title": "Optical image during the fire", "group": "optical_context", "url": "layers/optical_during.png",
+         "default_opacity": 1.0, "acquired": "2026-09-05T18:59:00Z", "source": s2_src,
+         "legend": {"type": "rgb", "note": "True colour. Smoke hides the ground; compare with the radar."}},
+        {**base, "id": "optical_after", "title": "Optical image after the fire", "group": "optical_context", "url": "layers/optical_after.png",
+         "default_opacity": 1.0, "acquired": "2026-10-05T18:59:00Z", "source": s2_src,
+         "legend": {"type": "rgb", "note": "True colour, after the fire."}},
+    ]
     layers.append({
         "id": "perimeter", "title": "Official fire perimeter", "kind": "vector", "group": "reference", "url": "perimeter.geojson",
         "default_visible": True, "default_opacity": 1.0,
@@ -454,8 +623,9 @@ def main() -> None:
                 "reason": "Generic caution: moisture changes alter L-band backscatter regardless of fire."},
                {"id": "vegetation_structure", "label": "Vegetation structure", "triggered": False,
                 "reason": "Generic caution: HV responds to canopy volume; unburned stand changes also affect it."}]
-        if 0.55 * h < r < 0.75 * h:
-            out.insert(0, {"id": "steep_slope", "label": "Steep slope", "triggered": True, "reason": "MOCK rule: slope 34° > 30°"})
+        sl = float(f["slope"][r, c])
+        if sl > 30:
+            out.insert(0, {"id": "steep_slope", "label": "Steep slope", "triggered": True, "reason": f"slope {sl:.1f}° > 30° (mock DEM)"})
         return out
 
     def inspect(lon: float, lat: float) -> dict:
@@ -480,7 +650,9 @@ def main() -> None:
                 "hh_db": {"t1": g("sar_t1_hh"), "t2": g("sar_t2_hh"), "delta": g("change_hh")},
                 "hv_db": {"t1": g("sar_t1_hv"), "t2": g("sar_t2_hv"), "delta": g("change_hv")},
                 "change_index": v, "change_index_percentile": pct, "highlighted": None,
-                "perimeter_relation": "inside" if inside[r, c] else "outside", "caveats": caveats(r, c) if ok else []}
+                "perimeter_relation": "inside" if inside[r, c] else "outside", "caveats": caveats(r, c) if ok else [],
+                "terrain": {"elevation_m": round(float(f["elevation"][r, c]), 1), "slope_deg": round(float(f["slope"][r, c]), 1),
+                            "aspect_deg": round(float(f["aspect"][r, c]), 1)}}
 
     # Representative points: one inside, one outside (moisture blob), one invalid (shadow strip).
     ins_r, ins_c = np.argwhere(inside & valid & (idx > np.nanpercentile(idx, 95)))[0]
@@ -503,6 +675,8 @@ def main() -> None:
         "_note": "MOCK-ONLY compact grid for web/src/mocks. Not part of the production contract.",
         "aoi_bbox": list(AOI), "image_height": h, "image_width": w, "step_px": step,
         "fields": {k: sample(k) for k in ("sar_t1_hh", "sar_t2_hh", "sar_t1_hv", "sar_t2_hv", "change_index")},
+        "terrain": {"elevation_m": [[round(float(f["elevation"][r, c]), 1) for c in cols] for r in rows],
+                    "slope_deg": [[round(float(f["slope"][r, c]), 1) for c in cols] for r in rows]},
         "inside": [[bool(inside[r, c]) for c in cols] for r in rows],
     }
     (API / "inspect-grid.json").write_text(json.dumps(grid, separators=(",", ":")), encoding="utf-8")
@@ -523,6 +697,7 @@ def main() -> None:
     for name, obj in (("case", case), ("stats", stats), ("layers", {"contract_version": CONTRACT_VERSION, "data_status": "mock", "layers": layers})):
         (WEB / f"{name}.json").write_text(json.dumps(obj, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     (API / "stats-with-highlight.json").write_text(json.dumps(stats_hl, indent=2) + "\n", encoding="utf-8")
+    write_context_fixtures(f, h, w, zones_fc)
     print(f"Mock fixtures written to {FIX.relative_to(ROOT)} ({w}x{h} px)")
 
 

@@ -1,0 +1,140 @@
+{
+  "contract_version": "1.2.0",
+  "case_id": "plaskett-2026",
+  "title": "Plaskett Fire through the eyes of NISAR",
+  "steps": [
+    {
+      "id": "context",
+      "title": "A wildfire in Big Sur",
+      "panel": "none",
+      "body_md": "The **Plaskett Fire** started on 26 August 2026 in the Santa Lucia Mountains. NISAR observed the area before and after it.",
+      "camera": {
+        "center": [
+          -121.3865,
+          35.916
+        ],
+        "zoom": 10,
+        "duration_ms": 2500
+      },
+      "layers": {
+        "visible": [
+          "perimeter"
+        ]
+      }
+    },
+    {
+      "id": "smoke",
+      "title": "Smoke hides the ground, radar does not",
+      "panel": "none",
+      "body_md": "During the fire, smoke covers optical imagery. NISAR L-band microwaves (about 24 cm) pass through smoke and clouds.",
+      "camera": {
+        "center": [
+          -121.3865,
+          35.916
+        ],
+        "zoom": 11.5,
+        "duration_ms": 2000
+      },
+      "layers": {
+        "visible": [
+          "optical_during",
+          "sar_t2_hv"
+        ]
+      },
+      "compare": {
+        "left": "optical_during",
+        "right": "sar_t2_hv",
+        "position": 0.9,
+        "animate_to": 0.3
+      }
+    },
+    {
+      "id": "before-after",
+      "title": "What changed in the radar signal",
+      "panel": "none",
+      "body_md": "Before (16 Aug) vs after (3 Oct), same orbit and geometry. HV drops where vegetation volume was lost.",
+      "camera": {
+        "center": [
+          -121.3865,
+          35.916
+        ],
+        "zoom": 12,
+        "duration_ms": 2000
+      },
+      "layers": {
+        "visible": [
+          "sar_t1_hv",
+          "sar_t2_hv",
+          "perimeter"
+        ]
+      },
+      "compare": {
+        "left": "sar_t1_hv",
+        "right": "sar_t2_hv",
+        "position": 0.5,
+        "animate_to": 0.15
+      }
+    },
+    {
+      "id": "agreement",
+      "title": "Where radar and perimeter agree",
+      "panel": "profile",
+      "body_md": "The change index is high inside the official perimeter. Along this transect, HV falls as it crosses the perimeter edge.",
+      "camera": {
+        "center": [
+          -121.352335,
+          35.944929
+        ],
+        "zoom": 12.5,
+        "duration_ms": 2000
+      },
+      "layers": {
+        "visible": [
+          "change_index",
+          "perimeter"
+        ],
+        "opacity": {
+          "change_index": 0.8
+        }
+      },
+      "focus": {
+        "type": "profile",
+        "line": [
+          [
+            -121.340759,
+            35.97933
+          ],
+          [
+            -121.355387,
+            35.935857
+          ]
+        ]
+      }
+    },
+    {
+      "id": "discrepancy",
+      "title": "Where they disagree, and why",
+      "panel": "inspector",
+      "body_md": "Outside the perimeter, backscatter **increased**: closer to wetter soil than to fire. The inspector lists the caveats.",
+      "camera": {
+        "center": [
+          -121.468649,
+          35.862617
+        ],
+        "zoom": 13,
+        "duration_ms": 2500
+      },
+      "layers": {
+        "visible": [
+          "change_index",
+          "perimeter",
+          "review_zones"
+        ]
+      },
+      "focus": {
+        "type": "zone",
+        "zone_id": "CO-01"
+      }
+    }
+  ]
+}

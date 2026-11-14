@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://firetrace.local/contracts/profile.schema.json",
+  "title": "Profile",
+  "description": "Transect response: POST /api/inspect/profile (EV-05). Values sampled every spacing_m along a polyline drawn by the analyst. Invalid samples keep their position with null values so the chart shows gaps.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract_version", "data_status", "line", "length_m", "spacing_m", "samples", "perimeter_crossings_m"],
+  "properties": {
+    "contract_version": { "const": "1.2.0" },
+    "data_status": { "enum": ["mock", "real"] },
+    "line": { "type": "array", "items": { "type": "array", "prefixItems": [{ "type": "number" }, { "type": "number" }], "minItems": 2, "maxItems": 2 }, "minItems": 2 },
+    "length_m": { "type": "number", "minimum": 0 },
+    "spacing_m": { "type": "number", "exclusiveMinimum": 0 },
+    "truncated": { "type": "boolean", "description": "true if the line was longer than the server limit and was cut." },
+    "samples": {
+      "type": "array",
+      "maxItems": 2000,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["distance_m", "lon", "lat", "valid", "hh_t1", "hh_t2", "hv_t1", "hv_t2", "change_index", "inside_perimeter", "elevation_m"],
+        "properties": {
+          "distance_m": { "type": "number", "minimum": 0 },
+          "lon": { "type": "number" },
+          "lat": { "type": "number" },
+          "valid": { "type": "boolean" },
+          "hh_t1": { "type": ["number", "null"] },
+          "hh_t2": { "type": ["number", "null"] },
+          "hv_t1": { "type": ["number", "null"] },
+          "hv_t2": { "type": ["number", "null"] },
+          "change_index": { "type": ["number", "null"] },
+          "inside_perimeter": { "type": ["boolean", "null"] },
+          "elevation_m": { "type": ["number", "null"] }
+        }
+      }
+    },
+    "perimeter_crossings_m": { "type": "array", "items": { "type": "number", "minimum": 0 }, "description": "Distances along the line where it crosses the perimeter; drawn as vertical markers on the chart." }
+  }
+}

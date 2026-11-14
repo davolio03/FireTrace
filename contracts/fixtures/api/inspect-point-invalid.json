@@ -1,5 +1,5 @@
 {
-  "contract_version": "1.1.0",
+  "contract_version": "1.2.0",
   "data_status": "mock",
   "query": {
     "lon": -121.4516,
@@ -30,5 +30,10 @@
   "change_index_percentile": null,
   "highlighted": null,
   "perimeter_relation": "inside",
-  "caveats": []
+  "caveats": [],
+  "terrain": {
+    "elevation_m": 637.9,
+    "slope_deg": 26.2,
+    "aspect_deg": 242.1
+  }
 }
