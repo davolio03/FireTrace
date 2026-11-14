@@ -1,11 +1,23 @@
-import { render } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { act, cleanup, render, screen } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
+import manifest from '../../../../contracts/fixtures/web/layers.json'
+import type { components } from '../../generated/api'
+import { mapStore } from '../../state/mapStore'
 import { CaseMap } from './CaseMap'
 
 const map = vi.hoisted(() => ({
   create: vi.fn(),
   addControl: vi.fn(),
+  setWorkerUrl: vi.fn(),
   remove: vi.fn(),
+  on: vi.fn(),
+  addSource: vi.fn(),
+  addLayer: vi.fn(),
+  getLayer: vi.fn(() => true),
+  setLayoutProperty: vi.fn(),
+  setPaintProperty: vi.fn(),
+  fitBounds: vi.fn(),
 }))
 
 vi.mock('maplibre-gl', () => ({
@@ -15,13 +27,31 @@ vi.mock('maplibre-gl', () => ({
     }
     addControl = map.addControl
     remove = map.remove
+    on = map.on
+    addSource = map.addSource
+    addLayer = map.addLayer
+    getLayer = map.getLayer
+    setLayoutProperty = map.setLayoutProperty
+    setPaintProperty = map.setPaintProperty
+    fitBounds = map.fitBounds
   },
   NavigationControl: class {},
+  setWorkerUrl: map.setWorkerUrl,
 }))
 
 describe('case map', () => {
+  afterEach(cleanup)
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mapStore.setState({ visible: [], opacity: {} })
+  })
   it('centers on Big Sur and releases its map when unmounted', () => {
     const { unmount } = render(<CaseMap />)
+    expect(map.setWorkerUrl).toHaveBeenCalledOnce()
+    expect(map.setWorkerUrl.mock.calls[0][0]).toContain('maplibre-gl-worker')
+    expect(map.setWorkerUrl.mock.invocationCallOrder[0]).toBeLessThan(
+      map.create.mock.invocationCallOrder[0],
+    )
     expect(map.create).toHaveBeenCalledWith(
       expect.objectContaining({
         center: [-121.47, 35.92],
@@ -38,5 +68,118 @@ describe('case map', () => {
     )
     unmount()
     expect(map.remove).toHaveBeenCalledOnce()
+  })
+
+  it('uses fixture corners, draws the perimeter and follows shared visibility and opacity', () => {
+    const layers = manifest.layers as components['schemas']['layer'][]
+    render(<CaseMap layers={layers} dataBaseUrl="/fixtures" />)
+    const load = map.on.mock.calls.find(([event]) => event === 'load')?.[1]
+    expect(load).toBeTypeOf('function')
+    act(() => load())
+    expect(map.fitBounds).toHaveBeenCalledWith(
+      [
+        [-121.495, 35.84],
+        [-121.278, 35.992],
+      ],
+      expect.objectContaining({ duration: 0 }),
+    )
+    const sar = layers.find((layer) => layer.id === 'sar_t1_hh')!
+    expect(map.addSource).toHaveBeenCalledWith(
+      'firetrace-sar_t1_hh',
+      expect.objectContaining({
+        type: 'image',
+        url: '/fixtures/layers/sar_t1_hh.png',
+        coordinates: sar.coordinates,
+      }),
+    )
+    expect(map.addSource).toHaveBeenCalledWith(
+      'firetrace-perimeter',
+      expect.objectContaining({
+        type: 'geojson',
+        data: '/fixtures/perimeter.geojson',
+      }),
+    )
+    expect(map.addLayer).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'firetrace-perimeter', type: 'line' }),
+    )
+    expect(map.addLayer.mock.calls.map(([layer]) => layer.id)).toEqual([
+      'firetrace-sar_t1_hh',
+      'firetrace-sar_t2_hh',
+      'firetrace-sar_t1_hv',
+      'firetrace-sar_t2_hv',
+      'firetrace-change_hh',
+      'firetrace-change_hv',
+      'firetrace-change_index',
+      'firetrace-perimeter',
+    ])
+    act(() => {
+      mapStore.getState().toggleLayer('perimeter')
+      mapStore.getState().setOpacity('sar_t1_hh', 0.35)
+    })
+    expect(map.setLayoutProperty).toHaveBeenCalledWith(
+      'firetrace-perimeter',
+      'visibility',
+      'none',
+    )
+    expect(map.setPaintProperty).toHaveBeenCalledWith(
+      'firetrace-sar_t1_hh',
+      'raster-opacity',
+      0.35,
+    )
+  })
+
+  it('does not fit bounds when the manifest contains no raster', () => {
+    const perimeter = manifest.layers.find((layer) => layer.id === 'perimeter')
+    render(<CaseMap layers={[perimeter as components['schemas']['layer']]} />)
+    const load = map.on.mock.calls.find(([event]) => event === 'load')?.[1]
+    act(() => load())
+    expect(map.fitBounds).not.toHaveBeenCalled()
+  })
+
+  it('shows a clear error when map loading fails', () => {
+    render(
+      <CaseMap
+        layers={manifest.layers as components['schemas']['layer'][]}
+        dataBaseUrl="/"
+      />,
+    )
+    const onError = map.on.mock.calls.find(([event]) => event === 'error')?.[1]
+    act(() => onError({ error: new Error('missing image') }))
+    expect(screen.getByRole('alert').textContent).toMatch(/could not load/i)
+  })
+
+  it('preserves intentionally hidden layers when the map remounts', () => {
+    const layers = manifest.layers as components['schemas']['layer'][]
+    const first = render(<CaseMap layers={layers} dataBaseUrl="/" />)
+    act(() => mapStore.getState().setVisible([]))
+    first.unmount()
+    render(<CaseMap layers={layers} dataBaseUrl="/" />)
+    expect(mapStore.getState().visible).toEqual([])
+  })
+
+  it('checks the fixture raster footprint against the reference geometry', () => {
+    const layers = manifest.layers as components['schemas']['layer'][]
+    const raster = layers.filter(
+      (layer) => layer.group === 'sar' || layer.group === 'observed_change',
+    )
+    const corners = raster[0].coordinates!
+    for (const layer of raster) expect(layer.coordinates).toEqual(corners)
+    const [west, north] = corners[0]
+    const [east, south] = corners[2]
+    const geojson = JSON.parse(
+      readFileSync('../contracts/fixtures/web/perimeter.geojson', 'utf8'),
+    ) as {
+      features: { geometry: { coordinates: number[][][][] } }[]
+    }
+    for (const polygon of geojson.features[0].geometry.coordinates) {
+      for (const ring of polygon) {
+        for (const [lon, lat] of ring) {
+          expect(lon).toBeGreaterThanOrEqual(west)
+          expect(lon).toBeLessThanOrEqual(east)
+          expect(lat).toBeGreaterThanOrEqual(south)
+          expect(lat).toBeLessThanOrEqual(north)
+        }
+      }
+    }
   })
 })

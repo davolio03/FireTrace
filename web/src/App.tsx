@@ -1,11 +1,14 @@
 import { useEffect, useState } from 'react'
 import { loadCaseData } from './data/caseData'
 import { CaseMap } from './features/map/CaseMap'
+import { layersAreRenderable, type Layer } from './features/map/layers'
 
 export default function App() {
   const [status, setStatus] = useState<'loading' | 'mock' | 'real' | 'error'>(
     'loading',
   )
+  const [layers, setLayers] = useState<Layer[]>([])
+  const [manifestError, setManifestError] = useState(false)
 
   useEffect(() => {
     let active = true
@@ -19,6 +22,11 @@ export default function App() {
               ? 'mock'
               : 'real',
           )
+          if (!layersAreRenderable(data.layers.layers)) {
+            setManifestError(true)
+            return
+          }
+          setLayers(data.layers.layers)
         }
       })
       .catch(() => {
@@ -39,7 +47,7 @@ export default function App() {
           MOCK — synthetic data for development, not scientific validation.
         </p>
       )}
-      {status === 'error' && (
+      {(status === 'error' || manifestError) && (
         <p role="alert" className="mb-4 text-red-700">
           Unable to load case data.
         </p>
@@ -47,10 +55,13 @@ export default function App() {
       <h1 className="text-3xl font-semibold">FireTrace Explorer</h1>
       <p className="mt-2 text-slate-600">Plaskett Fire · Big Sur, California</p>
       <p className="mt-2 text-sm text-slate-600">
-        Map scaffold only. Scientific layers and evidence are not yet available.
+        Explore observed radar changes alongside the official fire perimeter.
       </p>
       <div className="mt-6 overflow-hidden rounded-lg border border-slate-300">
-        <CaseMap />
+        <CaseMap
+          layers={layers}
+          dataBaseUrl={import.meta.env.VITE_DATA_BASE_URL || '/'}
+        />
       </div>
     </main>
   )

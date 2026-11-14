@@ -1,4 +1,4 @@
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse, passthrough } from 'msw'
 import caseFixture from '../../../contracts/fixtures/web/case.json'
 import statsFixture from '../../../contracts/fixtures/web/stats.json'
 import layersFixture from '../../../contracts/fixtures/web/layers.json'
@@ -229,4 +229,5 @@ export const handlers = [
       { status: 501 },
     ),
   ),
+  http.get('*/perimeter.geojson', () => passthrough()),
 ]
