@@ -34,8 +34,10 @@ import math
 import os
 import re
 import shutil
+import stat
 import sys
 import tomllib
+import warnings
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
@@ -44,9 +46,10 @@ from typing import Any
 
 import numpy as np
 from affine import Affine
+from rasterio.errors import NotGeoreferencedWarning, RasterioError
+from rasterio.io import MemoryFile
 
-from pipeline.change import ChangeError, read_checked
-from pipeline.sar import ANALYSIS_CRS, SarError, _staging_dirs, publish
+from pipeline.sar import ANALYSIS_CRS, ANALYSIS_PIXEL_SIZE_M, SarError, _staging_dirs
 from pipeline.webexport import WebExportError, WebRaster, colorize, warp_to_web, write_png
 
 EXPORT_FORMAT_VERSION = 1
@@ -374,11 +377,30 @@ class Inputs:
     stats_json: bytes
 
 
-def _raster(directory: Path, record: tuple[str, str], crop: Mapping[str, Any], dtype: str):
+def _raster(
+    directory: Path, record: tuple[str, str], crop: Mapping[str, Any], dtype: str, manifest: str
+) -> np.ndarray:
+    """Decode the exact bytes whose sha256 was verified (the path is never re-opened)."""
+    name = record[0]
+    payload = _verified(directory / name, record[1], manifest)
     try:
-        return read_checked(directory / record[0], record[1], crop, dtype)
-    except ChangeError as exc:
-        raise ExportError(str(exc)) from exc
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", NotGeoreferencedWarning)
+            with MemoryFile(payload) as mem, mem.open() as ds:
+                data = ds.read(1)
+                meta = (ds.count, ds.dtypes[0], ds.crs, ds.transform, ds.height, ds.width)
+    except (RasterioError, OSError) as exc:
+        raise ExportError(f"{name}: cannot read raster: {exc}") from exc
+    count, actual_dtype, crs, transform, height, width = meta
+    if count != 1 or actual_dtype != dtype:
+        raise ExportError(f"{name}: expected 1 {dtype} band, got {count} {actual_dtype}")
+    if crs != ANALYSIS_CRS:
+        raise ExportError(f"{name}: CRS {crs} is not the analysis CRS EPSG:32610")
+    if [float(v) for v in tuple(transform)[:6]] != crop["transform"]:
+        raise ExportError(f"{name}: transform differs from the ingest.json crop grid")
+    if (height, width) != (crop["height"], crop["width"]):
+        raise ExportError(f"{name}: shape {(height, width)} differs from the ingest.json crop")
+    return data
 
 
 def load_inputs(config: ExportConfig) -> Inputs:
@@ -388,6 +410,9 @@ def load_inputs(config: ExportConfig) -> Inputs:
     if _get(ingest, ("grid", "crs"), "ingest.json") != ANALYSIS_CRS.to_string():
         raise ExportError("ingest.json: grid CRS is not the analysis CRS EPSG:32610")
     crop = _grid(_get(ingest, ("grid", "crop"), "ingest.json"), "ingest.json")
+    a, b, _c, d, e, _f = crop["transform"]
+    if (a, b, d, e) != (ANALYSIS_PIXEL_SIZE_M, 0.0, 0.0, -ANALYSIS_PIXEL_SIZE_M):
+        raise ExportError("ingest.json: crop grid is not the north-up 10 m analysis grid")
 
     sar, sar_sha = _manifest(config.sar_dir / "sar.json")
     _version(sar, "sar_format_version", "sar.json")
@@ -437,7 +462,8 @@ def load_inputs(config: ExportConfig) -> Inputs:
         if doc.get("case_id") != config.case_id:
             raise ExportError(f"{source}: case_id {doc.get('case_id')!r} is not {config.case_id!r}")
 
-    mask = _raster(config.sar_dir, _record(sar, ("valid_mask",), "sar.json"), crop, "uint8")
+    mask_record = _record(sar, ("valid_mask",), "sar.json")
+    mask = _raster(config.sar_dir, mask_record, crop, "uint8", "sar.json")
     if not np.isin(mask, (0, 1)).all():
         raise ExportError("valid_mask.tif: values other than 0 and 1")
     valid = mask == 1
@@ -446,10 +472,10 @@ def load_inputs(config: ExportConfig) -> Inputs:
     arrays: dict[str, np.ndarray] = {}
     for name in SAR_NAMES:
         record = _record(sar, ("db", "layers", name), "sar.json")
-        arrays[name] = _raster(config.sar_dir, record, crop, "float32")
+        arrays[name] = _raster(config.sar_dir, record, crop, "float32", "sar.json")
     for name in CHANGE_NAMES:
         record = _record(change, ("outputs", name), "change.json")
-        arrays[name] = _raster(config.change_dir, record, crop, "float32")
+        arrays[name] = _raster(config.change_dir, record, crop, "float32", "change.json")
     for name, data in arrays.items():
         if not np.isfinite(data[valid]).all():
             raise ExportError(f"{name}: non-finite values where the DT-02 valid mask is 1")
@@ -759,30 +785,90 @@ def _write_json(path: Path, document: Mapping[str, Any]) -> None:
     path.write_text(text + "\n", encoding="utf-8", newline="\n")
 
 
-def check_output_dir(output_dir: Path) -> None:
-    """Only a missing directory or one holding exactly our products may be replaced."""
-    if not output_dir.exists():
+_REPARSE_POINT = 0x400  # Windows FILE_ATTRIBUTE_REPARSE_POINT (symlinks and junctions)
+
+
+def _kind(path: Path) -> str:
+    """'file', 'dir', 'link' or 'other', without following symlinks or junctions."""
+    st = os.lstat(path)
+    if stat.S_ISLNK(st.st_mode) or getattr(st, "st_file_attributes", 0) & _REPARSE_POINT:
+        return "link"
+    if stat.S_ISDIR(st.st_mode):
+        return "dir"
+    return "file" if stat.S_ISREG(st.st_mode) else "other"
+
+
+def check_owned(directory: Path) -> None:
+    """Only a missing directory, or a plain one holding exactly our files, may be replaced.
+
+    Applies to the output directory and to its staging/backup siblings, which are deleted
+    with ``shutil.rmtree``: allowed names must be regular files (``layers`` a plain
+    directory), so no foreign directory, symlink or junction is ever removed.
+    """
+    if not os.path.lexists(directory):
         return
-    if not output_dir.is_dir():
-        raise ExportError(f"output_dir {output_dir.name} is not a directory")
-    foreign = []
-    for entry in output_dir.iterdir():
-        if entry.name == "layers" and entry.is_dir():
-            foreign += [f"layers/{p.name}" for p in entry.iterdir() if p.name not in LAYER_FILES]
-        elif entry.name not in TOP_FILES or not entry.is_file():
+    if _kind(directory) != "dir":
+        raise ExportError(f"{directory.name} is not a plain directory")
+    foreign: list[str] = []
+    for entry in directory.iterdir():
+        kind = _kind(entry)
+        if entry.name == "layers" and kind == "dir":
+            foreign += [
+                f"layers/{p.name}"
+                for p in entry.iterdir()
+                if p.name not in LAYER_FILES or _kind(p) != "file"
+            ]
+        elif entry.name not in TOP_FILES or kind != "file":
             foreign.append(entry.name)
     if foreign:
         raise ExportError(
-            f"output_dir {output_dir.name} holds files this stage does not own: {sorted(foreign)}"
+            f"{directory.name} holds files this stage does not own: {sorted(foreign)}"
         )
 
 
+def check_output_dir(output_dir: Path) -> None:
+    """The output directory and its staging/backup siblings must hold only our files."""
+    for path in (output_dir, *_staging_dirs(output_dir)):
+        check_owned(path)
+
+
 def _check_separate(config: ExportConfig) -> None:
-    out = config.output_dir.resolve()
+    """No input directory may overlap the output or its staging/backup siblings."""
+    targets = [p.resolve() for p in (config.output_dir, *_staging_dirs(config.output_dir))]
     for directory in config.input_dirs():
         d = directory.resolve()
-        if out == d or out.is_relative_to(d) or d.is_relative_to(out):
-            raise ExportError("output_dir must be separate from every input directory")
+        for t in targets:
+            if t == d or t.is_relative_to(d) or d.is_relative_to(t):
+                raise ExportError(
+                    "output_dir and its staging/backup siblings must be separate from every "
+                    f"input directory ({directory.name})"
+                )
+
+
+def publish(staging: Path, output_dir: Path) -> str | None:
+    """Swap the staging set into place; return a warning if only the backup cleanup failed.
+
+    The rename of ``staging`` to ``output_dir`` is the commit point: before it, any failure
+    restores the previous bundle and raises; after it the new bundle is published, and a
+    failure to delete the backup is only reported (the backup is kept).
+    """
+    _, previous = _staging_dirs(output_dir)
+    if os.path.lexists(previous):
+        shutil.rmtree(previous)  # ownership checked by check_output_dir
+    if os.path.lexists(output_dir):
+        output_dir.rename(previous)
+    try:
+        staging.rename(output_dir)
+    except OSError:
+        if os.path.lexists(previous) and not os.path.lexists(output_dir):
+            previous.rename(output_dir)
+        raise
+    if os.path.lexists(previous):
+        try:
+            shutil.rmtree(previous)
+        except OSError as exc:
+            return f"new bundle published, but the backup {previous.name} was kept: {exc}"
+    return None
 
 
 def run_export(config: ExportConfig, environ: Mapping[str, str] | None = None) -> dict[str, Any]:
@@ -797,8 +883,8 @@ def run_export(config: ExportConfig, environ: Mapping[str, str] | None = None) -
 
     staging, _ = _staging_dirs(config.output_dir)
     try:
-        if staging.exists():
-            shutil.rmtree(staging)
+        if os.path.lexists(staging):
+            shutil.rmtree(staging)  # ownership checked by check_output_dir
         (staging / "layers").mkdir(parents=True)
         layers, grid, domains = _render(staging, inputs)
         if terrain is not None:
@@ -864,7 +950,7 @@ def run_export(config: ExportConfig, environ: Mapping[str, str] | None = None) -
             "outputs": outputs,
         }
         _write_json(staging / "export.json", document)
-        publish(staging, config.output_dir)
+        warning = publish(staging, config.output_dir)
     except (SarError, WebExportError) as exc:
         raise ExportError(str(exc)) from exc
     except OSError as exc:
@@ -872,6 +958,8 @@ def run_export(config: ExportConfig, environ: Mapping[str, str] | None = None) -
     finally:
         if staging.exists():
             shutil.rmtree(staging, ignore_errors=True)
+    if warning is not None:
+        print(f"export warning: {warning}", file=sys.stderr)
     return document
 
 

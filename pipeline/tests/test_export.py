@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import os
 import shutil
 from collections.abc import Callable
 from pathlib import Path
@@ -793,3 +794,130 @@ def test_cli_exit_codes(tmp_path: Path, capsys: pytest.CaptureFixture[str]):
     (config.stats_dir / "stats.json").write_text("{}", encoding="utf-8")
     assert main(["--config", str(cfg)]) == 2
     assert "export error" in capsys.readouterr().err
+
+
+# --------------------------------------------------------------------------- review fixes
+
+
+@pytest.mark.parametrize("sibling", [".web.staging", ".web.previous"])
+def test_input_on_a_staging_or_backup_path_is_rejected(tmp_path: Path, sibling: str):
+    config = write_inputs(tmp_path)
+    moved = config.output_dir.with_name(sibling)
+    config.ingest_dir.rename(moved)
+    clash = ExportConfig(**{**config.__dict__, "ingest_dir": moved})
+    with pytest.raises(ExportError, match="staging/backup"):
+        run_export(clash)
+    assert (moved / "ingest.json").is_file(), "the input must never be deleted"
+
+
+@pytest.mark.parametrize("sibling", [".web.staging", ".web.previous"])
+def test_foreign_files_in_staging_or_backup_are_refused(tmp_path: Path, sibling: str):
+    config = write_inputs(tmp_path)
+    foreign = config.output_dir.with_name(sibling)
+    foreign.mkdir()
+    (foreign / "notes.txt").write_text("mine", encoding="utf-8")
+    with pytest.raises(ExportError, match="does not own"):
+        run_export(config)
+    assert (foreign / "notes.txt").read_text(encoding="utf-8") == "mine"
+
+
+def test_directory_under_an_allowed_png_name_is_refused(tmp_path: Path):
+    config = write_inputs(tmp_path)
+    run_export(config)
+    (config.output_dir / "layers" / "slope.png").mkdir()
+    (config.output_dir / "layers" / "slope.png" / "notes.txt").write_text("x", encoding="utf-8")
+    (config.output_dir / "weather.json").mkdir()
+    with pytest.raises(ExportError, match="does not own") as info:
+        run_export(config)
+    assert "layers/slope.png" in str(info.value) and "weather.json" in str(info.value)
+    assert (config.output_dir / "layers" / "slope.png" / "notes.txt").is_file()
+
+
+def test_symlink_in_the_output_is_refused(tmp_path: Path):
+    config = write_inputs(tmp_path)
+    run_export(config)
+    link = config.output_dir / "weather.json"
+    try:
+        os.symlink(config.stats_dir / "stats.json", link)
+    except OSError:
+        pytest.skip("symlinks are not available on this system")
+    with pytest.raises(ExportError, match="does not own"):
+        run_export(config)
+    assert (config.stats_dir / "stats.json").is_file()
+
+
+def test_raster_is_decoded_from_the_verified_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    config = write_inputs(tmp_path)
+    target = config.sar_dir / "t1_hh_db.tif"
+    real = export._read_bytes
+    hits: list[Path] = []
+
+    def racing(path: Path) -> bytes:
+        payload = real(path)
+        if path == target:
+            hits.append(path)  # replaced right after hashing: same grid, other values
+            _cog(target, (T1_HH + 100.0).astype(np.float32), np.nan)
+        return payload
+
+    monkeypatch.setattr(export, "_read_bytes", racing)
+    run_export(config)
+    assert hits == [target], "the raster is read exactly once, through the verified bytes"
+    valid = MASK == 1
+    hh = _layers(config.output_dir)["sar_t1_hh"]["legend"]["domain"]
+    assert hh == list(sar_domain(T1_HH[valid], T2_HH[valid]))
+
+
+def test_backup_cleanup_failure_still_reports_the_published_bundle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+):
+    config = write_inputs(tmp_path)
+    run_export(config)
+    real_rmtree = shutil.rmtree
+
+    def flaky(path: Any, *args: Any, **kwargs: Any) -> None:
+        if Path(path).name == ".web.previous":
+            raise PermissionError("backup locked")
+        real_rmtree(path, *args, **kwargs)
+
+    monkeypatch.setattr(shutil, "rmtree", flaky)
+    monkeypatch.setenv("SOURCE_DATE_EPOCH", "1794355200")  # 2026-11-11T00:00:00Z
+    run_export(config)
+    assert _load(config.output_dir / "case.json")["generated_at"] == "2026-11-11T00:00:00Z"
+    assert config.output_dir.with_name(".web.previous").is_dir(), "backup kept, not lost"
+    assert "export warning" in capsys.readouterr().err
+
+
+def test_failed_swap_restores_the_previous_bundle(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    config = write_inputs(tmp_path)
+    run_export(config)
+    before = (config.output_dir / "case.json").read_bytes()
+    real_rename = Path.rename
+
+    def blocked(self: Path, target: Any) -> Any:
+        if self.name == ".web.staging":
+            raise OSError("rename blocked")
+        return real_rename(self, target)
+
+    monkeypatch.setattr(Path, "rename", blocked)
+    monkeypatch.setenv("SOURCE_DATE_EPOCH", "1794355200")
+    with pytest.raises(ExportError, match="rename blocked"):
+        run_export(config)
+    assert (config.output_dir / "case.json").read_bytes() == before
+    assert not config.output_dir.with_name(".web.previous").exists()
+    assert not config.output_dir.with_name(".web.staging").exists()
+
+
+def test_junction_in_the_output_is_refused(tmp_path: Path):
+    winapi = pytest.importorskip("_winapi")
+    config = write_inputs(tmp_path)
+    run_export(config)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "slope.png").write_bytes(b"precious")
+    shutil.rmtree(config.output_dir / "layers")
+    winapi.CreateJunction(str(elsewhere), str(config.output_dir / "layers"))
+    with pytest.raises(ExportError, match="does not own"):
+        run_export(config)
+    assert (elsewhere / "slope.png").read_bytes() == b"precious"

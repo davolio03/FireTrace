@@ -17,7 +17,9 @@ The PNGs are **for viewing only**. Every number the product shows (inspector, me
 | `weather_meta.json`, `weather.json` | DT-06, optional | only when `weather_dir` exists; built from this `ingest.json`; sha256; `data_status: real` |
 | `case_plaskett.toml` | config | `name`, `location`, `fire_start` and `sources`, which no stage produces (from [PRODUCT](../PRODUCT.md) and the CAL FIRE incident page) |
 
-Each radar layer must be finite wherever the DT-02 common mask is 1. Any failure stops the run with exit code 2 and writes nothing: the bundle is built in a sibling staging directory and swapped in only when complete, so a failed rerun keeps the previous bundle. The stage refuses an output directory holding files it does not own, or one that overlaps an input directory.
+Each raster is decoded from the same in-memory bytes whose sha256 was verified, so a file replaced after hashing cannot slip in. Each radar layer must be finite wherever the DT-02 common mask is 1.
+
+Any failure before publication stops the run with exit code 2 and changes nothing: the bundle is built in the sibling `.web.staging` directory and swapped in only when complete. The previous bundle is moved to `.web.previous` and restored if the swap fails. The swap is the commit point: if only the deletion of `.web.previous` fails afterwards, the new bundle stays published, the backup is kept and the CLI prints a warning. The stage refuses to run when the output directory or either sibling holds anything it does not own (unknown names, directories or symlinks/junctions under owned names), or when any input directory overlaps one of these three paths.
 
 ## Display rules
 
