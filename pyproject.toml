@@ -4,8 +4,21 @@ version = "0.1.0"
 description = "FireTrace Explorer offline pipeline and inspection API (Plaskett Fire, NISAR HH/HV)."
 readme = "README.md"
 requires-python = ">=3.11,<3.12"
-# Runtime dependencies are added by the tasks that need them (pipeline: DT-*, API: EV-01).
-dependencies = []
+# Fixed stack from AGENTS.md / docs/ARCHITECTURE.md. Lower bounds are conservative
+# floors; exact versions are pinned by uv.lock once it is generated.
+dependencies = [
+    # pipeline/
+    "numpy>=1.26",
+    "rasterio>=1.3",
+    "xarray>=2024.1",
+    "geopandas>=0.14",
+    "shapely>=2.0",
+    "scikit-image>=0.22",
+    "rio-cogeo>=5.0",
+    # api/
+    "fastapi>=0.110",
+    "pydantic>=2.5",
+]
 
 [dependency-groups]
 dev = [

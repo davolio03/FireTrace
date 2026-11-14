@@ -13,7 +13,7 @@
 | Optional | deck.gl if needed; PyTorch for P1 | Not a P0 dependency |
 | Quality | ruff + pytest; eslint + prettier + vitest | Real tests/lint/build once source exists |
 
-The root `pyproject.toml` is a single uv project shared by `pipeline/` and `api/`; it holds only dev tooling until the processing/API tasks add their runtime dependencies. No web scaffold exists yet. Stack changes require an ADR and human Kanvas approval. [TEAM](TEAM.md) records human responsibility; directory names are boundaries, not proof of working modules.
+The root `pyproject.toml` is a single uv project shared by `pipeline/` and `api/`; it declares the fixed-stack runtime dependencies of both packages plus a `dev` group (ruff, pytest). No web scaffold exists yet. Stack changes require an ADR and human Kanvas approval. [TEAM](TEAM.md) records human responsibility; directory names are boundaries, not proof of working modules.
 
 ## Data flow and current implementation boundary
 
