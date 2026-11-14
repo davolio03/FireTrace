@@ -81,12 +81,48 @@
     {
       "id": "BS-03",
       "title": "Scaffold Python (uv, ruff, pytest, CI)",
-      "state": "proposed",
+      "state": "doing",
       "group": "BS",
       "deps": ["BS-01"],
       "at": "2026-11-14T11:39:27Z",
       "by": "claude-david",
-      "desc": "pyproject con uv, paquetes pipeline/ y api/ vacíos, ruff + pytest y GitHub Actions que en cada PR ejecuta tests y contracts/tools/validate.py. Hecho = verde en local y en CI."
+      "desc": "pyproject con uv, paquetes pipeline/ y api/ vacíos, ruff + pytest y GitHub Actions que en cada PR ejecuta tests y contracts/tools/validate.py. Hecho = verde en local y en CI.",
+      "notes": [
+        {
+          "at": "2026-11-14T15:19:49Z",
+          "by": "human",
+          "text": "Started in the board."
+        },
+        {
+          "at": "2026-11-14T15:26:50Z",
+          "by": "claude-implementer",
+          "text": "Taking over at the user's request: implementation by an Opus 5.5 subagent (medium effort) in a new branch/worktree."
+        },
+        {
+          "at": "2026-11-14T15:29:31Z",
+          "by": "claude-implementer",
+          "text": "Branch feat/BS-03-python-scaffold (3 commits: 7d0980f, 23630fc, 559f9c1): root virtual uv project (Python 3.11, dev group ruff+pytest), empty pipeline/ and api/ packages with smoke tests, quality.json lint/test wired, CI runs uv sync + check.py + ruff format --check + validate.py. Unverified: uv absent locally so ruff/pytest/uv sync not run, uv.lock not generated, CI not executed. Not pushed; awaiting review before finish."
+        },
+        {
+          "at": "2026-11-14T15:53:14Z",
+          "by": "claude-implementer",
+          "text": "Review fixes on feat/BS-03-python-scaffold (unpublished): removed AI attribution trailers from all commits (AGENTS.md); ignored .claude/worktrees/; README/ONBOARDING now describe the wired Python commands. Human approved keeping the fixed-stack runtime dependencies (commit 72e617b) in BS-03. Still pending: uv.lock, `uv sync --locked` in CI and local Python 3.11/uv verification, waiting for the human to install uv. Not ready to finish."
+        },
+        {
+          "at": "2026-11-14T15:53:30Z",
+          "by": "claude-implementer",
+          "text": "Human owner confirmed authorizing the agent takeover of BS-03 and remains the responsible human for the task and PR."
+        },
+        {
+          "at": "2026-11-14T16:50:37Z",
+          "by": "claude-implementer",
+          "text": "Local verification done on 6a3767c (uv 0.13.8, CPython 3.11.9, Windows): uv.lock committed (45 packages) and CI uses `uv sync --locked`. Results, all exit 0: scripts/check.py (ruff check: all passed; pytest: 12 passed), `uv run ruff format --check .` (29 files formatted), `uv run contracts/tools/validate.py` (contract satisfied), `git diff --check`. Local caveat: PyPI needs uv's system-certificates option on this machine because of TLS interception; the first pytest run hung at interpreter exit (likely first-load scanning of GDAL DLLs; unconfirmed), later runs finish in ~2-30 s. CI not run yet: branch unpublished."
+        }
+      ],
+      "started": {
+        "at": "2026-11-14T15:26:50Z",
+        "by": "claude-implementer"
+      }
     },
     {
       "id": "BS-04",
@@ -111,7 +147,7 @@
     {
       "id": "DT-01",
       "title": "Ingesta y recorte de los 4 GeoTIFF NISAR (F01)",
-      "state": "proposed",
+      "state": "todo",
       "group": "DT",
       "deps": ["BS-03"],
       "at": "2026-11-14T11:39:27Z",
@@ -341,12 +377,23 @@
     {
       "id": "BS-06",
       "title": "Contrato v1.2: productos para trabajar en paralelo (5 líneas)",
-      "state": "proposed",
+      "state": "done",
       "group": "BS",
       "deps": ["BS-01"],
       "at": "2026-11-14T12:56:38Z",
       "by": "claude-david",
-      "desc": "PR docs/contract-v1.2-parallel: schemas y fixtures de zonas a revisar, historia guiada, lluvia, transecto, anotaciones y capas de contexto (óptico, relieve), más web-state.md y las líneas L1–L5 en AGENTS.md. Hecho = PR mergeado; es lo que desbloquea todas las tareas nuevas."
+      "desc": "PR docs/contract-v1.2-parallel: schemas y fixtures de zonas a revisar, historia guiada, lluvia, transecto, anotaciones y capas de contexto (óptico, relieve), más web-state.md y las líneas L1–L5 en AGENTS.md. Hecho = PR mergeado; es lo que desbloquea todas las tareas nuevas.",
+      "notes": [
+        {
+          "at": "2026-11-14T13:30:51Z",
+          "by": "human",
+          "text": "Started in the board."
+        }
+      ],
+      "started": {
+        "at": "2026-11-14T13:30:51Z",
+        "by": "human"
+      }
     },
     {
       "id": "BS-07",
