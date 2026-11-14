@@ -1,0 +1,275 @@
+{
+  "kanvas": 1,
+  "title": "FireTrrace",
+  "groups": [
+    {
+      "id": "BS",
+      "name": "Base"
+    },
+    {
+      "id": "DT",
+      "name": "Datos"
+    },
+    {
+      "id": "CH",
+      "name": "Cambio SAR"
+    },
+    {
+      "id": "AP",
+      "name": "App web"
+    },
+    {
+      "id": "EV",
+      "name": "Evidencia"
+    },
+    {
+      "id": "XP",
+      "name": "Exploratorio P1"
+    },
+    {
+      "id": "DL",
+      "name": "Entrega"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "BS-01",
+      "title": "Bootstrap repo: AGENTS.md, Kanvas, Engram, contrato v0",
+      "state": "proposed",
+      "group": "BS",
+      "at": "2026-11-14T11:39:27Z",
+      "by": "claude-david",
+      "desc": "Repo listo para trabajar en paralelo: AGENTS.md con flujo worktree→PR, CLAUDE.md que redirige, tablero, Engram (proyecto firetrace) y borrador de contrato. Hecho = PR mergeado en main."
+    },
+    {
+      "id": "BS-02",
+      "title": "Aprobar contrato de datos v0",
+      "state": "proposed",
+      "group": "BS",
+      "deps": ["BS-01"],
+      "at": "2026-11-14T11:39:27Z",
+      "by": "claude-david",
+      "desc": "Datos, API y Frontend revisan docs/contracts/data-products.md y fijan rutas, unidades, esquemas JSON y paletas. Hecho = contrato marcado v1 en main. Desbloquea el trabajo en paralelo con mocks."
+    },
+    {
+      "id": "BS-03",
+      "title": "Scaffold Python (uv, ruff, pytest, CI)",
+      "state": "proposed",
+      "group": "BS",
+      "deps": ["BS-01"],
+      "at": "2026-11-14T11:39:27Z",
+      "by": "claude-david",
+      "desc": "pyproject con uv, paquetes pipeline/ y api/ vacíos, ruff+pytest y GitHub Actions que lo ejecuta en cada PR. Hecho = `uv run pytest` pasa en local y en CI."
+    },
+    {
+      "id": "BS-04",
+      "title": "Scaffold web (Vite + React + TS + MapLibre + Tailwind/shadcn)",
+      "state": "proposed",
+      "group": "BS",
+      "deps": ["BS-01"],
+      "at": "2026-11-14T11:39:27Z",
+      "by": "claude-david",
+      "desc": "web/ con Vite, React, TypeScript estricto, MapLibre mostrando un mapa base centrado en Big Sur, Tailwind+shadcn, eslint/prettier/vitest y job de CI. Hecho = `npm run build` y tests en verde."
+    },
+    {
+      "id": "BS-05",
+      "title": "Mocks que cumplen el contrato",
+      "state": "proposed",
+      "group": "BS",
+      "deps": ["BS-02", "BS-04"],
+      "at": "2026-11-14T11:39:27Z",
+      "by": "claude-david",
+      "desc": "case.json, stats.json, perímetro real y tiles/respuestas de inspector sintéticas en web/src/mocks y api/tests/fixtures, para que frontend y API avancen sin esperar al pipeline."
+    },
+    {
+      "id": "DT-01",
+      "title": "Ingesta y recorte de los 4 GeoTIFF NISAR (F01)",
+      "state": "proposed",
+      "group": "DT",
+      "deps": ["BS-03"],
+      "at": "2026-11-14T11:39:27Z",
+      "by": "claude-david",
+      "desc": "pipeline lee HH/HV t1/t2 desde data/raw, verifica CRS/rejilla/forma comunes, recorta al AOI del perímetro con margen y genera case.json. Hecho = comando reproducible + test con ráster sintético."
+    },
+    {
+      "id": "DT-02",
+      "title": "Conversión a dB y máscara de válidos",
+      "state": "proposed",
+      "group": "DT",
+      "deps": ["DT-01"],
+      "at": "2026-11-14T11:39:27Z",
+      "by": "claude-david",
+      "desc": "sar_*_db.tif (COG float32) y valid_mask.tif según contrato; cobertura válida en stats.json. Hecho = 1.948.374 píxeles válidos reproducidos en el recorte de referencia."
+    },
+    {
+      "id": "DT-03",
+      "title": "Perímetro WFIGS 58728 versionado y reproyectado (F06)",
+      "state": "proposed",
+      "group": "DT",
+      "deps": ["BS-03"],
+      "at": "2026-11-14T11:39:27Z",
+      "by": "claude-david",
+      "desc": "Descarga/fija el GeoJSON del perímetro con su fecha y fuente, versión 4326 para web y rasterizado en la rejilla de 10 m para estadísticas dentro/fuera."
+    },
+    {
+      "id": "DT-04",
+      "title": "Generación de tiles web y leyendas",
+      "state": "proposed",
+      "group": "DT",
+      "deps": ["DT-02"],
+      "at": "2026-11-14T11:39:27Z",
+      "by": "claude-david",
+      "desc": "tiles XYZ PNG por capa (SAR t1/t2 HH/HV, cambio) con paletas fijas y legends.json. Hecho = las capas se ven bien alineadas sobre MapLibre."
+    },
+    {
+      "id": "CH-01",
+      "title": "Índice de cambio log-ratio |ΔHH|+|ΔHV| (F04)",
+      "state": "proposed",
+      "group": "CH",
+      "deps": ["DT-02"],
+      "at": "2026-11-14T11:39:27Z",
+      "by": "claude-david",
+      "desc": "change_{hh,hv}_db.tif y change_index.tif con normalización robusta documentada (method en case.json). Índice continuo, sin umbral. Hecho = mapa reproducible + nota del método en docs/."
+    },
+    {
+      "id": "CH-02",
+      "title": "Estadísticas dentro/fuera del perímetro",
+      "state": "proposed",
+      "group": "CH",
+      "deps": ["CH-01", "DT-03"],
+      "at": "2026-11-14T11:39:27Z",
+      "by": "claude-david",
+      "desc": "stats.json con distribución del índice dentro y fuera del perímetro sobre píxeles válidos. Sin hablar de área quemada."
+    },
+    {
+      "id": "AP-01",
+      "title": "Pantalla Case Overview (F01, F09)",
+      "state": "proposed",
+      "group": "AP",
+      "deps": ["BS-05"],
+      "at": "2026-11-14T11:39:27Z",
+      "by": "claude-david",
+      "desc": "Portada del caso: mapa de localización, fechas de inicio y observaciones NISAR, qué es SAR, procedencia y aviso exploratorio, botón Explore analysis. Diseño cuidado y responsive."
+    },
+    {
+      "id": "AP-02",
+      "title": "Visor de mapa con capas y leyendas (F02, F06)",
+      "state": "proposed",
+      "group": "AP",
+      "deps": ["BS-05"],
+      "at": "2026-11-14T11:39:27Z",
+      "by": "claude-david",
+      "desc": "Pantalla Fire Analysis: MapLibre con capas SAR, Observed radar changes y Official fire perimeter conmutables, opacidad y leyenda por capa."
+    },
+    {
+      "id": "AP-03",
+      "title": "Comparador antes/después (F03)",
+      "state": "proposed",
+      "group": "AP",
+      "deps": ["AP-02"],
+      "at": "2026-11-14T11:39:27Z",
+      "by": "claude-david",
+      "desc": "Swipe/slider t1 vs t2 sincronizado en el mismo encuadre, seleccionable HH/HV."
+    },
+    {
+      "id": "AP-04",
+      "title": "Panel de métricas (F07)",
+      "state": "proposed",
+      "group": "AP",
+      "deps": ["AP-02"],
+      "at": "2026-11-14T11:39:27Z",
+      "by": "claude-david",
+      "desc": "Panel RESULTS con cobertura válida y estadísticas dentro/fuera desde stats.json; campos P1 ocultos si highlight es null."
+    },
+    {
+      "id": "EV-01",
+      "title": "API FastAPI de inspección por punto",
+      "state": "proposed",
+      "group": "EV",
+      "deps": ["BS-02", "BS-03"],
+      "at": "2026-11-14T11:39:27Z",
+      "by": "claude-david",
+      "desc": "/api/case, /api/stats, /api/inspect/point leyendo los COG con rasterio según contrato; tests con fixtures."
+    },
+    {
+      "id": "EV-02",
+      "title": "Reglas deterministas de cautelas (pendiente, geometría)",
+      "state": "proposed",
+      "group": "EV",
+      "deps": ["DT-02"],
+      "at": "2026-11-14T11:39:27Z",
+      "by": "claude-david",
+      "desc": "Caveats por píxel a partir de DEM (pendiente/orientación respecto a la geometría descendente) y otras reglas documentadas; sin LLM."
+    },
+    {
+      "id": "EV-03",
+      "title": "Evidence Inspector en la web (F08)",
+      "state": "proposed",
+      "group": "EV",
+      "deps": ["AP-02", "EV-01"],
+      "at": "2026-11-14T11:39:27Z",
+      "by": "claude-david",
+      "desc": "Clic en el mapa → panel con HH/HV t1/t2 en dB, delta, índice, relación con el perímetro, método, cautelas y fuentes. Funciona también sin máscara."
+    },
+    {
+      "id": "XP-01",
+      "title": "Máscara exploratoria + IoU (F05)",
+      "state": "proposed",
+      "group": "XP",
+      "deps": ["CH-02"],
+      "at": "2026-11-14T11:39:27Z",
+      "by": "claude-david",
+      "desc": "Umbral documentado + suavizado, highlight_mask, regiones conectadas, superficie e IoU frente al perímetro. Se presenta como 'Highlighted radar changes', nunca área quemada."
+    },
+    {
+      "id": "XP-02",
+      "title": "Análisis de sensibilidad al umbral y polarización",
+      "state": "proposed",
+      "group": "XP",
+      "deps": ["XP-01"],
+      "at": "2026-11-14T11:39:27Z",
+      "by": "claude-david",
+      "desc": "Curvas de superficie/IoU frente a umbral, HH vs HV, para el documento científico."
+    },
+    {
+      "id": "XP-03",
+      "title": "Experimento DL Siamese U-Net",
+      "state": "proposed",
+      "group": "XP",
+      "deps": ["XP-01"],
+      "at": "2026-11-14T11:39:27Z",
+      "by": "claude-david",
+      "desc": "Solo si P0 está en verde. Evaluación honesta frente al baseline, sin fuga espacial entre train/test. No entra en la demo sin evaluación."
+    },
+    {
+      "id": "DL-01",
+      "title": "Despliegue de la demo",
+      "state": "proposed",
+      "group": "DL",
+      "deps": ["EV-03"],
+      "at": "2026-11-14T11:39:27Z",
+      "by": "claude-david",
+      "desc": "Web estática + API desplegadas (o build local reproducible) con datos precalculados; sin descargas ni entrenamiento en directo."
+    },
+    {
+      "id": "DL-02",
+      "title": "Documentación, limitaciones y uso de IA",
+      "state": "proposed",
+      "group": "DL",
+      "deps": ["CH-02"],
+      "at": "2026-11-14T11:39:27Z",
+      "by": "claude-david",
+      "desc": "README final: fuentes NASA, metodología, discrepancias, limitaciones y declaración de herramientas de IA (criterios 9 y 10 de la propuesta)."
+    },
+    {
+      "id": "DL-03",
+      "title": "Guion y vídeo de demo de 2 minutos",
+      "state": "proposed",
+      "group": "DL",
+      "deps": ["DL-01"],
+      "at": "2026-11-14T11:39:27Z",
+      "by": "claude-david",
+      "desc": "Recorrido del §6 de la propuesta en unos 2 minutos, grabado y subido."
+    }
+  ]
+}

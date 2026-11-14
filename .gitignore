@@ -1,0 +1,42 @@
+# Data (never commit rasters or model weights)
+data/raw/
+data/processed/
+*.tif
+*.tiff
+*.h5
+*.nc
+*.zarr/
+*.pt
+*.pth
+*.ckpt
+checkpoints/
+runs/
+wandb/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# Node / web
+node_modules/
+web/dist/
+*.local
+
+# Secrets
+.env
+.env.*
+!.env.example
+.netrc
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Agents
+.claude/settings.local.json
