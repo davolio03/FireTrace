@@ -42,6 +42,8 @@ Canonical upstream commands (Python is wired; the others need their scaffold/dep
 
 The first implemented pipeline stage is the DT-01 NISAR ingest/crop: `uv run python -m pipeline.ingest --config pipeline/configs/ingest_plaskett.toml`. It reads the four local GCOV GeoTIFFs from `data/raw/nisar/` (relative paths resolve against the working directory) and writes float32 crops plus `ingest.json` to `data/interim/nisar/`. It needs the gitignored raw inputs and is not run in CI; its tests use synthetic rasters only.
 
+The DT-02 stage converts those crops to dB and builds the common valid mask: `uv run python -m pipeline.sar --ingest-dir data/interim/nisar --output-dir data/interim/sar`. It verifies the crops against the sha256 values in `ingest.json` and writes dB COGs, `valid_mask.tif` and `sar.json` (layout in [ARCHITECTURE](ARCHITECTURE.md)). Like DT-01 it needs local data, is not run in CI and is tested with synthetic rasters.
+
 `npm run dev` within `web/` starts the web scaffold. `uv run python -m pipeline.run --all` and `uv run uvicorn api.main:app --reload` remain planned processing/start targets, **not working commands in this checkout**.
 
 Cover deterministic numerical rules and realistic failure paths with small synthetic rasters. Application integration must verify actual lookup/display alignment, no-data, coverage arithmetic, provenance and mock-to-real switching. Real science requires separate reproducible sample evidence and an agreed method/domain; schema-valid mocks are not that evidence.
