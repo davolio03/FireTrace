@@ -22,7 +22,7 @@ The contract validator uses its existing inline dependency declaration, **`jsons
 
 ## Python 3.11 CI, separate from local evidence
 
-The `quality` workflow selects **Python 3.11**, runs `uv sync`, the repository gate (which executes the `quality.json` lint and test commands), `uv run ruff format --check .` and then the existing fixture validator through uv, on pull requests and pushes to `main`. It uses the starter's checkout/setup-python action versions and the immutable setup-uv reference documented by its publisher. Until `uv.lock` is committed, CI resolves dependencies at run time; switch to `uv sync --locked` once the lockfile exists.
+The `quality` workflow selects **Python 3.11**, runs `uv sync --locked`, the repository gate (which executes the `quality.json` lint and test commands), `uv run ruff format --check .` and then the existing fixture validator through uv, on pull requests and pushes to `main`. It uses the starter's checkout/setup-python action versions and the immutable setup-uv reference documented by its publisher. Dependency versions are pinned by the committed `uv.lock`; CI fails if `pyproject.toml` and the lockfile disagree.
 
 The integration environment provides Python **3.14.4** and jsonschema **4.19.2**, below the declared `>=4.20`; `python` and uv are absent. No packages were installed or contract requirements weakened. Running the two direct Python3 scripts here is **not Python 3.11/uv, declared-dependency or hosted CI verification**. CI configuration is not a CI execution result; record the actual remote outcome only when an authorized run occurs.
 

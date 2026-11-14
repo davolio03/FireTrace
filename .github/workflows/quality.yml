@@ -23,8 +23,7 @@ jobs:
         with:
           enable-cache: false
       - name: Sync Python environment (Python 3.11 + dev group)
-        # Switch to `uv sync --locked` once uv.lock is committed.
-        run: uv sync
+        run: uv sync --locked
       - name: Check team guidance, then run quality.json lint (ruff check) and tests (pytest)
         run: python3 scripts/check.py
       - name: Check Python formatting
