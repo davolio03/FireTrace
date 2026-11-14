@@ -168,6 +168,16 @@
           "at": "2026-11-14T17:35:00Z",
           "by": "claude-code",
           "text": "Plan: Opus subagent implements pipeline/ingest.py (config, grid check, AOI bbox+2km in 32610, snapped window crop, ingest.json) with synthetic tests in worktree feat/DT-01-nisar-ingest; separate review afterwards."
+        },
+        {
+          "at": "2026-11-14T17:43:54Z",
+          "by": "claude-code",
+          "text": "Implemented on feat/DT-01-nisar-ingest (ac53c9a, 3bf1e6f; not pushed). pipeline/ingest.py + example TOML config + 22 synthetic tests; scripts/check.py and contract validation pass (29 tests). Real run on the Plaskett pair: source grid 34992x34416 @10 m EPSG:32610; crop 1915x1624 px, snapped bounds (636000, 3967750, 655150, 3983990); outputs byte-identical over 3 runs. .h5 (t2): gamma0 RTC linear power, NaN nodata, no contract impact. Open: DT-02's 1,948,374 valid-pixel target does not match this crop (all 3,109,960 px valid). Pending: independent review (sol6.1 requested; T3 delegation unavailable this session)."
+        },
+        {
+          "at": "2026-11-14T17:58:12Z",
+          "by": "claude-david",
+          "text": "Review by Codex gpt-6.1-sol (medium): changes requested, 4 findings, all fixed in 256f357. P1 output paths could alias inputs (now refused before any write; inputs hashed first). P2 config could change the analysis grid (now fixed to EPSG:32610 / 10 m). P2 AI attribution trailers removed from the unpublished commits (now 23977a1, 4e1a566). P3 corrupt inputs now give 'ingest error' with exit 2. 33 tests pass; ruff, scripts/check.py, contract validation and git diff --check pass. Real Plaskett re-run: outputs and ingest.json byte-identical to the previous run (crop 1915x1624). Not pushed; local backup branch backup/DT-01-pre-trailer-strip."
         }
       ],
       "started": {
