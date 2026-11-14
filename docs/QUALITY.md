@@ -48,6 +48,8 @@ The CH-01 stage computes the continuous change index: `uv run python -m pipeline
 
 The DT-03 stage pins the WFIGS reference perimeter and rasterizes it on the crop grid: `uv run python -m pipeline.perimeter --config pipeline/configs/perimeter_plaskett.toml`. It verifies the raw GeoJSON sha256, never downloads, and is documented in [reference-perimeter](methods/reference-perimeter.md).
 
+The CH-02 stage summarises the change index inside and outside the perimeter: `uv run python -m pipeline.stats --change-dir data/interim/change --sar-dir data/interim/sar --perimeter-dir data/interim/perimeter --output-dir data/interim/stats`. Its tests validate `stats.json` against the contract schema with the `jsonschema` dev dependency; the method is in [stats](methods/stats.md).
+
 `npm run dev` within `web/` starts the web scaffold. `uv run python -m pipeline.run --all` and `uv run uvicorn api.main:app --reload` remain planned processing/start targets, **not working commands in this checkout**.
 
 Cover deterministic numerical rules and realistic failure paths with small synthetic rasters. Application integration must verify actual lookup/display alignment, no-data, coverage arithmetic, provenance and mock-to-real switching. Real science requires separate reproducible sample evidence and an agreed method/domain; schema-valid mocks are not that evidence.
