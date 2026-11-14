@@ -246,7 +246,7 @@
     {
       "id": "CH-01",
       "title": "Índice de cambio log-ratio |ΔHH|+|ΔHV| (F04)",
-      "state": "doing",
+      "state": "done",
       "group": "CH",
       "deps": ["DT-02"],
       "at": "2026-11-14T11:39:27Z",
