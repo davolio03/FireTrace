@@ -13,7 +13,7 @@ The case, stack and executable v1 contracts are selected. Pipeline/API/web imple
    python3 .agents/skills/kanvas/kanvas.py ready
    ```
 
-   Use the authoritative board in the main checkout; from a feature worktree add `-b <main-checkout>/kanvas.json`. No feature-branch board writes. If nothing is approved, report it to the human rather than approving a proposal yourself.
+   The CLI reads `.agents/skills/kanvas/remote.json` and writes the live board at `http://andriudevserver.tail8ddc4a.ts.net:8765/FireTrace/`; `git pull` brings the config. Do not pass `-b`, set `KANVAS_BOARD`, or edit a local `kanvas.json`. If nothing is approved, report it to the human rather than approving a proposal yourself.
 4. Agree the task owner and isolated worktree. With explicit Git authorization, branch from current `origin/main` into a separate worktree; one writer owns it. No fetch, staging, commit or publication is implied by this guide.
 5. For Python work in `pipeline/` or `api/`, run `uv sync` once, then `python3 scripts/check.py` (ruff check + pytest from `quality.json`) and `uv run ruff format --check .`. No processing or API start command exists yet.
 6. Read only relevant fixtures and affected code; agree open science/interfaces with the producer and consumer. Configure real lint/tests before the first application source file.

@@ -41,7 +41,7 @@ These choices do not imply packages are installed or application scaffolds exist
 ## One task, one worktree, one writer
 
 - **Kanvas is the only canonical task state.** Read [.agents/skills/kanvas/SKILL.md](.agents/skills/kanvas/SKILL.md). GitHub Issues hold references, acceptance criteria and discussion, not a second board.
-- At session start, use `python3 .agents/skills/kanvas/kanvas.py status` and `ready`. The authoritative board is in the main checkout; from a feature worktree select it explicitly with `-b <main-checkout>/kanvas.json`. Do not modify the feature branch's `kanvas.json`.
+- At session start, use `python3 .agents/skills/kanvas/kanvas.py status` and `ready`. The CLI reads `.agents/skills/kanvas/remote.json` and writes the live board at `http://andriudevserver.tail8ddc4a.ts.net:8765/FireTrace/`; `git pull` brings the config. Do not pass `-b`, set `KANVAS_BOARD`, or edit a local `kanvas.json`. `--local` is only for the computer running `kanvas serve`.
 - Board writes use only the CLI, signed with `--as <tool>-<role>`. Humans approve proposals and mark done. Agents start approved ready work, add notes and submit with `finish` for human review, within the skill's rules. Never invent approvals or take another writer's task.
 - Explicitly authorized direct work without a matching approved task must be reported as such; do not manufacture a task ID or silently approve a proposal.
 - A human owns each task/PR. Work in a dedicated branch/worktree from current `main`, with disjoint ownership for parallel work. Never overwrite another worktree or agent's changes.
