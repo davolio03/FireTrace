@@ -7,13 +7,17 @@ compatibility: Requires Python 3.8 or later.
 
 # Kanvas
 
-The board is `kanvas.json` at the project root. Change it only through the CLI in `.agents/skills/kanvas/`; the CLI enforces the workflow and keeps the file valid:
+The board is live at `http://andriudevserver.tail8ddc4a.ts.net:8765/FireTrace/`. Change it only through the CLI in `.agents/skills/kanvas/`; the CLI reads `remote.json` and writes the live board, so a client needs only `git pull`. The CLI enforces the workflow and keeps the board valid:
 
 ```bash
 python .agents/skills/kanvas/kanvas.py <command>
 ```
 
-Use `python3` where `python` is missing. Never edit `kanvas.json` by hand. The human watches the board in a browser, where your changes appear within a second. It opens with `kanvas serve` when Kanvas is installed, or `python .agents/skills/kanvas/kanvas.py serve`. When Kanvas already runs for another project, this opens the board there and returns at once; otherwise it keeps running until stopped.
+Use `python3` where `python` is missing. Never edit `kanvas.json` by hand and never keep a local copy. The human watches the live board in a browser, where your changes appear within a second. The computer running the board serves it with `kanvas serve`; clients open the live URL.
+
+## Live board
+
+`remote.json`, next to this file, points every command at the live board. Do not add a client-specific configuration: a `git pull` brings the URL and this file. If the live board cannot be reached, stop and tell the human; do not fall back to a local board. The `--local` flag (or `KANVAS_LOCAL=1`) is only for the computer running `kanvas serve`. `attach` is not supported on the live board yet: upload images from the board in the browser.
 
 ## Workflow
 
@@ -135,4 +139,4 @@ In PowerShell, write the text to a file and pass `--file summary.md`.
 
 ## When a command fails
 
-The CLI exits with a non-zero code and an `Error:` line explaining the rule, for example "DV-04 is blocked by unfinished DV-02". Follow the message, or ask the human. Editing the file to get around a rule breaks the human's trust in the board.
+The CLI exits with a non-zero code and an `Error:` line explaining the rule, for example "DV-04 is blocked by unfinished DV-02". Follow the message, or ask the human. Editing the file to get around a rule breaks the human's trust in the board. A live board that cannot be reached is an error too: report it and stop; do not fall back to a local copy.

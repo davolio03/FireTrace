@@ -14,6 +14,7 @@ import argparse
 import base64
 import errno
 import hashlib
+import io
 import ipaddress
 import json
 import os
@@ -24,25 +25,31 @@ import socketserver
 import stat
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import urllib.error
 import urllib.request
 import webbrowser
 from collections import Counter
-from contextlib import contextmanager
+from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from datetime import datetime, timezone
 from html import escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import quote, unquote, urlparse
 
-VERSION = "0.5.0"
+VERSION = "0.5.1"
 FORMAT = 1
 INSTALLED = __name__ == "kanvas_board"
 BOARD_FILE = "kanvas.json"
 HERE = os.path.dirname(os.path.abspath(__file__))
 HTML_FILE = os.path.join(HERE, "kanvas.html")
+REMOTE_CONFIG = os.path.join(HERE, "remote.json")
 SNAPSHOT_TAG = '<script id="kanvas-snapshot" type="application/json"></script>'
+# Commands that work on the computer running Kanvas, never on a live board.
+LOCAL_ONLY_COMMANDS = frozenset(("serve", "init", "service", "close", "import"))
+REMOTE_BOARD_PATH = None
+REMOTE_BOARD_LABEL = None
 
 STATES = ("proposed", "todo", "doing", "review", "done")
 ID_RE = re.compile(r"^[A-Za-z][A-Za-z0-9]*-\d+$")
@@ -864,6 +871,8 @@ def read_input(value, use_stdin=False, file_path=None, what="text"):
 
 
 def rel(path):
+    if REMOTE_BOARD_PATH and os.path.abspath(path) == REMOTE_BOARD_PATH:
+        return REMOTE_BOARD_LABEL or "live board"
     try:
         r = os.path.relpath(path)
     except ValueError:
@@ -1183,7 +1192,8 @@ def cmd_check(args):
     path = board_path(args)
     board = load_board(path)
     errors, warnings = problems(board)
-    warnings += image_problems(path, board)
+    if not (REMOTE_BOARD_PATH and os.path.abspath(path) == REMOTE_BOARD_PATH):
+        warnings += image_problems(path, board)
     for e in errors:
         print(f"error: {e}")
     for w in warnings:
@@ -3063,6 +3073,133 @@ def cmd_service(args):
 
 
 # ---------------------------------------------------------------------------
+# Live board
+# ---------------------------------------------------------------------------
+
+
+def remote_url_for(args):
+    """The configured live board URL, or None for a local board."""
+    if getattr(args, "local", False) or os.environ.get("KANVAS_LOCAL") == "1":
+        return None
+    if getattr(args, "command", None) in LOCAL_ONLY_COMMANDS:
+        return None
+    url = os.environ.get("KANVAS_REMOTE_URL")
+    if url is None:
+        try:
+            with open(REMOTE_CONFIG, encoding="utf-8") as f:
+                data = json.load(f)
+        except FileNotFoundError:
+            return None
+        except (OSError, ValueError) as e:
+            raise KanvasError(f"Cannot read {REMOTE_CONFIG}: {e}")
+        if not isinstance(data, dict):
+            raise KanvasError(f"{REMOTE_CONFIG} must be a JSON object with a \"url\"")
+        url = data.get("url")
+    if not isinstance(url, str):
+        if url is None:
+            return None
+        raise KanvasError(f"{REMOTE_CONFIG} needs a string \"url\"")
+    url = url.strip()
+    return url or None
+
+
+def remote_request(url, method="GET", body=None, headers=None):
+    req = urllib.request.Request(url, data=body, method=method)
+    req.add_header("Accept", "application/json")
+    if method == "GET":
+        req.add_header("Cache-Control", "no-store")
+    for key, value in (headers or {}).items():
+        req.add_header(key, value)
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            return r.status, {k.lower(): v for k, v in r.headers.items()}, r.read()
+    except urllib.error.HTTPError as e:
+        return e.code, {k.lower(): v for k, v in e.headers.items()}, e.read()
+    except (urllib.error.URLError, TimeoutError, OSError) as e:
+        raise KanvasError(
+            f"Cannot reach the live Kanvas at {url}: {e}. "
+            "Check Tailscale and that the live board is running."
+        )
+
+
+def remote_error(body):
+    try:
+        message = json.loads(body.decode("utf-8")).get("error")
+    except (ValueError, AttributeError):
+        message = None
+    return message or body.decode("utf-8", "replace")[:300]
+
+
+def run_remote(args, func, url):
+    """Run a command against the live board, retrying once if another writer lands first."""
+    global REMOTE_BOARD_PATH, REMOTE_BOARD_LABEL
+    if getattr(args, "board", None) or os.environ.get("KANVAS_BOARD"):
+        raise KanvasError(
+            "This project uses a live board; do not pass --board or set KANVAS_BOARD. "
+            "Use --local only on the computer running Kanvas."
+        )
+    if getattr(args, "command", None) == "attach":
+        raise KanvasError(
+            "Attachments are not available on a live board yet; "
+            "upload the image from the board in the browser."
+        )
+    api = url.rstrip("/") + "/api/board"
+    temp = tempfile.mkdtemp(prefix="kanvas-remote-")
+    path = os.path.join(temp, BOARD_FILE)
+    old_path, old_label = REMOTE_BOARD_PATH, REMOTE_BOARD_LABEL
+    REMOTE_BOARD_PATH, REMOTE_BOARD_LABEL = os.path.abspath(path), url.rstrip("/")
+    try:
+        if getattr(args, "stdin", False):
+            text = sys.stdin.buffer.read()
+            args.file = os.path.join(temp, "stdin.txt")
+            with open(args.file, "wb") as f:
+                f.write(text)
+            args.stdin = False
+        if getattr(args, "command", None) == "batch" and not args.file:
+            if sys.stdin.isatty():
+                raise KanvasError("Pipe the batch JSON into stdin, or pass --file PATH")
+            text = sys.stdin.buffer.read()
+            args.file = os.path.join(temp, "batch.json")
+            with open(args.file, "wb") as f:
+                f.write(text)
+
+        status, headers, body = remote_request(api)
+        if status != 200:
+            raise KanvasError(f"The live board cannot be read ({status}): {remote_error(body)}")
+        etag = headers.get("etag") or etag_of(body)
+        for _ in range(5):
+            with open(path, "wb") as f:
+                f.write(body)
+            args.board = path
+            out, err = io.StringIO(), io.StringIO()
+            with redirect_stdout(out), redirect_stderr(err):
+                code = func(args) or 0
+            with open(path, "rb") as f:
+                changed = f.read()
+            if changed == body:
+                sys.stdout.write(out.getvalue())
+                sys.stderr.write(err.getvalue())
+                return code
+            status, headers, response = remote_request(
+                api, "PUT", changed,
+                {"If-Match": etag, "Content-Type": "application/json"},
+            )
+            if status == 200:
+                sys.stdout.write(out.getvalue())
+                sys.stderr.write(err.getvalue())
+                return code
+            if status == 409:
+                body = response
+                etag = headers.get("etag") or etag_of(body)
+                continue
+            raise KanvasError(f"The live board refused the change ({status}): {remote_error(response)}")
+        raise KanvasError("The live board kept changing; try again.")
+    finally:
+        REMOTE_BOARD_PATH, REMOTE_BOARD_LABEL = old_path, old_label
+        shutil.rmtree(temp, ignore_errors=True)
+
+
+# ---------------------------------------------------------------------------
 # Command line
 # ---------------------------------------------------------------------------
 
@@ -3094,6 +3231,8 @@ def build_parser():
                         help=f"board file (default: nearest {BOARD_FILE})")
     common.add_argument("--as", dest="as_name", default=argparse.SUPPRESS, metavar="NAME",
                         help="name recorded on notes and proposals (default: $KANVAS_AGENT or 'agent')")
+    common.add_argument("--local", action="store_true",
+                        help="use the local board even when a live board is configured")
 
     prog = "kanvas" if INSTALLED else os.path.basename(sys.argv[0]) or "kanvas.py"
     parser = argparse.ArgumentParser(
@@ -3219,6 +3358,9 @@ def main(argv=None):
         parser.error("unrecognized arguments: " + " ".join(extra))
     func = getattr(args, "func", cmd_status)
     try:
+        url = remote_url_for(args)
+        if url:
+            return run_remote(args, func, url)
         return func(args) or 0
     except KanvasError as e:
         print(f"Error: {e}", file=sys.stderr)

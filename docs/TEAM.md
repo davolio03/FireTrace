@@ -31,7 +31,7 @@ L4 and L5 coordinate through the shared store in [web-state](../contracts/web-st
 
 ## One board, isolated writers, human decisions
 
-- **Kanvas is the only canonical task state.** Use the board in the main checkout via the [Kanvas CLI/skill](../.agents/skills/kanvas/SKILL.md); feature worktrees point to it with `-b <main-checkout>/kanvas.json`. Never edit a branch copy by hand.
+- **Kanvas is the only canonical task state.** Use the live board at `http://andriudevserver.tail8ddc4a.ts.net:8765/FireTrace/` through the [Kanvas CLI/skill](../.agents/skills/kanvas/SKILL.md); the CLI reads `.agents/skills/kanvas/remote.json` and `git pull` brings the config. Never pass `-b`, set `KANVAS_BOARD`, or edit a local `kanvas.json`.
 - Humans approve proposed work and mark done. Agents operate only within the skill and explicit authorization; one writer per worktree, no taking another writer's work. Issues may carry acceptance/discussion, not parallel status columns.
 - Scope and tradeoffs stay human-owned. Report direct authorization without a matching task honestly; do not invent an approved Kanvas ID.
 - Current [schemas/OpenAPI](../contracts/README.md) define interfaces. Producers/consumers agree changes before implementation and review a dedicated contract PR. Existing fixtures allow parallel work without declaring every scientific detail settled.
