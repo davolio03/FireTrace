@@ -147,12 +147,33 @@
     {
       "id": "DT-01",
       "title": "Ingesta y recorte de los 4 GeoTIFF NISAR (F01)",
-      "state": "todo",
+      "state": "doing",
       "group": "DT",
       "deps": ["BS-03"],
       "at": "2026-11-14T11:39:27Z",
       "by": "claude-david",
-      "desc": "pipeline lee HH/HV t1/t2 desde data/raw, verifica CRS/rejilla/forma comunes, recorta al AOI del perímetro con margen y genera case.json. Hecho = comando reproducible + test con ráster sintético."
+      "desc": "pipeline lee HH/HV t1/t2 desde data/raw, verifica CRS/rejilla/forma comunes, recorta al AOI del perímetro con margen y genera case.json. Hecho = comando reproducible + test con ráster sintético.",
+      "notes": [
+        {
+          "at": "2026-11-14T17:25:35Z",
+          "by": "claude-david",
+          "text": "Refined spec agreed with David (2026-11-14). Supersedes the description where they differ.\n\nScope: ingest and crop the 4 NISAR GCOV power GeoTIFFs (HH/HV x t1/t2). No dB conversion or valid mask (that is DT-02).\n\n- Inputs: config file with paths (data/raw/nisar/, gitignored) and expected granule IDs (t1 G4284560161-ASF, t2 G4340499432-ASF); record sha256 of every input.\n- Grid check: all 4 inputs share CRS, transform and shape; any mismatch fails with a clear error.\n- AOI: WFIGS 58728 perimeter bbox + 2 km margin, buffered in EPSG:32610 metres. Fail clearly if the AOI exceeds the raster extent.\n- Crop: integer pixel window snapped to the native 10 m grid, no resampling, original nodata preserved. Windowed reads only (inputs ~3 GB each).\n- Metadata: inspect the .h5 first (gamma0/RTC, real nodata, product mask); record findings in Engram; flag any contract impact.\n- Outputs: data/interim/nisar/{t1,t2}_{hh,hv}.tif (float32) + data/interim/nisar/ingest.json (epochs, acquisition, AOI in 32610 and 4326, grid, checksums).\n- case.json is NOT produced here: DT-04 assembles it from DT-01 + DT-03 + CH-01 (it needs method and reference).\n\nDone = reproducible command (uv run python -m pipeline.ingest --config ...), deterministic outputs; synthetic-raster tests for matching grids, CRS/transform/shape mismatch, AOI outside raster, window alignment and nodata preservation; ruff + pytest green locally and in CI; PR carries real-run evidence (crop size, bbox, checksums), no data committed."
+        },
+        {
+          "at": "2026-11-14T17:27:01Z",
+          "by": "human",
+          "text": "Started in the board."
+        },
+        {
+          "at": "2026-11-14T17:35:00Z",
+          "by": "claude-code",
+          "text": "Plan: Opus subagent implements pipeline/ingest.py (config, grid check, AOI bbox+2km in 32610, snapped window crop, ingest.json) with synthetic tests in worktree feat/DT-01-nisar-ingest; separate review afterwards."
+        }
+      ],
+      "started": {
+        "at": "2026-11-14T17:35:00Z",
+        "by": "claude-code"
+      }
     },
     {
       "id": "DT-02",
@@ -182,7 +203,14 @@
       "deps": ["DT-02", "CH-01", "DT-03"],
       "at": "2026-11-14T11:39:27Z",
       "by": "claude-david",
-      "desc": "Una PNG RGBA por capa reproyectada a EPSG:3857 con paleta fija, layers.json con coordenadas y leyendas, case.json, stats.json y perimeter.geojson. Hecho = uv run contracts/tools/validate.py data/processed/web pasa."
+      "desc": "Una PNG RGBA por capa reproyectada a EPSG:3857 con paleta fija, layers.json con coordenadas y leyendas, stats.json y perimeter.geojson. También monta case.json final a partir de data/interim/nisar/ingest.json (DT-01), la referencia del perímetro (DT-03) y el método (CH-01). Hecho = uv run contracts/tools/validate.py data/processed/web pasa.",
+      "notes": [
+        {
+          "at": "2026-11-14T17:25:35Z",
+          "by": "claude-david",
+          "text": "case.json assembly moved here from DT-01 (agreed with David)"
+        }
+      ]
     },
     {
       "id": "CH-01",
