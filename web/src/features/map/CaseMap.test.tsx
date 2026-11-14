@@ -17,6 +17,7 @@ const map = vi.hoisted(() => ({
   getLayer: vi.fn(() => true),
   setLayoutProperty: vi.fn(),
   setPaintProperty: vi.fn(),
+  fitBounds: vi.fn(),
 }))
 
 vi.mock('maplibre-gl', () => ({
@@ -32,6 +33,7 @@ vi.mock('maplibre-gl', () => ({
     getLayer = map.getLayer
     setLayoutProperty = map.setLayoutProperty
     setPaintProperty = map.setPaintProperty
+    fitBounds = map.fitBounds
   },
   NavigationControl: class {},
   setWorkerUrl: map.setWorkerUrl,
@@ -74,6 +76,13 @@ describe('case map', () => {
     const load = map.on.mock.calls.find(([event]) => event === 'load')?.[1]
     expect(load).toBeTypeOf('function')
     act(() => load())
+    expect(map.fitBounds).toHaveBeenCalledWith(
+      [
+        [-121.495, 35.84],
+        [-121.278, 35.992],
+      ],
+      expect.objectContaining({ duration: 0 }),
+    )
     const sar = layers.find((layer) => layer.id === 'sar_t1_hh')!
     expect(map.addSource).toHaveBeenCalledWith(
       'firetrace-sar_t1_hh',
@@ -93,6 +102,16 @@ describe('case map', () => {
     expect(map.addLayer).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'firetrace-perimeter', type: 'line' }),
     )
+    expect(map.addLayer.mock.calls.map(([layer]) => layer.id)).toEqual([
+      'firetrace-sar_t1_hh',
+      'firetrace-sar_t2_hh',
+      'firetrace-sar_t1_hv',
+      'firetrace-sar_t2_hv',
+      'firetrace-change_hh',
+      'firetrace-change_hv',
+      'firetrace-change_index',
+      'firetrace-perimeter',
+    ])
     act(() => {
       mapStore.getState().toggleLayer('perimeter')
       mapStore.getState().setOpacity('sar_t1_hh', 0.35)
@@ -107,6 +126,14 @@ describe('case map', () => {
       'raster-opacity',
       0.35,
     )
+  })
+
+  it('does not fit bounds when the manifest contains no raster', () => {
+    const perimeter = manifest.layers.find((layer) => layer.id === 'perimeter')
+    render(<CaseMap layers={[perimeter as components['schemas']['layer']]} />)
+    const load = map.on.mock.calls.find(([event]) => event === 'load')?.[1]
+    act(() => load())
+    expect(map.fitBounds).not.toHaveBeenCalled()
   })
 
   it('shows a clear error when map loading fails', () => {

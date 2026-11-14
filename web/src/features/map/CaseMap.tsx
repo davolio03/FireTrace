@@ -82,6 +82,20 @@ export function CaseMap({
     }
     const unsubscribe = mapStore.subscribe(syncLayers)
     map.on('load', () => {
+      const footprint = displayed.find(
+        (layer) => layer.kind === 'raster' && layer.coordinates?.length === 4,
+      )?.coordinates
+      if (footprint) {
+        const longitudes = footprint.map(([lon]) => lon)
+        const latitudes = footprint.map(([, lat]) => lat)
+        map.fitBounds(
+          [
+            [Math.min(...longitudes), Math.min(...latitudes)],
+            [Math.max(...longitudes), Math.max(...latitudes)],
+          ],
+          { padding: 32, duration: 0 },
+        )
+      }
       for (const layer of displayed) {
         try {
           if (!layer.url) throw new Error('Layer URL missing')

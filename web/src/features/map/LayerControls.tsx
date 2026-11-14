@@ -8,6 +8,7 @@ function Legend({ layer }: { layer: Layer }) {
       className="mt-2 text-xs text-slate-700"
       aria-label={`Legend for ${layer.title}`}
     >
+      <p className="font-semibold">Legend</p>
       {legend.type === 'continuous' && (
         <>
           <span>{legend.units}</span>
@@ -37,6 +38,7 @@ function Legend({ layer }: { layer: Layer }) {
           </span>
         ))}
       {'note' in legend && legend.note && <p>{legend.note}</p>}
+      {layer.kind === 'raster' && <p>Transparent pixels indicate no data.</p>}
     </div>
   )
 }
@@ -53,6 +55,10 @@ export function LayerControls({ layers }: { layers: Layer[] }) {
       className="rounded-lg border border-slate-300 p-4"
     >
       <h2 className="text-xl font-semibold">Map layers</h2>
+      <p className="mt-2 text-sm text-slate-700">
+        The first layer is at the bottom and the last is at the top. Visible
+        layers above can hide layers below.
+      </p>
       {visibleMapLayers(layers).map((layer) => (
         <div key={layer.id} className="mt-4 border-t border-slate-200 pt-3">
           <label className="flex gap-2 font-medium">
@@ -68,6 +74,7 @@ export function LayerControls({ layers }: { layers: Layer[] }) {
             <input
               className="block w-full"
               type="range"
+              disabled={!visible.includes(layer.id)}
               min="0"
               max="1"
               step="0.05"
