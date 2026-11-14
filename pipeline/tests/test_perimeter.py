@@ -306,3 +306,46 @@ def test_failed_publication_keeps_the_previous_set(
         run_perimeter(config)
     assert {p.name: p.read_bytes() for p in sorted((tmp_path / "out").iterdir())} == before
     assert sorted(p.name for p in tmp_path.iterdir() if p.name.startswith(".")) == []
+
+
+# --------------------------------------------------------------------------- DT-08
+
+
+def test_input_on_the_staging_sibling_is_rejected(tmp_path: Path) -> None:
+    import dataclasses
+
+    config = load_config(write_case(tmp_path), base_dir=tmp_path)
+    moved = (tmp_path / "nisar").rename(tmp_path / ".out.staging")
+    with pytest.raises(PerimeterError, match="must differ"):
+        run_perimeter(dataclasses.replace(config, ingest_dir=moved))
+    assert (moved / "ingest.json").is_file(), "the input must never be deleted"
+
+
+def test_raw_file_inside_the_output_is_rejected(tmp_path: Path) -> None:
+    import dataclasses
+
+    config = load_config(write_case(tmp_path), base_dir=tmp_path)
+    (tmp_path / "out").mkdir()
+    raw = config.raw.rename(tmp_path / "out" / "perimeter.geojson")
+    with pytest.raises(PerimeterError, match="must differ"):
+        run_perimeter(dataclasses.replace(config, raw=raw))
+    assert raw.is_file()
+
+
+def test_raw_file_next_to_the_output_is_allowed(tmp_path: Path) -> None:
+    import dataclasses
+
+    config = load_config(write_case(tmp_path), base_dir=tmp_path)
+    raw = config.raw.rename(tmp_path / "perimeter.geojson")  # same parent as "out"
+    run_perimeter(dataclasses.replace(config, raw=raw))
+    assert (tmp_path / "out" / "perimeter.json").is_file()
+
+
+def test_directory_under_an_owned_name_is_refused(tmp_path: Path) -> None:
+    config = load_config(write_case(tmp_path), base_dir=tmp_path)
+    trap = tmp_path / "out" / "perimeter.json"
+    trap.mkdir(parents=True)
+    (trap / "keep.txt").write_text("mine", encoding="utf-8")
+    with pytest.raises(PerimeterError, match="does not own"):
+        run_perimeter(config)
+    assert (trap / "keep.txt").is_file()

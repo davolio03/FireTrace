@@ -326,3 +326,58 @@ def test_unsupported_manifest_versions_and_method_are_rejected(
         )
     with pytest.raises(StatsError, match=message):
         run_stats(d["change"], d["sar"], d["perimeter"], tmp_path / "stats")
+
+
+# --------------------------------------------------------------------------- DT-08
+
+
+def _tamper_after_read(monkeypatch: pytest.MonkeyPatch, target: Path) -> list[Path]:
+    """Replace ``target`` with garbage right after its bytes are read (hash/decode race)."""
+    real = Path.read_bytes
+    hits: list[Path] = []
+
+    def racing(self: Path) -> bytes:
+        payload = real(self)
+        if self == target and not hits:
+            hits.append(self)
+            target.write_bytes(b"tampered after hashing")
+        return payload
+
+    monkeypatch.setattr(Path, "read_bytes", racing)
+    return hits
+
+
+def test_input_on_the_staging_sibling_is_rejected(tmp_path: Path) -> None:
+    d = write_inputs(tmp_path)
+    moved = d["perimeter"].rename(tmp_path / ".stats.staging")
+    with pytest.raises(StatsError, match="must differ"):
+        run_stats(d["change"], d["sar"], moved, tmp_path / "stats")
+    assert (moved / "perimeter.json").is_file(), "the input must never be deleted"
+
+
+def test_directory_under_an_owned_name_is_refused(tmp_path: Path) -> None:
+    d = write_inputs(tmp_path)
+    trap = tmp_path / "stats" / "stats.json"
+    trap.mkdir(parents=True)
+    (trap / "keep.txt").write_text("mine", encoding="utf-8")
+    with pytest.raises(StatsError, match="does not own"):
+        run_stats(d["change"], d["sar"], d["perimeter"], tmp_path / "stats")
+    assert (trap / "keep.txt").is_file()
+
+
+def test_rasters_are_decoded_from_the_hashed_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clean, _ = run(tmp_path / "clean")
+    d = write_inputs(tmp_path / "raced")
+    hits = _tamper_after_read(monkeypatch, d["perimeter"] / "perimeter_mask.tif")
+    raced = run_stats(d["change"], d["sar"], d["perimeter"], tmp_path / "raced" / "stats")
+    assert hits, "the mask was read through the verified bytes"
+    assert raced == clean
+
+
+def test_sha_mismatch_names_the_manifest_that_recorded_it(tmp_path: Path) -> None:
+    d = write_inputs(tmp_path)
+    (d["perimeter"] / "perimeter_mask.tif").write_bytes(b"changed")
+    with pytest.raises(StatsError, match="perimeter_mask.tif: sha256 .* perimeter.json"):
+        run_stats(d["change"], d["sar"], d["perimeter"], tmp_path / "stats")

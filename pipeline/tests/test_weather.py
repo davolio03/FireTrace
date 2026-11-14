@@ -389,3 +389,25 @@ def test_threshold_uses_unrounded_means(tmp_path: Path) -> None:
     assert values["2026-08-18"] == 1.0
     assert doc["rain_days_over_1mm"] == 2
     assert doc["last_rain_before_t2"] == "2026-08-18"
+
+
+# --------------------------------------------------------------------------- DT-08
+
+
+def test_input_on_the_staging_sibling_is_rejected(tmp_path: Path) -> None:
+    raw = write_raw(tmp_path / ".out.staging", {d: grid(0.0) for d in DAYS})
+    ingest = write_ingest(tmp_path / "nisar")
+    with pytest.raises(WeatherError, match="must differ"):
+        run_build(raw, ingest, tmp_path / "out")
+    assert (raw / "imerg_manifest.json").is_file(), "the input must never be deleted"
+
+
+def test_directory_under_an_owned_name_is_refused(tmp_path: Path) -> None:
+    raw = write_raw(tmp_path / "raw", {d: grid(0.0) for d in DAYS})
+    ingest = write_ingest(tmp_path / "nisar")
+    trap = tmp_path / "out" / "weather.json"
+    trap.mkdir(parents=True)
+    (trap / "keep.txt").write_text("mine", encoding="utf-8")
+    with pytest.raises(WeatherError, match="does not own"):
+        run_build(raw, ingest, tmp_path / "out")
+    assert (trap / "keep.txt").is_file()

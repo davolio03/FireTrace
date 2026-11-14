@@ -36,7 +36,9 @@ from typing import Any
 
 import numpy as np
 
+from pipeline import publishing
 from pipeline.change import ChangeError, read_checked
+from pipeline.publishing import PublishError
 from pipeline.sar import ANALYSIS_PIXEL_SIZE_M, SarError, _staging_dirs, publish, sha256_file
 
 STATS_FORMAT_VERSION = 1
@@ -157,22 +159,25 @@ def _record(doc: Mapping[str, Any], path: tuple[str, ...], source: str) -> tuple
     return file, sha
 
 
-def _read(directory: Path, record: tuple[str, str], grid: Mapping[str, Any], dtype: str):
+def _read(
+    directory: Path,
+    record: tuple[str, str],
+    grid: Mapping[str, Any],
+    dtype: str,
+    manifest: str,
+):
     try:
-        return read_checked(directory / record[0], record[1], grid, dtype)
+        return read_checked(directory / record[0], record[1], grid, dtype, manifest)
     except ChangeError as exc:
         raise StatsError(str(exc)) from exc
 
 
 def check_output_dir(output_dir: Path) -> None:
-    if output_dir.exists():
-        if not output_dir.is_dir():
-            raise StatsError(f"output_dir {output_dir.name} is not a directory")
-        foreign = sorted(p.name for p in output_dir.iterdir() if p.name not in OUTPUT_FILES)
-        if foreign:
-            raise StatsError(
-                f"output_dir {output_dir.name} holds files this stage does not own: {foreign}"
-            )
+    """Only missing or fully owned output, staging and backup directories may be replaced."""
+    try:
+        publishing.check_output_dir(output_dir, OUTPUT_FILES)
+    except PublishError as exc:
+        raise StatsError(str(exc)) from exc
 
 
 # --------------------------------------------------------------------------- run
@@ -183,7 +188,7 @@ def run_stats(
 ) -> dict[str, Any]:
     """Compute the statistics and return the ``stats.json`` document written."""
     inputs = (change_dir, sar_dir, perimeter_dir)
-    if any(output_dir.resolve() == d.resolve() for d in inputs):
+    if publishing.overlapping_input(output_dir, inputs) is not None:
         raise StatsError("output_dir must differ from the input directories")
     check_output_dir(output_dir)
     change = _load(change_dir / "change.json")
@@ -220,20 +225,26 @@ def run_stats(
             raise StatsError(f"{source}: grid differs from change.json")
 
     index = _read(
-        change_dir, _record(change, ("outputs", "change_index"), "change.json"), grid, "float32"
+        change_dir,
+        _record(change, ("outputs", "change_index"), "change.json"),
+        grid,
+        "float32",
+        "change.json",
     )
-    valid = _read(sar_dir, _record(sar, ("valid_mask",), "sar.json"), grid, "uint8")
+    valid = _read(sar_dir, _record(sar, ("valid_mask",), "sar.json"), grid, "uint8", "sar.json")
     inside = _read(
         perimeter_dir,
         _record(perimeter, ("outputs", "perimeter_mask.tif"), "perimeter.json"),
         grid,
         "uint8",
+        "perimeter.json",
     )
     edge = _read(
         perimeter_dir,
         _record(perimeter, ("outputs", "perimeter_edge.tif"), "perimeter.json"),
         grid,
         "uint8",
+        "perimeter.json",
     )
     for name, mask in (("valid_mask", valid), ("perimeter_mask", inside), ("perimeter_edge", edge)):
         if not np.isin(mask, (0, 1)).all():

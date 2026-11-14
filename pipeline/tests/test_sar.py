@@ -291,3 +291,84 @@ def test_cog_with_overviews_keeps_full_resolution_values(tmp_path: Path) -> None
         assert ds.overviews(1), "expected internal overviews"
         assert ds.transform == TRANSFORM and (ds.height, ds.width) == size
         np.testing.assert_array_equal(ds.read(1), to_db(data["t1_hv"], float("nan")))
+
+
+# --------------------------------------------------------------------------- DT-08
+
+
+def _tamper_after_read(monkeypatch: pytest.MonkeyPatch, target: Path) -> list[Path]:
+    """Replace ``target`` with garbage right after its bytes are read (hash/decode race)."""
+    real = Path.read_bytes
+    hits: list[Path] = []
+
+    def racing(self: Path) -> bytes:
+        payload = real(self)
+        if self == target and not hits:
+            hits.append(self)
+            target.write_bytes(b"tampered after hashing")
+        return payload
+
+    monkeypatch.setattr(Path, "read_bytes", racing)
+    return hits
+
+
+def test_input_on_the_staging_sibling_is_rejected(tmp_path: Path) -> None:
+    ingest = write_ingest_dir(tmp_path / ".sar.staging")
+    with pytest.raises(SarError, match="must differ"):
+        run_sar(ingest, tmp_path / "sar")
+    assert (ingest / "ingest.json").is_file(), "the input must never be deleted"
+
+
+def test_directory_under_an_owned_name_is_refused(tmp_path: Path) -> None:
+    ingest = write_ingest_dir(tmp_path / "nisar")
+    trap = tmp_path / "sar" / "valid_mask.tif"
+    trap.mkdir(parents=True)
+    (trap / "keep.txt").write_text("mine", encoding="utf-8")
+    with pytest.raises(SarError, match="does not own"):
+        run_sar(ingest, tmp_path / "sar")
+    assert (trap / "keep.txt").is_file()
+
+
+def test_foreign_backup_sibling_is_refused(tmp_path: Path) -> None:
+    ingest = write_ingest_dir(tmp_path / "nisar")
+    backup = tmp_path / ".sar.previous"
+    backup.mkdir()
+    (backup / "notes.txt").write_text("mine", encoding="utf-8")
+    with pytest.raises(SarError, match="does not own"):
+        run_sar(ingest, tmp_path / "sar")
+    assert (backup / "notes.txt").is_file()
+
+
+def test_crops_are_decoded_from_the_hashed_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ingest = write_ingest_dir(tmp_path / "nisar")
+    run_sar(ingest, tmp_path / "clean")
+    hits = _tamper_after_read(monkeypatch, ingest / "t1_hh.tif")
+    run_sar(ingest, tmp_path / "raced")
+    assert hits, "the crop was read through the verified bytes"
+    clean = (tmp_path / "clean" / "t1_hh_db.tif").read_bytes()
+    assert (tmp_path / "raced" / "t1_hh_db.tif").read_bytes() == clean
+
+
+def test_backup_cleanup_failure_still_publishes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import shutil
+
+    from pipeline.publishing import PublishWarning
+
+    ingest = write_ingest_dir(tmp_path / "nisar")
+    run_sar(ingest, tmp_path / "sar")
+    real = shutil.rmtree
+
+    def locked(path: Any, *args: Any, **kwargs: Any) -> None:
+        if Path(path).name == ".sar.previous":
+            raise PermissionError("backup locked")
+        real(path, *args, **kwargs)
+
+    monkeypatch.setattr(shutil, "rmtree", locked)
+    with pytest.warns(PublishWarning, match="backup locked"):
+        run_sar(ingest, tmp_path / "sar")
+    assert (tmp_path / "sar" / "sar.json").is_file()
+    assert (tmp_path / ".sar.previous" / "sar.json").is_file(), "backup kept"

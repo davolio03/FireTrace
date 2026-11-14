@@ -36,6 +36,8 @@ import rasterio
 from affine import Affine
 from rasterio.errors import NotGeoreferencedWarning
 
+from pipeline import publishing
+from pipeline.publishing import PublishError, read_verified_raster
 from pipeline.sar import (
     _RASTER_IO_ERRORS,
     ANALYSIS_CRS,
@@ -192,26 +194,27 @@ def load_sar(sar_dir: Path) -> dict[str, Any]:
     return doc
 
 
-def read_checked(path: Path, sha256: str, grid: Mapping[str, Any], dtype: str) -> np.ndarray:
-    """Read a single-band raster after checking checksum, dtype, CRS and grid."""
-    if not path.is_file():
-        raise ChangeError(f"input not found: {path.name}")
+def read_checked(
+    path: Path,
+    sha256: str,
+    grid: Mapping[str, Any],
+    dtype: str,
+    manifest: str = "sar.json",
+) -> np.ndarray:
+    """Read a single-band raster after checking checksum, dtype, CRS and grid.
+
+    The raster is decoded from the same bytes whose sha256 was checked, so a file replaced
+    after hashing is never read unverified.
+    """
     try:
-        actual = sha256_file(path)
-    except SarError as exc:
-        raise ChangeError(str(exc)) from exc
-    if actual != sha256:
-        raise ChangeError(
-            f"{path.name}: sha256 {actual[:12]}... differs from sar.json {sha256[:12]}...; "
-            "re-run the DT-02 conversion"
+        raster = read_verified_raster(
+            path, sha256, manifest, f"re-run the stage that wrote {manifest}"
         )
-    try:
-        with rasterio.open(path) as ds:
-            data = ds.read(1)
-            meta = (ds.count, ds.dtypes[0], ds.crs, ds.transform, ds.height, ds.width)
-    except _RASTER_IO_ERRORS as exc:
-        raise ChangeError(f"{path.name}: cannot read raster: {exc}") from exc
-    count, actual_dtype, crs, transform, height, width = meta
+    except PublishError as exc:
+        raise ChangeError(str(exc)) from exc
+    data = raster.data
+    count, actual_dtype, crs = raster.count, raster.dtype, raster.crs
+    transform, height, width = raster.transform, raster.height, raster.width
     if count != 1 or actual_dtype != dtype:
         raise ChangeError(f"{path.name}: expected 1 {dtype} band, got {count} {actual_dtype}")
     if crs != ANALYSIS_CRS:
@@ -230,22 +233,18 @@ def read_checked(path: Path, sha256: str, grid: Mapping[str, Any], dtype: str) -
     ):
         raise ChangeError(f"{path.name}: not the north-up 10 m analysis grid: {coeffs}")
     if [float(v) for v in tuple(transform)[:6]] != [float(v) for v in grid["transform"]]:
-        raise ChangeError(f"{path.name}: transform differs from sar.json")
+        raise ChangeError(f"{path.name}: transform differs from {manifest}")
     if (height, width) != (grid["height"], grid["width"]):
-        raise ChangeError(f"{path.name}: shape {(height, width)} differs from sar.json")
+        raise ChangeError(f"{path.name}: shape {(height, width)} differs from {manifest}")
     return data
 
 
 def check_output_dir(output_dir: Path) -> None:
-    """Only a missing directory or one holding exactly our products may be replaced."""
-    if output_dir.exists():
-        if not output_dir.is_dir():
-            raise ChangeError(f"output_dir {output_dir.name} is not a directory")
-        foreign = sorted(p.name for p in output_dir.iterdir() if p.name not in OUTPUT_FILES)
-        if foreign:
-            raise ChangeError(
-                f"output_dir {output_dir.name} holds files this stage does not own: {foreign}"
-            )
+    """Only missing or fully owned output, staging and backup directories may be replaced."""
+    try:
+        publishing.check_output_dir(output_dir, OUTPUT_FILES)
+    except PublishError as exc:
+        raise ChangeError(str(exc)) from exc
 
 
 # --------------------------------------------------------------------------- quicklook
@@ -306,7 +305,7 @@ def check_quicklook_path(quicklook: Path, sar_dir: Path, output_dir: Path) -> No
 
 def run_change(sar_dir: Path, output_dir: Path, quicklook: Path | None = None) -> dict[str, Any]:
     """Compute the change products from ``sar_dir`` and return the ``change.json`` written."""
-    if output_dir.resolve() == sar_dir.resolve():
+    if publishing.overlapping_input(output_dir, [sar_dir]) is not None:
         raise ChangeError("output_dir must differ from sar_dir")
     if quicklook is not None:
         check_quicklook_path(quicklook, sar_dir, output_dir)

@@ -43,6 +43,8 @@ from shapely.geometry import LineString, MultiPolygon, Polygon, mapping, shape
 from shapely.geometry.base import BaseGeometry
 from shapely.validation import explain_validity, make_valid
 
+from pipeline import publishing
+from pipeline.publishing import PublishError
 from pipeline.sar import (
     ANALYSIS_CRS,
     ANALYSIS_PIXEL_SIZE_M,
@@ -334,14 +336,11 @@ def _write_json(path: Path, document: Mapping[str, Any]) -> None:
 
 
 def check_output_dir(output_dir: Path) -> None:
-    if output_dir.exists():
-        if not output_dir.is_dir():
-            raise PerimeterError(f"output_dir {output_dir.name} is not a directory")
-        foreign = sorted(p.name for p in output_dir.iterdir() if p.name not in OUTPUT_FILES)
-        if foreign:
-            raise PerimeterError(
-                f"output_dir {output_dir.name} holds files this stage does not own: {foreign}"
-            )
+    """Only missing or fully owned output, staging and backup directories may be replaced."""
+    try:
+        publishing.check_output_dir(output_dir, OUTPUT_FILES)
+    except PublishError as exc:
+        raise PerimeterError(str(exc)) from exc
 
 
 # --------------------------------------------------------------------------- run
@@ -349,7 +348,7 @@ def check_output_dir(output_dir: Path) -> None:
 
 def run_perimeter(config: PerimeterConfig) -> dict[str, Any]:
     """Build the perimeter products and return the ``perimeter.json`` document written."""
-    if config.output_dir.resolve() in (config.ingest_dir.resolve(), config.raw.parent.resolve()):
+    if publishing.overlapping_input(config.output_dir, (config.ingest_dir, config.raw)):
         raise PerimeterError("output_dir must differ from the raw and ingest directories")
     check_output_dir(config.output_dir)
     ref = read_reference(config)

@@ -45,7 +45,9 @@ from rasterio.warp import Resampling, reproject
 from rasterio.warp import transform as warp_transform
 from rasterio.windows import Window
 
+from pipeline import publishing
 from pipeline.perimeter import PerimeterError, load_crop_grid
+from pipeline.publishing import PublishError
 from pipeline.sar import (
     ANALYSIS_CRS,
     ANALYSIS_PIXEL_SIZE_M,
@@ -590,14 +592,11 @@ def _write_json(path: Path, document: Mapping[str, Any]) -> None:
 
 
 def check_output_dir(output_dir: Path) -> None:
-    if output_dir.exists():
-        if not output_dir.is_dir():
-            raise TerrainError(f"output_dir {output_dir.name} is not a directory")
-        foreign = sorted(p.name for p in output_dir.iterdir() if p.name not in OUTPUT_FILES)
-        if foreign:
-            raise TerrainError(
-                f"output_dir {output_dir.name} holds files this stage does not own: {foreign}"
-            )
+    """Only missing or fully owned output, staging and backup directories may be replaced."""
+    try:
+        publishing.check_output_dir(output_dir, OUTPUT_FILES)
+    except PublishError as exc:
+        raise TerrainError(str(exc)) from exc
 
 
 def layer_entries(config: TerrainConfig, web: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -650,12 +649,8 @@ def layer_entries(config: TerrainConfig, web: Mapping[str, Any]) -> list[dict[st
 
 def run_terrain(config: TerrainConfig) -> dict[str, Any]:
     """Build the terrain products and return the ``terrain.json`` document written."""
-    protected = {
-        config.ingest_dir.resolve(),
-        config.dem.raw.parent.resolve(),
-        config.geometry.h5.parent.resolve(),
-    }
-    if config.output_dir.resolve() in protected:
+    protected = (config.ingest_dir, config.dem.raw, config.geometry.h5)
+    if publishing.overlapping_input(config.output_dir, protected) is not None:
         raise TerrainError("output_dir must differ from the ingest and raw input directories")
     check_output_dir(config.output_dir)
     ingest, transform, width, height = load_ingest(config.ingest_dir)

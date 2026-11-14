@@ -44,6 +44,8 @@ from typing import Any
 import numpy as np
 import xarray as xr
 
+from pipeline import publishing
+from pipeline.publishing import PublishError
 from pipeline.sar import SarError, _staging_dirs, publish
 
 WEATHER_FORMAT_VERSION = 1
@@ -207,14 +209,11 @@ def load_granules(raw_dir: Path) -> tuple[dict[str, Any], dict[date, Path]]:
 
 
 def check_output_dir(output_dir: Path) -> None:
-    if output_dir.exists():
-        if not output_dir.is_dir():
-            raise WeatherError(f"output_dir {output_dir.name} is not a directory")
-        foreign = sorted(p.name for p in output_dir.iterdir() if p.name not in OUTPUT_FILES)
-        if foreign:
-            raise WeatherError(
-                f"output_dir {output_dir.name} holds files this stage does not own: {foreign}"
-            )
+    """Only missing or fully owned output, staging and backup directories may be replaced."""
+    try:
+        publishing.check_output_dir(output_dir, OUTPUT_FILES)
+    except PublishError as exc:
+        raise WeatherError(str(exc)) from exc
 
 
 def _write_json(path: Path, document: Mapping[str, Any]) -> None:
@@ -224,7 +223,7 @@ def _write_json(path: Path, document: Mapping[str, Any]) -> None:
 
 def run_build(raw_dir: Path, ingest_dir: Path, output_dir: Path) -> dict[str, Any]:
     """Build ``weather.json`` from verified local granules; never uses the network."""
-    if output_dir.resolve() in (raw_dir.resolve(), ingest_dir.resolve()):
+    if publishing.overlapping_input(output_dir, (raw_dir, ingest_dir)) is not None:
         raise WeatherError("output_dir must differ from the raw and ingest directories")
     check_output_dir(output_dir)
     t1, t2, bbox = load_case(ingest_dir)
