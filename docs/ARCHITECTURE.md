@@ -59,8 +59,11 @@ Internal, gitignored pipeline products on the 10 m EPSG:32610 crop grid. They ar
 | DT-02 dB | `data/interim/sar/{t1,t2}_{hh,hv}_db.tif` | COG, float32 dB = `10*log10(x)` for finite x > 0 and not nodata; NaN nodata |
 | DT-02 dB | `data/interim/sar/valid_mask.tif` | COG, uint8 (no nodata): 1 = valid in all four layers, 0 = invalid in at least one |
 | DT-02 dB | `data/interim/sar/sar.json` | formula, mask rule, per-layer counts (valid / nodata / non_positive), valid pixels and coverage %, sha256 of ingest.json, sources and outputs |
+| CH-01 change | `data/interim/change/change_{hh,hv}_db.tif` | COG, float32 signed dB difference (after − before), NaN where `valid_mask` = 0 |
+| CH-01 change | `data/interim/change/change_index.tif` | COG, float32 continuous robust z-score of `abs(ΔHH) + abs(ΔHV)`; no threshold or clipping ([method](methods/change-index.md)) |
+| CH-01 change | `data/interim/change/change.json` | `method` (copied to `case.json` by DT-04), median, MAD, percentiles, valid count, sha256 of `sar.json` and outputs |
 
-COGs use 256 px deflate blocks and nearest-neighbour overviews for display only; scientific lookups read the full-resolution level. DT-02 builds the whole set in a sibling staging directory and swaps it into place only when complete, so a failed run keeps the previous complete set; it refuses an output directory holding files it does not own.
+COGs use 256 px deflate blocks and nearest-neighbour overviews for display only; scientific lookups read the full-resolution level. DT-02 and CH-01 build the whole set in a sibling staging directory and swaps it into place only when complete, so a failed run keeps the previous complete set; it refuses an output directory holding files it does not own.
 
 ## Reproducibility, diagnostics and deployment
 
