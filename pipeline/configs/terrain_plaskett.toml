@@ -1,0 +1,26 @@
+# DT-05 terrain context for the Plaskett case. Paths are relative to the repository root.
+# The pipeline never downloads. To (re)fetch the DEM tile on purpose:
+#   curl -fL -o data/raw/dem/Copernicus_DSM_COG_10_N35_00_W122_00_DEM.tif <dem.url>
+#   sha256sum data/raw/dem/Copernicus_DSM_COG_10_N35_00_W122_00_DEM.tif
+# then review the change and update dem.sha256. The t2 GCOV .h5 is the same granule as the
+# DT-01 t2 GeoTIFFs (G4340499432-ASF); place it in data/raw/nisar/ with its original name.
+
+ingest_dir = "data/interim/nisar"
+output_dir = "data/interim/terrain"
+margin_m = 100.0
+hillshade_azimuth_deg = 315.0
+hillshade_altitude_deg = 45.0
+
+[dem]
+raw = "data/raw/dem/Copernicus_DSM_COG_10_N35_00_W122_00_DEM.tif"
+sha256 = "197d09cd0cbc0b1647a0f98e642edc7def03095e3d6f3d8df9f9aa75a987f197"
+product_id = "Copernicus_DSM_COG_10_N35_00_W122_00_DEM"
+url = "https://copernicus-dem-30m.s3.amazonaws.com/Copernicus_DSM_COG_10_N35_00_W122_00_DEM/Copernicus_DSM_COG_10_N35_00_W122_00_DEM.tif"
+source_label = "Copernicus DEM GLO-30. Produced using Copernicus WorldDEM-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved"
+source_url = "https://doi.org/10.5270/ESA-c5d3d65"
+vertical_datum = "EGM2008"
+
+[geometry]
+h5 = "data/raw/nisar/NISAR_L2_PR_GCOV_032_042_D_070_4005_DHDH_A_20261003T025638_20261003T025713_P05023_N_F_J_001.h5"
+sha256 = "bc8653851885c16c1100b2c4bc2c2e436d0791108ac557540b42891e2eb581b4"
+epoch = "t2"

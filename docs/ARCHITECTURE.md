@@ -67,8 +67,12 @@ Internal, gitignored pipeline products on the 10 m EPSG:32610 crop grid. They ar
 | DT-03 perimeter | `data/interim/perimeter/perimeter.json` | `reference` block for `case.json`, raw sha256, geometry summary, vector/raster/WFIGS areas, rasterization rule, checksums |
 | CH-02 stats | `data/interim/stats/stats.json` | Web contract (`stats.schema.json`): valid coverage, inside/outside index distributions with shared 30-bin histograms, `highlight: null`; copied unchanged by DT-04 ([method](methods/stats.md)) |
 | CH-02 stats | `data/interim/stats/stats_meta.json` | Input checksums, domain definitions, histogram range and out-of-range counts, sensitivity variant without the 50 m edge band |
+| DT-05 terrain | `data/interim/terrain/{elevation,slope,aspect,local_incidence}.tif` | COG float32 on the crop grid from the pinned Copernicus GLO-30 DEM (bilinear, Horn slope/aspect in true east/north; metres EGM2008, degrees from true north); NaN nodata ([method](methods/terrain.md)) |
+| DT-05 terrain | `data/interim/terrain/layover_shadow.tif` | COG uint8: 0 none, 1 layover, 2 shadow, 255 unknown; approximate local criteria from the t2 GCOV radar-geometry cubes |
+| DT-05 terrain | `data/interim/terrain/{hillshade,slope}.png` + `terrain_layers.json` | EPSG:3857 display PNGs and their `layers.schema.json` entries (group `terrain`, mandatory `source`); DT-04 merges them into the web `layers.json` |
+| DT-05 terrain | `data/interim/terrain/terrain.json` | DEM and geometry provenance and sha256, grid, method, per-layer statistics, layover/shadow counts, web corners, output checksums |
 
-COGs use 256 px deflate blocks and nearest-neighbour overviews for display only; scientific lookups read the full-resolution level. DT-02, CH-01, DT-03 and CH-02 build the whole set in a sibling staging directory and swaps it into place only when complete, so a failed run keeps the previous complete set; it refuses an output directory holding files it does not own.
+COGs use 256 px deflate blocks and nearest-neighbour overviews for display only; scientific lookups read the full-resolution level. DT-02, CH-01, DT-03, CH-02 and DT-05 build the whole set in a sibling staging directory and swap it into place only when complete, so a failed run keeps the previous complete set; each stage refuses an output directory holding files it does not own.
 
 ## Reproducibility, diagnostics and deployment
 
