@@ -39,7 +39,7 @@
     {
       "id": "BS-01",
       "title": "Bootstrap repo: AGENTS.md, Kanvas, Engram, contrato ejecutable",
-      "state": "proposed",
+      "state": "done",
       "group": "BS",
       "at": "2026-11-14T11:39:27Z",
       "by": "claude-david",
@@ -49,8 +49,17 @@
           "at": "2026-11-14T11:50:36Z",
           "by": "claude-david",
           "text": "Contrato convertido en ejecutable para desbloquear el trabajo en paralelo"
+        },
+        {
+          "at": "2026-11-14T11:52:14Z",
+          "by": "human",
+          "text": "Started in the board."
         }
-      ]
+      ],
+      "started": {
+        "at": "2026-11-14T11:52:14Z",
+        "by": "human"
+      }
     },
     {
       "id": "BS-02",
