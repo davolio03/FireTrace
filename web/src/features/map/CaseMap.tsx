@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import * as maplibregl from 'maplibre-gl'
+import mapWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url'
 import { mapStore } from '../../state/mapStore'
 import { LayerControls } from './LayerControls'
 import { type Layer, visibleMapLayers } from './layers'
@@ -33,6 +34,7 @@ export function CaseMap({
       displayed.forEach((layer) => setOpacity(layer.id, layer.default_opacity))
     }
 
+    maplibregl.setWorkerUrl(mapWorkerUrl)
     const map = new maplibregl.Map({
       container: container.current,
       center: [-121.47, 35.92],

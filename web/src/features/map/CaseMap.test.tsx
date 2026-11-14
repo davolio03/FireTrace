@@ -9,6 +9,7 @@ import { CaseMap } from './CaseMap'
 const map = vi.hoisted(() => ({
   create: vi.fn(),
   addControl: vi.fn(),
+  setWorkerUrl: vi.fn(),
   remove: vi.fn(),
   on: vi.fn(),
   addSource: vi.fn(),
@@ -33,6 +34,7 @@ vi.mock('maplibre-gl', () => ({
     setPaintProperty = map.setPaintProperty
   },
   NavigationControl: class {},
+  setWorkerUrl: map.setWorkerUrl,
 }))
 
 describe('case map', () => {
@@ -43,6 +45,11 @@ describe('case map', () => {
   })
   it('centers on Big Sur and releases its map when unmounted', () => {
     const { unmount } = render(<CaseMap />)
+    expect(map.setWorkerUrl).toHaveBeenCalledOnce()
+    expect(map.setWorkerUrl.mock.calls[0][0]).toContain('maplibre-gl-worker')
+    expect(map.setWorkerUrl.mock.invocationCallOrder[0]).toBeLessThan(
+      map.create.mock.invocationCallOrder[0],
+    )
     expect(map.create).toHaveBeenCalledWith(
       expect.objectContaining({
         center: [-121.47, 35.92],
