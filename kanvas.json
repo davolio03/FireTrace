@@ -81,7 +81,7 @@
     {
       "id": "BS-03",
       "title": "Scaffold Python (uv, ruff, pytest, CI)",
-      "state": "doing",
+      "state": "done",
       "group": "BS",
       "deps": ["BS-01"],
       "at": "2026-11-14T11:39:27Z",
