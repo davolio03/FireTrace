@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://firetrace.local/contracts/case.schema.json",
+  "title": "Case",
+  "description": "Metadata of the single case study. Produced by the pipeline as web/case.json; served by GET /api/case.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract_version", "data_status", "case_id", "name", "location", "fire_start", "aoi_bbox", "epochs", "acquisition", "product", "reference", "method", "generated_at", "pipeline_version"],
+  "properties": {
+    "contract_version": { "const": "1.0.0" },
+    "data_status": { "enum": ["mock", "real"], "description": "The web must show a visible MOCK banner when this is 'mock'." },
+    "case_id": { "type": "string", "pattern": "^[a-z0-9-]+$" },
+    "name": { "type": "string" },
+    "location": { "type": "string" },
+    "fire_start": { "type": "string", "format": "date" },
+    "aoi_bbox": { "$ref": "#/$defs/bbox4326" },
+    "epochs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t1", "t2"],
+      "properties": { "t1": { "$ref": "#/$defs/epoch" }, "t2": { "$ref": "#/$defs/epoch" } }
+    },
+    "acquisition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["track", "frame", "direction", "frequency", "polarizations", "pixel_size_m", "crs"],
+      "properties": {
+        "track": { "type": "integer" },
+        "frame": { "type": "integer" },
+        "direction": { "enum": ["ascending", "descending"] },
+        "frequency": { "enum": ["A", "B"] },
+        "polarizations": { "type": "array", "items": { "enum": ["HH", "HV", "VH", "VV"] }, "minItems": 1, "uniqueItems": true },
+        "pixel_size_m": { "type": "number", "exclusiveMinimum": 0 },
+        "crs": { "type": "string", "pattern": "^EPSG:[0-9]+$" }
+      }
+    },
+    "product": { "type": "string" },
+    "reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "objectid", "datetime", "url", "note"],
+      "properties": {
+        "source": { "type": "string" },
+        "objectid": { "type": "integer" },
+        "datetime": { "type": "string", "format": "date-time" },
+        "url": { "type": "string", "format": "uri" },
+        "note": { "type": "string" }
+      }
+    },
+    "method": { "$ref": "#/$defs/method" },
+    "sources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["label", "url"],
+        "properties": { "label": { "type": "string" }, "url": { "type": "string", "format": "uri" } }
+      }
+    },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "pipeline_version": { "type": "string" }
+  },
+  "$defs": {
+    "bbox4326": {
+      "description": "[min_lon, min_lat, max_lon, max_lat] in EPSG:4326",
+      "type": "array",
+      "prefixItems": [
+        { "type": "number", "minimum": -180, "maximum": 180 },
+        { "type": "number", "minimum": -90, "maximum": 90 },
+        { "type": "number", "minimum": -180, "maximum": 180 },
+        { "type": "number", "minimum": -90, "maximum": 90 }
+      ],
+      "minItems": 4,
+      "maxItems": 4
+    },
+    "epoch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["label", "datetime", "granule_id", "absolute_orbit"],
+      "properties": {
+        "label": { "type": "string" },
+        "datetime": { "type": "string", "format": "date-time" },
+        "granule_id": { "type": "string" },
+        "absolute_orbit": { "type": "integer" }
+      }
+    },
+    "method": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "description", "params"],
+      "properties": {
+        "id": { "type": "string", "description": "Stable identifier, e.g. abs-logratio-hhhv-v1. Shown in the Evidence Inspector." },
+        "name": { "type": "string" },
+        "description": { "type": "string", "description": "Plain-language description of the real computation." },
+        "params": { "type": "object" },
+        "doc_url": { "type": "string" }
+      }
+    }
+  }
+}

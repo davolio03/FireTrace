@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://firetrace.local/contracts/stats.schema.json",
+  "title": "Stats",
+  "description": "Global descriptive metrics over VALID pixels only. Produced as web/stats.json; served by GET /api/stats. Never call any of these 'burned area'.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract_version", "data_status", "valid_pixels", "total_pixels", "valid_coverage_pct", "pixel_area_m2", "change_index", "inside_perimeter", "outside_perimeter", "highlight"],
+  "properties": {
+    "contract_version": { "const": "1.0.0" },
+    "data_status": { "enum": ["mock", "real"] },
+    "valid_pixels": { "type": "integer", "minimum": 0 },
+    "total_pixels": { "type": "integer", "minimum": 0 },
+    "valid_coverage_pct": { "type": "number", "minimum": 0, "maximum": 100 },
+    "pixel_area_m2": { "type": "number", "exclusiveMinimum": 0 },
+    "change_index": { "$ref": "#/$defs/distribution" },
+    "inside_perimeter": { "$ref": "#/$defs/zone" },
+    "outside_perimeter": { "$ref": "#/$defs/zone" },
+    "highlight": {
+      "description": "P1 (F05). null while the exploratory mask is disabled; the web hides the related widgets.",
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["threshold", "smoothing", "area_ha", "inside_ha", "outside_ha", "iou_vs_perimeter"],
+          "properties": {
+            "threshold": { "type": "number" },
+            "smoothing": { "type": "string" },
+            "area_ha": { "type": "number", "minimum": 0 },
+            "inside_ha": { "type": "number", "minimum": 0 },
+            "outside_ha": { "type": "number", "minimum": 0 },
+            "iou_vs_perimeter": { "type": "number", "minimum": 0, "maximum": 1 }
+          }
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "distribution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["p5", "p25", "p50", "p75", "p95", "mean"],
+      "properties": {
+        "p5": { "type": "number" }, "p25": { "type": "number" }, "p50": { "type": "number" },
+        "p75": { "type": "number" }, "p95": { "type": "number" }, "mean": { "type": "number" },
+        "histogram": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["bin_edges", "counts"],
+          "properties": {
+            "bin_edges": { "type": "array", "items": { "type": "number" }, "minItems": 2 },
+            "counts": { "type": "array", "items": { "type": "integer", "minimum": 0 } }
+          }
+        }
+      }
+    },
+    "zone": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["valid_pixels", "area_ha", "change_index"],
+      "properties": {
+        "valid_pixels": { "type": "integer", "minimum": 0 },
+        "area_ha": { "type": "number", "minimum": 0 },
+        "change_index": { "$ref": "#/$defs/distribution" }
+      }
+    }
+  }
+}

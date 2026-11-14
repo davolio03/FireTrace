@@ -1,0 +1,68 @@
+openapi: 3.1.0
+info:
+  title: FireTrace Explorer API
+  version: 1.0.0
+  description: >
+    Contract between the FastAPI service (api/) and the web (web/).
+    Schemas live in contracts/schemas/*.schema.json and are the single source of truth.
+    The web mocks these endpoints with MSW using contracts/fixtures/api/.
+servers:
+  - url: http://localhost:8000
+paths:
+  /api/health:
+    get:
+      operationId: getHealth
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, data_status]
+                properties:
+                  status: { const: ok }
+                  data_status: { enum: [mock, real] }
+  /api/case:
+    get:
+      operationId: getCase
+      responses:
+        "200":
+          description: Case metadata
+          content:
+            application/json:
+              schema: { $ref: "./schemas/case.schema.json" }
+  /api/stats:
+    get:
+      operationId: getStats
+      responses:
+        "200":
+          description: Global metrics over valid pixels
+          content:
+            application/json:
+              schema: { $ref: "./schemas/stats.schema.json" }
+  /api/layers:
+    get:
+      operationId: getLayers
+      responses:
+        "200":
+          description: Layer manifest (same content as web/layers.json)
+          content:
+            application/json:
+              schema: { $ref: "./schemas/layers.schema.json" }
+  /api/inspect/point:
+    get:
+      operationId: inspectPoint
+      parameters:
+        - { name: lon, in: query, required: true, schema: { type: number, minimum: -180, maximum: 180 } }
+        - { name: lat, in: query, required: true, schema: { type: number, minimum: -90, maximum: 90 } }
+      responses:
+        "200":
+          description: >
+            Evidence for the pixel under (lon, lat). Points outside the AOI still return 200
+            with valid=false and pixel=null, so the UI can explain why there is no data.
+          content:
+            application/json:
+              schema: { $ref: "./schemas/inspect-point.schema.json" }
+        "422":
+          description: Invalid query parameters
