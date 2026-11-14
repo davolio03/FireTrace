@@ -219,12 +219,38 @@
     {
       "id": "DT-03",
       "title": "Perímetro WFIGS 58728 versionado y reproyectado (F06)",
-      "state": "proposed",
+      "state": "done",
       "group": "DT",
       "deps": ["BS-03"],
       "at": "2026-11-14T11:39:27Z",
       "by": "claude-david",
-      "desc": "Descarga/fija el GeoJSON del perímetro con su fecha y fuente, versión 4326 para web y rasterizado en la rejilla de 10 m para estadísticas dentro/fuera."
+      "desc": "Pin the WFIGS 58728 reference perimeter and derive its web and analysis-grid versions. It is the dated official reference used for contrast, not ground truth.\n- Source pinning: committed manifest (pipeline/configs/perimeter_plaskett.toml) with the official WFIGS query URL, OBJECTID 58728, PolygonDateTime 2026-09-14T20:44:00Z and the sha256 of data/raw/wfigs_58728_raw.geojson. The pipeline never downloads; a missing or changed raw file is a clear error. An optional, explicit fetch command may refresh it, recording the new checksum.\n- Validation: exactly one feature with OBJECTID 58728; valid (Multi)Polygon in EPSG:4326, repaired only with make_valid and reported; area in EPSG:32610 recorded next to WFIGS GISAcres.\n- Web: data/interim/perimeter/perimeter.geojson in EPSG:4326, full geometry (no simplification), properties as in the contract fixture (IncidentName, FeatureCategory, MapMethod, GISAcres, PolygonDateTime, Source); DT-04 copies it to data/processed/web.\n- Analysis grid: perimeter_mask.tif (COG uint8 on the DT-01 crop grid from ingest.json, 1 inside / 0 outside) with decision C = pixel-centre rule (rasterio all_touched=False); plus perimeter_edge.tif (uint8, pixels within a documented distance of the boundary, default 50 m) for the near_perimeter_edge caveat.\n- Manifest perimeter.json: source, objectid, datetime, url, note (exactly the case.json `reference` fields, for DT-04), checksums, polygon count, area_ha (vector, EPSG:32610) and inside pixels x 100 m2 (raster), rasterization rule.\n- Docs: rasterization rule and why the perimeter predates the after scene; update the artifact layout in docs/ARCHITECTURE.md.\n- Out of scope: stats.json (CH-02), web PNG/layers (DT-04).\nDone = tests with synthetic polygons of known area (square aligned to the grid -> exact pixel count; pixel-centre vs touched; MultiPolygon and hole; reprojection 4326 -> 32610), raw checksum mismatch -> error, output validates against the contract perimeter expectations, deterministic outputs, ruff + pytest + scripts/check.py green; PR carries real area (vector vs raster vs GISAcres).",
+      "notes": [
+        {
+          "at": "2026-11-14T19:50:47Z",
+          "by": "claude-david",
+          "text": "Refined with David: pinned source + checksum, full-geometry web GeoJSON, pixel-centre rasterization (decision C, pending confirmation), edge band for near_perimeter_edge, reference fields for case.json."
+        },
+        {
+          "at": "2026-11-14T19:57:09Z",
+          "by": "claude-david",
+          "text": "Decision C confirmed by David: pixel-centre rasterization (all_touched=False); edge band default 50 m."
+        },
+        {
+          "at": "2026-11-14T20:05:46Z",
+          "by": "claude-david",
+          "text": "Implemented on feat/DT-03-perimeter (e12c8ef, fix commit; not pushed): pipeline/perimeter.py, pinned config, 18 tests (99 total), docs/methods/reference-perimeter.md, layout in ARCHITECTURE. Codex gpt-6.1-sol (medium) review: changes requested (P2 docs presented the make_valid hole as an unburned island; P3 edge band used an approximate buffer; P3 timestamp truncated fractional seconds); all fixed with tests. Real run: raw geometry invalid (nested shells) -> make_valid hole (topology repair, physical meaning unresolved); areas 12,134.98 ha raster / 12,134.34 ha vector / 12,137.71 ha WFIGS; 1,213,498 inside px; 89,786 edge px (exact 50 m); byte-identical reruns; quick sanity CH-01 index median inside 0.50 vs outside -0.22."
+        },
+        {
+          "at": "2026-11-14T20:07:16Z",
+          "by": "claude-david",
+          "text": "Branch feat/DT-03-perimeter pushed and PR opened. Review findings fixed; 99 tests green; real-run areas within 0.03% of WFIGS."
+        }
+      ],
+      "started": {
+        "at": "2026-11-14T19:56:49Z",
+        "by": "claude-david"
+      }
     },
     {
       "id": "DT-04",
