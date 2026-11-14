@@ -18,15 +18,24 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install web dependencies
+        run: npm ci --prefix web
       - name: Set up uv
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: false
       - name: Sync Python environment (Python 3.11 + dev group)
         run: uv sync --locked
-      - name: Check team guidance, then run quality.json lint (ruff check) and tests (pytest)
+      - name: Check team guidance and Python and web quality gates
         run: python3 scripts/check.py
       - name: Check Python formatting
         run: uv run ruff format --check .
+      - name: Test quality command orchestration
+        run: python3 -m unittest discover -s tests -p test_quality_commands.py
       - name: Validate existing contract fixtures
         run: uv run contracts/tools/validate.py
