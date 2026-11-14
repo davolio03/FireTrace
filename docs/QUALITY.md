@@ -52,6 +52,8 @@ The CH-02 stage summarises the change index inside and outside the perimeter: `u
 
 The DT-05 stage builds terrain context on the crop grid: `uv run python -m pipeline.terrain --config pipeline/configs/terrain_plaskett.toml`. It needs the pinned Copernicus GLO-30 tile in `data/raw/dem/` and the t2 GCOV `.h5` in `data/raw/nisar/` (both sha256-verified, never downloaded), writes elevation/slope/aspect/local-incidence COGs, approximate layover/shadow flags and the `hillshade`/`slope` display PNGs with their `terrain_layers.json` entries, and is documented in [terrain](methods/terrain.md). Display PNGs use the shared `pipeline/webexport.py` (EPSG:3857 warp, corners, colour ramps).
 
+The DT-06 stage adds the precipitation context: `uv run python -m pipeline.weather fetch --token-file <file>` downloads IMERG once with the user's Earthdata token (never stored), and `uv run python -m pipeline.weather build` is offline. It reads NetCDF4 through the `h5netcdf[h5py]` dependency; see [weather](methods/weather.md).
+
 `npm run dev` within `web/` starts the web scaffold. `uv run python -m pipeline.run --all` and `uv run uvicorn api.main:app --reload` remain planned processing/start targets, **not working commands in this checkout**.
 
 Cover deterministic numerical rules and realistic failure paths with small synthetic rasters. Application integration must verify actual lookup/display alignment, no-data, coverage arithmetic, provenance and mock-to-real switching. Real science requires separate reproducible sample evidence and an agreed method/domain; schema-valid mocks are not that evidence.

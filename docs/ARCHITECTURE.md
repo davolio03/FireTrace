@@ -71,8 +71,11 @@ Internal, gitignored pipeline products on the 10 m EPSG:32610 crop grid. They ar
 | DT-05 terrain | `data/interim/terrain/layover_shadow.tif` | COG uint8: 0 none, 1 layover, 2 shadow, 255 unknown; approximate local criteria from the t2 GCOV radar-geometry cubes |
 | DT-05 terrain | `data/interim/terrain/{hillshade,slope}.png` + `terrain_layers.json` | EPSG:3857 display PNGs and their `layers.schema.json` entries (group `terrain`, mandatory `source`); DT-04 merges them into the web `layers.json` |
 | DT-05 terrain | `data/interim/terrain/terrain.json` | DEM and geometry provenance and sha256, grid, method, per-layer statistics, layover/shadow counts, web corners, output checksums |
+| DT-06 weather | `data/raw/imerg/` | IMERG Late daily V07 granules downloaded once by `pipeline.weather fetch` + `imerg_manifest.json` (URLs, sha256) |
+| DT-06 weather | `data/interim/weather/weather.json` | Web contract (`weather.schema.json`): AOI area-weighted daily precipitation, summary up to the day before t2; copied by DT-04 ([method](methods/weather.md)) |
+| DT-06 weather | `data/interim/weather/weather_meta.json` | Input checksums, IMERG version, cells and weights, date and rain-day rules, missing days |
 
-COGs use 256 px deflate blocks and nearest-neighbour overviews for display only; scientific lookups read the full-resolution level. DT-02, CH-01, DT-03, CH-02 and DT-05 build the whole set in a sibling staging directory and swap it into place only when complete, so a failed run keeps the previous complete set; each stage refuses an output directory holding files it does not own.
+COGs use 256 px deflate blocks and nearest-neighbour overviews for display only; scientific lookups read the full-resolution level. DT-02, CH-01, DT-03, CH-02, DT-05 and DT-06 build the whole set in a sibling staging directory and swap it into place only when complete, so a failed run keeps the previous complete set; each stage refuses an output directory holding files it does not own.
 
 ## Reproducibility, diagnostics and deployment
 
