@@ -19,6 +19,7 @@ import argparse
 import hashlib
 import json
 import math
+import os
 import sys
 import tomllib
 from collections.abc import Mapping, Sequence
@@ -29,8 +30,9 @@ from typing import Any
 import geopandas as gpd
 import rasterio
 from affine import Affine
+from pyogrio.errors import DataLayerError, DataSourceError
 from rasterio.crs import CRS
-from rasterio.errors import CRSError
+from rasterio.errors import CRSError, RasterioError
 from rasterio.warp import transform_bounds
 from rasterio.windows import Window
 
@@ -38,6 +40,12 @@ INGEST_FORMAT_VERSION = 1
 EPOCHS: tuple[str, ...] = ("t1", "t2")
 POLARIZATIONS: tuple[str, ...] = ("HH", "HV")
 WGS84 = CRS.from_epsg(4326)
+# Fixed scientific analysis grid (AGENTS.md): configuration may restate it, never change it.
+ANALYSIS_CRS = CRS.from_epsg(32610)
+ANALYSIS_PIXEL_SIZE_M = 10.0
+# Expected I/O failures from corrupt or unreadable raster/vector files.
+_RASTER_IO_ERRORS = (RasterioError, OSError)
+_VECTOR_IO_ERRORS = (DataSourceError, DataLayerError, OSError, ValueError)
 # Deterministic output encoding: lossless, tiled, no timestamps.
 OUTPUT_CREATION_OPTIONS: dict[str, Any] = {
     "driver": "GTiff",
@@ -137,6 +145,14 @@ def load_config(path: Path, base_dir: Path | None = None) -> IngestConfig:
         crs = CRS.from_user_input(crs_text)
     except CRSError as exc:
         raise IngestError(f"config: invalid grid.crs {crs_text!r}: {exc}") from exc
+    if crs != ANALYSIS_CRS:
+        raise IngestError(f"config: grid.crs must be the analysis CRS EPSG:32610, got {crs_text!r}")
+    pixel_size_m = _require(grid, "pixel_size_m", float, "grid.")
+    if pixel_size_m != ANALYSIS_PIXEL_SIZE_M:
+        raise IngestError(
+            f"config: grid.pixel_size_m must be the analysis grid {ANALYSIS_PIXEL_SIZE_M} m, "
+            f"got {pixel_size_m}"
+        )
     direction = _require(acq, "direction", str, "acquisition.")
     if direction not in ("ascending", "descending"):
         raise IngestError(f"config: unknown acquisition.direction {direction!r}")
@@ -148,7 +164,7 @@ def load_config(path: Path, base_dir: Path | None = None) -> IngestConfig:
         perimeter_objectid=_require(aoi, "objectid", int, "aoi."),
         margin_m=margin_m,
         crs=crs,
-        pixel_size_m=_require(grid, "pixel_size_m", float, "grid."),
+        pixel_size_m=pixel_size_m,
         track=_require(acq, "track", int, "acquisition."),
         frame=_require(acq, "frame", int, "acquisition."),
         direction=direction,
@@ -176,18 +192,22 @@ class GridInfo:
 def read_grid(path: Path) -> GridInfo:
     if not path.is_file():
         raise IngestError(f"input not found: {path.name}")
-    with rasterio.open(path) as ds:
-        if ds.crs is None:
-            raise IngestError(f"{path.name}: raster has no CRS")
-        return GridInfo(
-            crs=ds.crs,
-            transform=ds.transform,
-            width=ds.width,
-            height=ds.height,
-            dtype=ds.dtypes[0],
-            nodata=ds.nodata,
-            count=ds.count,
-        )
+    try:
+        with rasterio.open(path) as ds:
+            info = GridInfo(
+                crs=ds.crs,
+                transform=ds.transform,
+                width=ds.width,
+                height=ds.height,
+                dtype=ds.dtypes[0],
+                nodata=ds.nodata,
+                count=ds.count,
+            )
+    except _RASTER_IO_ERRORS as exc:
+        raise IngestError(f"{path.name}: cannot read raster: {exc}") from exc
+    if info.crs is None:
+        raise IngestError(f"{path.name}: raster has no CRS")
+    return info
 
 
 def check_common_grid(
@@ -240,7 +260,10 @@ def perimeter_bounds(path: Path, objectid: int, crs: CRS) -> Bounds:
     """Bounds of the selected perimeter feature after reprojection to ``crs``."""
     if not path.is_file():
         raise IngestError(f"perimeter not found: {path.name}")
-    gdf = gpd.read_file(path)
+    try:
+        gdf = gpd.read_file(path)
+    except _VECTOR_IO_ERRORS as exc:
+        raise IngestError(f"{path.name}: cannot read perimeter: {exc}") from exc
     if gdf.crs is None:
         raise IngestError(f"{path.name}: perimeter has no CRS")
     if "OBJECTID" not in gdf.columns:
@@ -307,8 +330,11 @@ def to_wgs84(bounds: Bounds, crs: CRS) -> list[float]:
 
 
 def sha256_file(path: Path) -> str:
-    with path.open("rb") as fh:
-        return hashlib.file_digest(fh, "sha256").hexdigest()
+    try:
+        with path.open("rb") as fh:
+            return hashlib.file_digest(fh, "sha256").hexdigest()
+    except OSError as exc:
+        raise IngestError(f"{path.name}: cannot hash file: {exc}") from exc
 
 
 def covariance_term(polarization: str) -> str:
@@ -317,8 +343,11 @@ def covariance_term(polarization: str) -> str:
 
 def check_polarization_tags(path: Path, polarization: str) -> None:
     """Guard against swapped files when the NISAR band metadata names the term."""
-    with rasterio.open(path) as ds:
-        long_name = ds.tags(1).get("long_name", "")
+    try:
+        with rasterio.open(path) as ds:
+            long_name = ds.tags(1).get("long_name", "")
+    except _RASTER_IO_ERRORS as exc:
+        raise IngestError(f"{path.name}: cannot read raster tags: {exc}") from exc
     term = covariance_term(polarization)
     if "covariance term" in long_name and not long_name.endswith(term):
         raise IngestError(f"{path.name}: band is '{long_name}', expected term {term}")
@@ -326,24 +355,30 @@ def check_polarization_tags(path: Path, polarization: str) -> None:
 
 def crop_raster(src: Path, dst: Path, window: Window, tags: Mapping[str, str]) -> None:
     """Copy ``window`` of ``src`` to ``dst`` unchanged (windowed read, no resampling)."""
-    with rasterio.open(src) as ds:
-        data = ds.read(1, window=window)
-        transform = crop_transform_of(ds.transform, window)
-        profile = {
-            **OUTPUT_CREATION_OPTIONS,
-            "width": int(window.width),
-            "height": int(window.height),
-            "count": 1,
-            "dtype": ds.dtypes[0],
-            "crs": ds.crs,
-            "transform": transform,
-            "nodata": ds.nodata,
-        }
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    with rasterio.open(dst, "w", **profile) as out:
-        out.write(data, 1)
-        out.update_tags(**tags)
-        out.set_band_description(1, tags["COVARIANCE_TERM"])
+    try:
+        with rasterio.open(src) as ds:
+            data = ds.read(1, window=window)
+            transform = crop_transform_of(ds.transform, window)
+            profile = {
+                **OUTPUT_CREATION_OPTIONS,
+                "width": int(window.width),
+                "height": int(window.height),
+                "count": 1,
+                "dtype": ds.dtypes[0],
+                "crs": ds.crs,
+                "transform": transform,
+                "nodata": ds.nodata,
+            }
+    except _RASTER_IO_ERRORS as exc:
+        raise IngestError(f"{src.name}: cannot read crop window: {exc}") from exc
+    try:
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        with rasterio.open(dst, "w", **profile) as out:
+            out.write(data, 1)
+            out.update_tags(**tags)
+            out.set_band_description(1, tags["COVARIANCE_TERM"])
+    except _RASTER_IO_ERRORS as exc:
+        raise IngestError(f"{dst.name}: cannot write crop: {exc}") from exc
 
 
 def _nodata_repr(value: float | None) -> float | str | None:
@@ -362,6 +397,27 @@ def _bounds_list(b: Bounds) -> list[float]:
     return [float(v) for v in b]
 
 
+def _same_file(a: Path, b: Path) -> bool:
+    """True if two paths name the same file, including links to an existing file."""
+    if a.resolve() == b.resolve():
+        return True
+    try:
+        return a.exists() and b.exists() and os.path.samefile(a, b)
+    except OSError:
+        return False
+
+
+def check_outputs_do_not_alias_inputs(outputs: Sequence[Path], sources: Sequence[Path]) -> None:
+    """Refuse any output that would overwrite an input raster or the perimeter."""
+    for out in outputs:
+        for src in sources:
+            if _same_file(out, src):
+                raise IngestError(
+                    f"output {out.name} would overwrite input {src.name}; "
+                    "choose an output_dir separate from the inputs"
+                )
+
+
 # --------------------------------------------------------------------------- run
 
 
@@ -377,6 +433,15 @@ def run_ingest(config: IngestConfig) -> dict[str, Any]:
     for name, path in inputs.items():
         check_polarization_tags(path, name.split("_")[1].upper())
 
+    out_paths = {name: config.output_dir / f"{name}.tif" for name in inputs}
+    manifest_path = config.output_dir / "ingest.json"
+    check_outputs_do_not_alias_inputs(
+        [*out_paths.values(), manifest_path], [*inputs.values(), config.perimeter]
+    )
+    # Hash sources before any write, so provenance always describes the untouched inputs.
+    input_sha256 = {name: sha256_file(path) for name, path in inputs.items()}
+    perimeter_sha256 = sha256_file(config.perimeter)
+
     perim = perimeter_bounds(config.perimeter, config.perimeter_objectid, grid.crs)
     aoi = expand_bounds(perim, config.margin_m)
     window = snap_window(aoi, grid.transform, grid.width, grid.height)
@@ -390,7 +455,7 @@ def run_ingest(config: IngestConfig) -> dict[str, Any]:
         epoch = config.epochs[epoch_name]
         pol = pol_lower.upper()
         term = covariance_term(pol)
-        out_path = config.output_dir / f"{name}.tif"
+        out_path = out_paths[name]
         crop_raster(
             path,
             out_path,
@@ -407,7 +472,7 @@ def run_ingest(config: IngestConfig) -> dict[str, Any]:
         )
         input_records[name] = {
             "file": path.name,
-            "sha256": sha256_file(path),
+            "sha256": input_sha256[name],
             "granule_id": epoch.granule_id,
             "polarization": pol,
             "covariance_term": term,
@@ -445,7 +510,7 @@ def run_ingest(config: IngestConfig) -> dict[str, Any]:
         },
         "reference": {
             "file": config.perimeter.name,
-            "sha256": sha256_file(config.perimeter),
+            "sha256": perimeter_sha256,
             "objectid": config.perimeter_objectid,
         },
         "aoi": {
@@ -483,7 +548,7 @@ def run_ingest(config: IngestConfig) -> dict[str, Any]:
         "inputs": input_records,
         "outputs": output_records,
     }
-    write_json(config.output_dir / "ingest.json", document)
+    write_json(manifest_path, document)
     return document
 
 

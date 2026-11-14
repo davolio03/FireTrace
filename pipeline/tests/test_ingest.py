@@ -94,6 +94,9 @@ def write_case(
     utm_box: tuple[float, float, float, float] = (600_500.0, 3_968_900.0, 601_200.0, 3_969_500.0),
     margin_m: float = 200.0,
     overrides: dict[str, dict[str, Any]] | None = None,
+    output_dir: str = "out",
+    grid_crs: str = "EPSG:32610",
+    pixel_size_m: float = 10.0,
 ) -> Path:
     raw = tmp_path / "raw"
     raw.mkdir(exist_ok=True)
@@ -108,7 +111,7 @@ def write_case(
         f"""
 case_id = "synthetic"
 product = "SYNTHETIC_GCOV"
-output_dir = "out"
+output_dir = "{output_dir}"
 
 [aoi]
 perimeter = "raw/perimeter.geojson"
@@ -116,8 +119,8 @@ objectid = 58728
 margin_m = {margin_m}
 
 [grid]
-crs = "EPSG:32610"
-pixel_size_m = 10.0
+crs = "{grid_crs}"
+pixel_size_m = {pixel_size_m}
 
 [acquisition]
 track = 42
@@ -317,3 +320,41 @@ def test_cli_reports_errors_with_exit_code(
     missing = tmp_path / "missing.toml"
     assert main(["--config", str(missing)]) == 2
     assert "ingest error" in capsys.readouterr().err
+
+
+def test_corrupt_input_is_reported_by_cli(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = write_case(tmp_path)
+    monkeypatch.chdir(tmp_path)  # the CLI resolves relative config paths against the cwd
+    (tmp_path / "raw" / "t2_hv.tif").write_bytes(b"II*" + bytes(1) + b"not a real tiff")
+    assert main(["--config", str(config)]) == 2
+    assert "ingest error: t2_hv.tif" in capsys.readouterr().err
+
+
+# --------------------------------------------------------------- safety and fixed grid
+
+
+def test_output_dir_aliasing_inputs_fails_and_leaves_inputs_untouched(tmp_path: Path) -> None:
+    config = write_case(tmp_path, output_dir="raw")
+    before = {p.name: p.read_bytes() for p in sorted((tmp_path / "raw").iterdir())}
+    with pytest.raises(IngestError, match="would overwrite input"):
+        run_ingest(load_config(config, base_dir=tmp_path))
+    after = {p.name: p.read_bytes() for p in sorted((tmp_path / "raw").iterdir())}
+    assert after == before
+
+
+@pytest.mark.parametrize(
+    ("grid", "message"),
+    [
+        ({"pixel_size_m": 20.0}, "grid.pixel_size_m must be the analysis grid"),
+        ({"grid_crs": "EPSG:32611"}, "grid.crs must be the analysis CRS"),
+    ],
+    ids=["pixel_size", "crs"],
+)
+def test_config_cannot_change_the_analysis_grid(
+    tmp_path: Path, grid: dict[str, Any], message: str
+) -> None:
+    config = write_case(tmp_path, **grid)
+    with pytest.raises(IngestError, match=message):
+        load_config(config, base_dir=tmp_path)
