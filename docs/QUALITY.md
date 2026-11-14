@@ -24,6 +24,8 @@ The contract validator uses its existing inline dependency declaration, **`jsons
 
 The `quality` workflow runs on pull requests and pushes to `main`, selects **Python 3.11** and **Node 24**, and installs dependencies with `uv sync --locked` and `npm ci`. It runs the repository gate, Python formatting, orchestration tests and fixture validation. The pinned `uv.lock` must match `pyproject.toml`; setup-uv uses the documented immutable reference. CI configuration is not evidence of a hosted run.
 
+Locally, run `uv sync` and `npm ci --prefix web` once, then `python scripts/check.py` (or `python3` where available). The runners launch `python3`/`python` commands with the current interpreter and resolve other programs through `PATH`, so the same `quality.json` works on Windows, where `python3` is usually absent and npm is `npm.cmd`.
+
 The integration environment provides Python **3.14.4** and jsonschema **4.19.2**, below the declared `>=4.20`; `python` and uv are absent. No packages were installed or contract requirements weakened. Running the two direct Python3 scripts here is **not Python 3.11/uv, declared-dependency or hosted CI verification**. CI configuration is not a CI execution result; record the actual remote outcome only when an authorized run occurs.
 
 ## Before adding application source

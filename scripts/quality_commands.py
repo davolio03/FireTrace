@@ -1,5 +1,6 @@
 """Run the Python and web checks for a repository quality phase."""
 
+import shutil
 import subprocess
 import sys
 
@@ -15,9 +16,22 @@ COMMANDS = {
 }
 
 
+def resolve_argv(command: list[str]) -> list[str]:
+    """Make a quality.json argv launchable on every OS without a shell.
+
+    ``python3``/``python`` run with the current interpreter (Windows has no ``python3``
+    by default), and other programs resolve through PATH/PATHEXT so Windows finds
+    ``npm.cmd``. Unresolvable names are left unchanged and fail with the usual error.
+    """
+    program, *args = command
+    if program in ("python3", "python"):
+        return [sys.executable, *args]
+    return [shutil.which(program) or program, *args]
+
+
 def run(phase: str) -> int:
     for command in COMMANDS[phase]:
-        result = subprocess.run(command, check=False)
+        result = subprocess.run(resolve_argv(command), check=False)
         if result.returncode:
             return result.returncode
     return 0
