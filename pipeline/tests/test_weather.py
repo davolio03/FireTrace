@@ -38,11 +38,11 @@ T2 = "2026-08-20T02:56:38Z"  # short synthetic period: 16..20 Aug
 DAYS = ["2026-08-16", "2026-08-17", "2026-08-18", "2026-08-19", "2026-08-20"]
 
 
-def write_day(path: Path, values: np.ndarray) -> Path:
+def write_day(path: Path, values: np.ndarray, lon_dtype: type = np.float64) -> Path:
     """IMERG-like daily file: precipitation(time, lon, lat) in mm/day, -9999.9 fill."""
     ds = xr.Dataset(
         {"precipitation": (("time", "lon", "lat"), values[np.newaxis].astype(np.float32))},
-        coords={"lon": LON, "lat": LAT, "time": [0]},
+        coords={"lon": LON.astype(lon_dtype), "lat": LAT, "time": [0]},
     )
     ds["precipitation"].attrs.update({"units": "mm/day", "_FillValue": np.float32(-9999.9)})
     ds.to_netcdf(path, engine="h5netcdf")  # NetCDF4/HDF5, like the real granules
@@ -292,3 +292,11 @@ def test_fetch_requires_a_token(tmp_path: Path) -> None:
 
 def test_module_exposes_imerg_identity() -> None:
     assert weather.SHORT_NAME == "GPM_3IMERGDL"
+
+
+def test_float32_longitudes_like_real_imerg_are_accepted(tmp_path: Path) -> None:
+    # Real IMERG lon is float32: spacing jitters by about 1e-5 deg around 0.1 deg.
+    values = grid(3.0)
+    lon, lat, precip = read_daily_grid(write_day(tmp_path / "d.nc4", values, np.float32))
+    assert np.array_equal(lon, LON)
+    assert sum(cell_weights(lon, lat, AOI).values()) == pytest.approx(1.0)

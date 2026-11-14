@@ -53,6 +53,7 @@ CMR_GRANULES_URL = "https://cmr.earthdata.nasa.gov/search/granules.json"
 SOURCE_URL = "https://disc.gsfc.nasa.gov/datasets/GPM_3IMERGDL_07/summary"
 RAIN_DAY_THRESHOLD_MM = 1.0
 DECIMALS = 4
+COORD_DECIMALS = 4
 AGGREGATION = "Area-weighted mean of IMERG 0.1 deg cells over the case AOI bbox (UTC days)"
 OUTPUT_FILES: frozenset[str] = frozenset({"weather.json", "weather_meta.json"})
 
@@ -77,8 +78,10 @@ def read_daily_grid(path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
                 precip = precip.isel(time=0)
             precip = precip.transpose("lon", "lat")
             values = precip.values.astype(np.float64)
-            lon = ds["lon"].values.astype(np.float64)
-            lat = ds["lat"].values.astype(np.float64)
+            # IMERG stores lon as float32 (about 1e-5 deg jitter); its cell centres are exact
+            # multiples of 0.05 deg, so rounding restores the true regular grid.
+            lon = np.round(ds["lon"].values.astype(np.float64), COORD_DECIMALS)
+            lat = np.round(ds["lat"].values.astype(np.float64), COORD_DECIMALS)
     except WeatherError:
         raise
     except (OSError, KeyError, ValueError) as exc:
