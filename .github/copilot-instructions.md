@@ -1,0 +1,1 @@
+Read and follow the canonical project contract in `AGENTS.md` and its task-relevant references. Current repository contracts and accepted product/scientific decisions take precedence over Engram history. Use Kanvas for task state; report actual verification results, never inferred success.

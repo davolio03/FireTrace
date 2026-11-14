@@ -1,160 +1,83 @@
-# AGENTS.md — FireTrace Explorer
+# FireTrace Explorer — team agent contract
 
-Instrucciones para **cualquier agente de IA** (Claude Code, Codex, Cursor, Gemini, OpenCode…) y para las personas del equipo. Si algo de aquí contradice a otro documento, manda este fichero; si contradice a `docs/propuesta.md` en cuestiones científicas o de alcance, manda la propuesta y hay que avisar.
+Build one integrated, demonstrable Plaskett Fire case. Preserve the team's architecture and distinguish implemented contracts/mocks from the pipeline, API and web that still need implementation.
 
-## 1. Qué construimos
+## Authority and first read
 
-App web para el NASA Space Apps Challenge 2026 (reto *Dancing with the SARs*). Muestra **qué cambió en el radar NISAR antes y después del Plaskett Fire** (Big Sur, 2026), permite inspeccionar la señal HH/HV píxel a píxel y contrastarla con el perímetro oficial WFIGS 58728.
+1. Explicit user instructions and human approvals define authorization and scope.
+2. Current repository truth: [proposal](docs/propuesta.md) for scientific/product scope; [executable contracts](contracts/README.md), schemas and OpenAPI for interfaces; accepted decisions and current code for implementation.
+3. [Product](docs/PRODUCT.md), [architecture](docs/ARCHITECTURE.md), [contract semantics](docs/CONTRACTS.md) and [team agreement](docs/TEAM.md) explain those boundaries.
+4. Engram is historical supporting evidence, never authority over the repository. Label inferences and surface contradictions to the human owner before relying on them.
 
-- Propuesta completa, alcance y criterios: [`docs/propuesta.md`](docs/propuesta.md). **Léela antes de tu primera tarea.**
-- Contrato entre pipeline, API y web: [`contracts/README.md`](contracts/README.md). **Es lo que permite trabajar en paralelo.**
+The proposal's illustrative stack has been superseded by the stack below. Its scientific cautions remain applicable. Do not silently resolve any other scope/interface conflict.
 
-### Reglas científicas innegociables
+Before editing, read the relevant documents, the task and every note, affected code/tests and any linked issue's acceptance criteria. Search relevant Engram history unless explicitly instructed not to. Describe the smallest change, touched interfaces and verification. Use a short [task brief](docs/tasks/TEMPLATE.md) only when the diff/task is insufficient to resume work.
 
-1. **Observación ≠ interpretación ≠ contraste.** Nunca etiquetes un cambio radar como "área quemada" ni "incendio confirmado". Usa *observed radar change* / *highlighted radar change*.
-2. **NISAR es el dato principal.** Sentinel‑1/2, RAVG, etc. solo como complemento.
-3. **Nada de cifras inventadas.** Ninguna confianza, AUC o porcentaje que no salga de un cálculo reproducible del repo. El AUC 0,984 de Döweler et al. es externo y nunca se presenta como nuestro.
-4. **El Evidence Inspector muestra valores calculados y el método real**, no texto generado por un LLM.
-5. Potencias a dB con `10 * log10(x)` solo para `x > 0`; los píxeles inválidos se enmascaran y se excluyen de todas las métricas.
-6. El perímetro (14‑sep‑2026) es una referencia, no verdad píxel a píxel.
+## Scientific invariants
 
-## 2. Arquitectura y estructura del repo
+- **Observation is not interpretation or validation.** Use *Observed radar changes*, optional *Highlighted radar changes*, and *Official fire perimeter*. Never equate radar change with confirmed fire, burned area or ecological severity.
+- NISAR is primary; Sentinel, RAVG and other references are complementary. The external preprint's AUC 0.984 is not FireTrace performance.
+- For finite positive GCOV power, use `10 * log10(x)`. Mask source no-data, non-finite, zero and negative inputs before logs; combined results use the common valid set across all four inputs. Exclude invalid values from metrics.
+- Preserve the common **10 m EPSG:32610 analysis grid**. Display PNGs are reprojected/resampled to **EPSG:3857**; WGS84 selections/corners and the reference geometry use **EPSG:4326**. Never measure from colors or Web Mercator display pixels.
+- The WFIGS perimeter dated 2026-09-14 predates the after observation; it is not final or pixel-level ground truth. Moisture, terrain, geometry and vegetation can confound the signal.
+- The Evidence Inspector must show computed values and the real method, not LLM-generated evidence or uncalibrated confidence. Mocks must carry a visible MOCK notice and never count as real scientific validation.
+- P0 is the continuous HH/HV change journey. Threshold masks, overlap metrics and DL are P1, only after an integrated P0. Resolve the scientific choices in [CONTRACTS](docs/CONTRACTS.md) before claiming real measurements.
 
-```text
-pipeline/        Python. GeoTIFF NISAR → productos precalculados (dB, índice de cambio, tiles, stats)
-api/             Python FastAPI. Consultas del Evidence Inspector (píxel/región) sobre los productos
-web/             React + TypeScript + Vite. Mapa, comparador, capas, métricas, inspector
-contracts/       JSON Schemas + OpenAPI + fixtures mock + validate.py (fuente de verdad de interfaces)
-docs/            Propuesta y decisiones (docs/decisions/NNN-titulo.md)
-data/raw/        GeoTIFF originales (NO versionado)
-data/processed/  Salidas del pipeline (NO versionado). data/processed/web/ tiene la misma forma que contracts/fixtures/web/
-kanvas.json      Tablero de tareas (ver §4)
-.engram/         Memoria compartida de agentes (ver §6)
+## Architecture and fixed stack
+
+Heavy processing is offline. The demo must not download scenes, authenticate to Earthdata or train a model live.
+
+| Boundary | Stack / responsibility |
+| --- | --- |
+| Planned `pipeline/` | Python 3.11 + uv; rasterio, numpy, xarray, geopandas, shapely, scikit-image, rio-cogeo; reproducible products |
+| Planned `api/` | FastAPI, rasterio COG lookup, pydantic; contract-defined inspection |
+| Planned `web/` | React 19, strict TypeScript, Vite, MapLibre GL JS; Tailwind CSS + shadcn/ui, TanStack Query, Zustand, Recharts |
+| Optional | deck.gl if needed; PyTorch for P1 experiments |
+| Quality | ruff + pytest; eslint + prettier + vitest |
+| Existing `contracts/` | JSON Schema 2020-12, OpenAPI, synthetic fixtures and tooling; authoritative shared interfaces |
+
+These choices do not imply packages are installed or application scaffolds exist. Stack changes need a short ADR in `docs/decisions/` and human approval recorded through Kanvas. See [QUALITY](docs/QUALITY.md) for current versus future commands.
+
+## One task, one worktree, one writer
+
+- **Kanvas is the only canonical task state.** Read [.agents/skills/kanvas/SKILL.md](.agents/skills/kanvas/SKILL.md). GitHub Issues hold references, acceptance criteria and discussion, not a second board.
+- At session start, use `python3 .agents/skills/kanvas/kanvas.py status` and `ready`. The authoritative board is in the main checkout; from a feature worktree select it explicitly with `-b <main-checkout>/kanvas.json`. Do not modify the feature branch's `kanvas.json`.
+- Board writes use only the CLI, signed with `--as <tool>-<role>`. Humans approve proposals and mark done. Agents start approved ready work, add notes and submit with `finish` for human review, within the skill's rules. Never invent approvals or take another writer's task.
+- Explicitly authorized direct work without a matching approved task must be reported as such; do not manufacture a task ID or silently approve a proposal.
+- A human owns each task/PR. Work in a dedicated branch/worktree from current `main`, with disjoint ownership for parallel work. Never overwrite another worktree or agent's changes.
+- Use small Conventional Commits with the task ID when one exists. No AI attribution trailers. Commit, publish, open PRs or remove worktrees only when authorized; agents never merge autonomously.
+- No direct push to `main`, force push, hook bypass, destructive cleanup or data/secret commits. Do not discover or reuse ambient remote credentials/sessions: remote work requires explicit destination, operation and credential/session authorization.
+
+## Shared interfaces and implementation discipline
+
+- Develop against [contracts/](contracts/README.md). Web types come from OpenAPI; API tests validate responses against schemas; pipeline output must pass `uv run contracts/tools/validate.py data/processed/web`.
+- Mock-to-real integration changes the data source, not feature interfaces. `VITE_USE_MOCKS=true` is the planned web mock mode, not an implemented app command.
+- Shared interfaces, numerical semantics or dependencies require producer/consumer agreement first. Contract changes get their own PR, version update, fixtures/checks and review from each affected side. Do not hide them in a feature.
+- Keep changes bounded and readable, with explicit types and CRS. Use test-first behavior for deterministic rules, small synthetic rasters, meaningful failure paths and no real-data downloads in tests.
+- Python uses pathlib and pure processing functions where practical. Web uses functional components, strict types without `any`, accessible contrast/legends and colorblind-safe palettes.
+- New code, comments, UI copy, docs, commits and reusable memory are English by default. Preserve existing source documents; explicitly requested Spanish artifacts use neutral/professional Spanish.
+- No secrets, private paths, personal data, hidden telemetry or uncontrolled external calls. Use current official library docs; never fabricate APIs, package versions or test results.
+
+## Verification and handoff
+
+Run these checks in the foreground from the repository root:
+
+```sh
+python3 scripts/check.py
+uv run contracts/tools/validate.py
+git diff --check
 ```
 
-**Principio:** todo lo pesado se precalcula. La demo nunca descarga escenas ni entrena en directo.
+When uv is unavailable, `python3 contracts/tools/validate.py` can report behavior with already-installed jsonschema, but direct Python does not resolve/enforce the inline dependency declaration. Report the actual interpreter, dependency version and any mismatch; do not present an out-of-spec run as canonical environment verification. Never install tooling or change review settings to bypass an explicit restriction.
 
-### Stack
+Application source requires real lint/test commands in `quality.json` in the same change; bundled web code also needs a build. Bootstrap and fixture checks are not application tests or scientific validation. Inspect new/untracked files as well as the tracked diff. Report commands, observed results, exit codes, limitations and rollback boundary. Preserve configured ODD/RDD gates; they do not replace tests or human review.
 
-| Capa | Tecnología |
-|---|---|
-| Pipeline | Python 3.11, `uv`, `rasterio`, `numpy`, `xarray`, `geopandas`, `shapely`, `scikit-image`, `rio-cogeo` |
-| ML (P1, opcional) | PyTorch |
-| API | FastAPI + `rasterio` (lectura puntual de COG), `pydantic` |
-| Web | React 19 + TypeScript + Vite, **MapLibre GL JS** (mapa) + **deck.gl** si hace falta, Tailwind CSS + shadcn/ui, TanStack Query, Zustand para estado de UI, Recharts para gráficos |
-| Calidad | `ruff` + `pytest` (Python); `eslint` + `prettier` + `vitest` (web) |
+Use the [PR template](.github/pull_request_template.md) for handoff evidence; opening a PR is a separate authorized action. A second teammate reviews cross-boundary changes. Keep demo readiness evidence in [DEMO](docs/DEMO.md), not a competing task board.
 
-Cambiar una pieza del stack requiere un ADR corto en `docs/decisions/` y aprobación en el tablero.
+## Shared memory: firetrace + Engram Cloud
 
-### Comandos (se irán completando según exista cada parte)
+`.engram/config.json` selects **firetrace**. The user chose **Cloud**, not Git memory exports. Follow [ENGRAM_CLOUD](docs/ENGRAM_CLOUD.md); do not auto-export, import legacy projects, commit memory chunks or delete local databases to rename a project. Configuration is not enrollment, deployment or permission to contact a server.
 
-```bash
-# Contrato
-uv run contracts/tools/validate.py                  # fixtures
-uv run contracts/tools/validate.py data/processed/web   # salida real del pipeline
-uv run contracts/tools/generate_mocks.py            # regenerar mocks
+Save only reusable, grounded team decisions/findings in English, `scope: project`, using **What / Why / Where / Learned**, a stable topic key and related task/PR evidence when available. Save explicit human decisions promptly; do not describe provisional implementation as merged/accepted. Current Git truth prevails over memory.
 
-# Pipeline / API
-uv sync
-uv run pytest
-uv run ruff check . && uv run ruff format --check .
-uv run python -m pipeline.run --all          # regenera data/processed/
-uv run uvicorn api.main:app --reload
-
-# Web
-cd web && npm install
-npm run dev
-npm run lint && npm run test && npm run build
-```
-
-Si añades o cambias un comando, actualiza esta sección en el mismo PR.
-
-## 3. Flujo de trabajo: una feature = un worktree = un PR
-
-1. **Coge una tarea** del tablero Kanvas (§4) que esté `todo` y no bloqueada.
-2. **Crea un worktree** fuera del repo principal, con rama a partir de `main` actualizado:
-
-   ```bash
-   git fetch origin
-   git worktree add ../FireTrace-wt/<ID>-<slug> -b <tipo>/<ID>-<slug> origin/main
-   # ej.: git worktree add ../FireTrace-wt/CH-01-change-index -b feat/CH-01-change-index origin/main
-   ```
-
-   `<tipo>`: `feat`, `fix`, `data`, `docs`, `chore`, `exp` (experimentos ML).
-3. **Trabaja solo dentro de tu worktree** y solo en el alcance de la tarea. Si descubres trabajo extra, propónlo en el tablero en vez de hacerlo.
-4. **Commits** pequeños con Conventional Commits y el ID de la tarea: `feat(web): add before/after swipe [AP-03]`.
-5. **Antes del PR:** lint + tests de las partes tocadas en verde y `uv run contracts/tools/validate.py` en verde. Un cambio de contrato va en su propio PR (ver §5).
-6. **PR contra `main`** con título `[<ID>] Descripción` y la plantilla:
-   - Qué cambia para el usuario / para otros módulos
-   - Cómo se ha verificado (comandos, capturas)
-   - Contratos tocados (sí/no)
-   - Tarea Kanvas: `<ID>`
-7. Pasa la tarea a `review` en Kanvas (`finish`). **Una persona revisa y hace merge**; el agente nunca hace merge ni push a `main`.
-8. Tras el merge: `git worktree remove ../FireTrace-wt/<ID>-<slug>` y borra la rama.
-
-Prohibido: `push --force` a ramas compartidas, `--no-verify`, commitear datos (`*.tif`, `*.h5`, `*.nc`, checkpoints) o secretos (`.env`, tokens de Earthdata).
-
-## 4. Tablero: Kanvas
-
-El tablero es `kanvas.json`; se maneja **solo** con la CLI, nunca editándolo a mano. Las instrucciones completas están en [`.agents/skills/kanvas/SKILL.md`](.agents/skills/kanvas/SKILL.md).
-
-```bash
-python .agents/skills/kanvas/kanvas.py status      # al empezar cada sesión
-python .agents/skills/kanvas/kanvas.py ready
-python .agents/skills/kanvas/kanvas.py start <ID> -m "Plan: ..."
-python .agents/skills/kanvas/kanvas.py finish <ID> --file resumen.md
-```
-
-- Firma siempre con `--as <herramienta>-<persona>` (ej. `--as claude-david`, `--as codex-lucia`) o exporta `KANVAS_AGENT`.
-- **Un único tablero de verdad:** el del checkout principal en `main`. Desde un worktree, apunta a él con `-b <ruta-checkout-principal>/kanvas.json`. No modifiques `kanvas.json` dentro de tu rama de feature (provoca conflictos de merge).
-- Los humanos aprueban propuestas y marcan `done`; los agentes proponen, empiezan, anotan y pasan a `review`.
-- Grupos: `BS` Base · `DT` Datos/pipeline · `CH` Índice de cambio · `AP` App web · `EV` Evidencia y métricas · `IN` Integración mock→real · `XP` Exploratorio P1 · `DL` Entrega.
-
-## 5. Contratos entre módulos (trabajo en paralelo)
-
-[`contracts/`](contracts/README.md) define qué produce el pipeline y qué consumen la API y la web: JSON Schemas, `openapi.yaml` y **fixtures mock que ya cumplen el contrato**.
-
-- **Web:** desarrolla contra `contracts/fixtures/` con `VITE_USE_MOCKS=true` (MSW para `/api/*`). Los tipos TypeScript se generan desde `contracts/openapi.yaml`; no se escriben a mano.
-- **API:** sus tests usan `contracts/fixtures/` y validan las respuestas contra los schemas.
-- **Pipeline:** una tarea de datos está hecha cuando `uv run contracts/tools/validate.py data/processed/web` pasa.
-- **Integración** (tareas `IN-*`): solo se cambia la fuente de datos de mock a real, sin tocar código de features.
-- Nunca enseñes datos con `data_status: "mock"` sin el aviso visible de MOCK.
-- **Cambiar el contrato = PR propio** (`docs/contract-<tema>`), con versión subida y revisado por ambos lados. Consulta las reglas en `contracts/README.md`.
-
-## 6. Memoria compartida: Engram
-
-Proyecto Engram: **`firetrace`** (`.engram/config.json`). Úsalo para lo que otro agente necesitará saber y no está en el código:
-
-- **Guarda** (`mem_save` / `engram save`): decisiones y su porqué, descubrimientos sobre los datos (rangos, nodata, rarezas de NISAR), bugs no obvios, cambios de contrato, bloqueos.
-- **Busca** (`mem_search`) antes de empezar una tarea y antes de tomar una decisión de diseño.
-- Formato del título: `[<ID>] <tema>`; tipo: `decision`, `discovery`, `bugfix`, `architecture`.
-- No guardes secretos, datos crudos ni lo que ya cuenta git.
-
-**Sincronización (por defecto, sin servidor):** la memoria viaja por git en `.engram/`.
-
-```bash
-engram sync --import      # al empezar: importa lo que han subido los demás
-engram sync               # al terminar: exporta tus memorias nuevas a .engram/ (commitéalo en tu PR)
-```
-
-Si el equipo levanta un servidor Engram Cloud, se documentará aquí (`engram cloud config --server <url>` + `engram cloud enroll firetrace`).
-
-Las **decisiones que cambian interfaces** van además a `contracts/` o `docs/decisions/` vía PR: Engram es memoria de trabajo, el repo es la fuente de verdad.
-
-## 7. Convenciones de código
-
-- **Python:** tipado, funciones puras en `pipeline/` (entrada→salida, sin estado global), rutas con `pathlib`, CRS explícito siempre (EPSG:32610 para análisis, EPSG:4326/3857 solo para web). Tests con rásteres sintéticos pequeños, nunca con los GeoTIFF reales.
-- **Web:** componentes funcionales, TypeScript estricto, sin `any`. Textos de UI en inglés (jurado internacional), con nombres de capa del §6 de la propuesta (*Observed radar changes*, *Highlighted radar changes*, *Official fire perimeter*). Accesible: contraste AA, leyendas en todas las capas, paletas aptas para daltonismo.
-- **Docs y comentarios:** español o inglés, pero consistentes dentro del fichero.
-- Commits y PRs en inglés o español, con el ID de tarea.
-
-## 8. Roles del equipo
-
-| Rol | Persona | Grupos principales |
-|---|---|---|
-| Datos NISAR + modelos | David (orquestador) | DT, CH, XP |
-| Procesamiento geoespacial | _por asignar_ | DT, EV |
-| CV / ML | _por asignar_ | CH, XP |
-| Evaluación científica | _por asignar_ | EV |
-| Frontend | _por asignar_ | AP |
-| Integración y storytelling | _por asignar_ | BS, DL |
+Cloud can synchronize even `scope: personal` observations in an enrolled project. Never save private information, credentials, sensitive payloads, full transcripts or speculative findings here. Keep old projects untouched; no migration is required. Use individual project-scoped tokens, never a shared/admin client token.
