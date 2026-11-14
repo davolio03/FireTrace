@@ -21,3 +21,15 @@ The map loads OpenStreetMap tiles in the browser; this requires a connection and
 shares the visitor's IP address with the tile service. When offline, geographic
 details are unavailable. Scientific layers and the Evidence Inspector interface
 belong to later tasks.
+
+## Shared map state
+
+Frontend features use `useMapStore` from `src/state/mapStore.ts` and its actions.
+The store holds UI state only; remote data stays outside it. `flyTo` and
+`animateCompare` update their target state immediately as placeholders: the map
+lane will connect real animations later. Applying a story step uses the same
+actions as manual interaction. With no comparison or focus in a step, the
+corresponding prior state is cleared.
+TypeScript widens arrays and strings in directly imported JSON; consumers of
+story files must validate their data against the story schema and provide a
+`StoryStep`-typed value before calling `applyStoryStep`.
