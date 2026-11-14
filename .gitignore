@@ -1,6 +1,5 @@
-# Data (never commit rasters or model weights)
-data/raw/
-data/processed/
+# Local data (never commit raw/processed data, rasters or model weights)
+/data/
 *.tif
 *.tiff
 *.h5
@@ -17,13 +16,19 @@ wandb/
 __pycache__/
 *.py[cod]
 .venv/
+venv/
 .pytest_cache/
 .ruff_cache/
+.mypy_cache/
+.coverage
 .ipynb_checkpoints/
 
 # Node / web
 node_modules/
-web/dist/
+dist/
+build/
+coverage/
+.next/
 *.local
 
 # Secrets
@@ -31,6 +36,20 @@ web/dist/
 .env.*
 !.env.example
 .netrc
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Cloud is the chosen memory transport; only identity metadata is versioned
+.engram/*
+!.engram/config.json
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
 
 # OS / editors
 .DS_Store
@@ -40,3 +59,13 @@ Thumbs.db
 
 # Agents
 .claude/settings.local.json
+.claude/cache/
+.opencode/
+.atl/
+
+# Local outputs and extracted/downloaded archives
+*.log
+*.zip
+*.tar
+*.tar.gz
+*.tgz

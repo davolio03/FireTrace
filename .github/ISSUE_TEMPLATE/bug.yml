@@ -1,0 +1,32 @@
+name: Bug
+description: Document a reproducible defect; track task state only in Kanvas
+labels: [bug]
+body:
+  - type: input
+    id: kanvas
+    attributes:
+      label: Kanvas task reference
+      description: Link an existing task if available; this issue does not approve or track task state.
+  - type: textarea
+    id: observed
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction and evidence
+      description: Include revision, commands and mock/real status; redact secrets and private data.
+    validations:
+      required: true
+  - type: textarea
+    id: verification
+    attributes:
+      label: Regression verification and affected contracts

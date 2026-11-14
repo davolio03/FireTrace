@@ -1,5 +1,5 @@
-# CLAUDE.md
+# Claude Code repository context
 
-Las instrucciones del proyecto para todos los agentes viven en `AGENTS.md`. No dupliques reglas aquí: edita `AGENTS.md`.
+Follow the canonical team contract below. Do not duplicate project rules here.
 
 @AGENTS.md
