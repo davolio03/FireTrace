@@ -60,6 +60,7 @@ Thumbs.db
 # Agents
 .claude/settings.local.json
 .claude/cache/
+.claude/worktrees/
 .opencode/
 .atl/
 
