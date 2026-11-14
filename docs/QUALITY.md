@@ -50,6 +50,8 @@ The DT-03 stage pins the WFIGS reference perimeter and rasterizes it on the crop
 
 The CH-02 stage summarises the change index inside and outside the perimeter: `uv run python -m pipeline.stats --change-dir data/interim/change --sar-dir data/interim/sar --perimeter-dir data/interim/perimeter --output-dir data/interim/stats`. Its tests validate `stats.json` against the contract schema with the `jsonschema` dev dependency; the method is in [stats](methods/stats.md).
 
+The DT-06 stage adds the precipitation context: `uv run python -m pipeline.weather fetch --token-file <file>` downloads IMERG once with the user's Earthdata token (never stored), and `uv run python -m pipeline.weather build` is offline. It reads NetCDF4 through the `h5netcdf[h5py]` dependency; see [weather](methods/weather.md).
+
 `npm run dev` within `web/` starts the web scaffold. `uv run python -m pipeline.run --all` and `uv run uvicorn api.main:app --reload` remain planned processing/start targets, **not working commands in this checkout**.
 
 Cover deterministic numerical rules and realistic failure paths with small synthetic rasters. Application integration must verify actual lookup/display alignment, no-data, coverage arithmetic, provenance and mock-to-real switching. Real science requires separate reproducible sample evidence and an agreed method/domain; schema-valid mocks are not that evidence.
