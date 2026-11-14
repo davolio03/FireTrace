@@ -17,7 +17,7 @@ Explore what changed in NISAR HH/HV observations before and after **Plaskett Fir
    ```
 
    Without uv, `python3 contracts/tools/validate.py` can run against already-installed jsonschema; report its version and any mismatch with the inline declaration. This does not resolve dependencies. Bootstrap/fixture checks do not test an application or validate science. See [QUALITY](docs/QUALITY.md).
-4. Follow [onboarding](docs/ONBOARDING.md) for worktree ownership, planned application commands and shared memory. Configure application lint/tests before adding source; empty `quality.json` commands are not an app test suite.
+4. Follow [onboarding](docs/ONBOARDING.md) for worktree ownership, planned application commands and shared memory. Python lint/tests for `pipeline/` and `api/` are wired in `quality.json` (`uv run ruff check .`, `uv run pytest`); today they cover package smoke tests only, not processing or science.
 
 ## What we will demonstrate
 

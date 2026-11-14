@@ -2,8 +2,8 @@
   "version": 1,
   "source_roots": ["pipeline", "api", "web", "src", "app", "apps", "packages", "backend", "frontend"],
   "commands": {
-    "lint": ["npm", "--prefix", "web", "run", "lint"],
-    "test": ["npm", "--prefix", "web", "run", "test"],
+    "lint": ["python3", "scripts/quality_commands.py", "lint"],
+    "test": ["python3", "scripts/quality_commands.py", "test"],
     "build": ["npm", "--prefix", "web", "run", "build"]
   }
 }

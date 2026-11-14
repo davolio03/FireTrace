@@ -5,10 +5,14 @@ Run checks in the foreground from the repository root. Never claim success for a
 ## Current executable checks
 
 ```sh
+uv sync
 python3 scripts/check.py
+uv run ruff format --check .
 uv run contracts/tools/validate.py
 git diff --check
 ```
+
+The root [pyproject.toml](../pyproject.toml) is a virtual uv project (`package = false`) for Python 3.11 with `pipeline/` and `api/` packages and a `dev` dependency group (ruff, pytest). [quality.json](../quality.json) runs Python and web lint and tests through `scripts/quality_commands.py`, then the web build. Pytest collects tests under `pipeline/tests/` and `api/tests/` with the repository root on `sys.path`. Runtime dependencies follow the fixed stack. Ruff currently excludes pre-existing tooling (`.agents/`, `contracts/tools/`, `scripts/`).
 
 `scripts/check.py` checks required guidance, local inline link destination existence, the selected `firetrace` identity and configured quality commands. It executes argv lists without shell interpolation. Empty commands are allowed **only while no application source exists** under configured roots, including `pipeline/`, `api/` and `web/` as well as generic starter roots. Contracts/Kanvas tooling is not counted as an application.
 
@@ -18,7 +22,7 @@ The contract validator uses its existing inline dependency declaration, **`jsons
 
 ## Python 3.11 CI, separate from local evidence
 
-The `quality` workflow selects **Python 3.11** and **Node 24**, installs the web dependencies, runs the configured application checks and then the existing fixture validator through uv. It uses the starter's checkout/setup-python action versions and the immutable setup-uv reference documented by its publisher.
+The `quality` workflow runs on pull requests and pushes to `main`, selects **Python 3.11** and **Node 24**, and installs dependencies with `uv sync --locked` and `npm ci`. It runs the repository gate, Python formatting, orchestration tests and fixture validation. The pinned `uv.lock` must match `pyproject.toml`; setup-uv uses the documented immutable reference. CI configuration is not evidence of a hosted run.
 
 The integration environment provides Python **3.14.4** and jsonschema **4.19.2**, below the declared `>=4.20`; `python` and uv are absent. No packages were installed or contract requirements weakened. Running the two direct Python3 scripts here is **not Python 3.11/uv, declared-dependency or hosted CI verification**. CI configuration is not a CI execution result; record the actual remote outcome only when an authorized run occurs.
 
@@ -26,13 +30,15 @@ The integration environment provides Python **3.14.4** and jsonschema **4.19.2**
 
 Configure real `lint` and `test` argv lists in [quality.json](../quality.json) in the same change as source; configure build for bundled web code. Add dependency manifests/lockfiles and CI runtime setup in the authorized scaffold work. The gate refuses source with unset lint/test, but cannot prove arbitrary configured commands are meaningful; reviewers must reject dummy success commands.
 
-Canonical upstream commands **after the corresponding scaffold/dependencies exist**:
+Canonical upstream commands (Python is wired; the others need their scaffold/dependencies first):
 
 | Boundary | Commands to wire into real quality gates |
 | --- | --- |
-| Python pipeline/API | `uv sync`; `uv run ruff check .`; `uv run ruff format --check .`; `uv run pytest` |
+| Python pipeline/API (wired) | `uv sync`; `uv run ruff check .`; `uv run ruff format --check .`; `uv run pytest` |
 | Web (run within `web/`) | `npm install`; `npm run lint`; `npm run test`; `npm run build`; add the selected prettier check to lint |
 | Real pipeline output | `uv run contracts/tools/validate.py data/processed/web` |
+
+The first implemented pipeline stage is the DT-01 NISAR ingest/crop: `uv run python -m pipeline.ingest --config pipeline/configs/ingest_plaskett.toml`. It reads the four local GCOV GeoTIFFs from `data/raw/nisar/` (relative paths resolve against the working directory) and writes float32 crops plus `ingest.json` to `data/interim/nisar/`. It needs the gitignored raw inputs and is not run in CI; its tests use synthetic rasters only.
 
 `npm run dev` within `web/` starts the web scaffold. `uv run python -m pipeline.run --all` and `uv run uvicorn api.main:app --reload` remain planned processing/start targets, **not working commands in this checkout**.
 

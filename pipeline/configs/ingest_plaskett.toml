@@ -1,0 +1,42 @@
+# DT-01 ingest configuration for the Plaskett Fire case.
+# Run from the repository root:
+#   uv run python -m pipeline.ingest --config pipeline/configs/ingest_plaskett.toml
+# Relative paths resolve against the current working directory. Raw inputs live under
+# data/raw/ (gitignored); place the four GCOV GeoTIFFs there with their original names.
+# Granule IDs, datetimes and orbits are recorded as configured (see docs/CONTRACTS.md);
+# the ingest does not query any catalogue.
+
+case_id = "plaskett-2026"
+product = "NISAR_L2_PR_GCOV"
+output_dir = "data/interim/nisar"
+
+[aoi]
+perimeter = "data/raw/wfigs_58728_raw.geojson"
+objectid = 58728
+margin_m = 2000.0
+
+[grid]
+crs = "EPSG:32610"
+pixel_size_m = 10.0
+
+[acquisition]
+track = 42
+frame = 70
+direction = "descending"
+frequency = "A"
+
+[epochs.t1]
+label = "Before"
+datetime = "2026-08-16T02:56:39Z"
+granule_id = "G4284560161-ASF"
+absolute_orbit = 5504
+hh = "data/raw/nisar/NISAR_L2_PR_GCOV_028_042_D_070_4005_DHDH_A_20260816T025639_20260816T025713_P05023_N_F_J_001_science_LSAR_GCOV_grids_frequencyA_HHHH.tif"
+hv = "data/raw/nisar/NISAR_L2_PR_GCOV_028_042_D_070_4005_DHDH_A_20260816T025639_20260816T025713_P05023_N_F_J_001_science_LSAR_GCOV_grids_frequencyA_HVHV.tif"
+
+[epochs.t2]
+label = "After"
+datetime = "2026-10-03T02:56:38Z"
+granule_id = "G4340499432-ASF"
+absolute_orbit = 6196
+hh = "data/raw/nisar/NISAR_L2_PR_GCOV_032_042_D_070_4005_DHDH_A_20261003T025638_20261003T025713_P05023_N_F_J_001_science_LSAR_GCOV_grids_frequencyA_HHHH.tif"
+hv = "data/raw/nisar/NISAR_L2_PR_GCOV_032_042_D_070_4005_DHDH_A_20261003T025638_20261003T025713_P05023_N_F_J_001_science_LSAR_GCOV_grids_frequencyA_HVHV.tif"

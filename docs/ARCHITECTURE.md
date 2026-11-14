@@ -1,6 +1,6 @@
 # FireTrace architecture — precompute, serve, inspect
 
-**Existing:** executable contracts, mock assets, board tooling and an initial web scaffold. **Planned, not implemented:** `pipeline/`, `api/`, the web data journey and real processed artifacts. The [proposal](propuesta.md) governs scientific scope; its illustrative stack is superseded by the upstream choices below.
+**Existing:** executable contracts, mock assets, board tooling, a Python 3.11/uv scaffold with NISAR ingest, and an initial web scaffold. **Planned, not implemented:** the remaining pipeline processing, API endpoints, the web data journey and real processed web artifacts. The [proposal](propuesta.md) governs scientific scope; its illustrative stack is superseded by the upstream choices below.
 
 ## Fixed stack and boundaries
 
@@ -13,7 +13,7 @@
 | Optional | deck.gl if needed; PyTorch for P1 | Not a P0 dependency |
 | Quality | ruff + pytest; eslint + prettier + vitest | Real tests/lint/build once source exists |
 
-The web scaffold has a dependency manifest and initial map; it does not yet consume scientific data. Stack changes require an ADR and human Kanvas approval. [TEAM](TEAM.md) records human responsibility; directory names are boundaries, not proof of working modules.
+The root `pyproject.toml` is a single uv project shared by `pipeline/` and `api/`; it declares their fixed-stack runtime dependencies and a `dev` group. The web scaffold has a dependency manifest and initial map; it does not yet consume scientific data. Stack changes require an ADR and human Kanvas approval. [TEAM](TEAM.md) records human responsibility; directory names are boundaries, not proof of working modules.
 
 ## Data flow and current implementation boundary
 

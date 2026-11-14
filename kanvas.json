@@ -81,12 +81,48 @@
     {
       "id": "BS-03",
       "title": "Scaffold Python (uv, ruff, pytest, CI)",
-      "state": "proposed",
+      "state": "done",
       "group": "BS",
       "deps": ["BS-01"],
       "at": "2026-11-14T11:39:27Z",
       "by": "claude-david",
-      "desc": "pyproject con uv, paquetes pipeline/ y api/ vacíos, ruff + pytest y GitHub Actions que en cada PR ejecuta tests y contracts/tools/validate.py. Hecho = verde en local y en CI."
+      "desc": "pyproject con uv, paquetes pipeline/ y api/ vacíos, ruff + pytest y GitHub Actions que en cada PR ejecuta tests y contracts/tools/validate.py. Hecho = verde en local y en CI.",
+      "notes": [
+        {
+          "at": "2026-11-14T15:19:49Z",
+          "by": "human",
+          "text": "Started in the board."
+        },
+        {
+          "at": "2026-11-14T15:26:50Z",
+          "by": "claude-implementer",
+          "text": "Taking over at the user's request: implementation by an Opus 5.5 subagent (medium effort) in a new branch/worktree."
+        },
+        {
+          "at": "2026-11-14T15:29:31Z",
+          "by": "claude-implementer",
+          "text": "Branch feat/BS-03-python-scaffold (3 commits: 7d0980f, 23630fc, 559f9c1): root virtual uv project (Python 3.11, dev group ruff+pytest), empty pipeline/ and api/ packages with smoke tests, quality.json lint/test wired, CI runs uv sync + check.py + ruff format --check + validate.py. Unverified: uv absent locally so ruff/pytest/uv sync not run, uv.lock not generated, CI not executed. Not pushed; awaiting review before finish."
+        },
+        {
+          "at": "2026-11-14T15:53:14Z",
+          "by": "claude-implementer",
+          "text": "Review fixes on feat/BS-03-python-scaffold (unpublished): removed AI attribution trailers from all commits (AGENTS.md); ignored .claude/worktrees/; README/ONBOARDING now describe the wired Python commands. Human approved keeping the fixed-stack runtime dependencies (commit 72e617b) in BS-03. Still pending: uv.lock, `uv sync --locked` in CI and local Python 3.11/uv verification, waiting for the human to install uv. Not ready to finish."
+        },
+        {
+          "at": "2026-11-14T15:53:30Z",
+          "by": "claude-implementer",
+          "text": "Human owner confirmed authorizing the agent takeover of BS-03 and remains the responsible human for the task and PR."
+        },
+        {
+          "at": "2026-11-14T16:50:37Z",
+          "by": "claude-implementer",
+          "text": "Local verification done on 6a3767c (uv 0.13.8, CPython 3.11.9, Windows): uv.lock committed (45 packages) and CI uses `uv sync --locked`. Results, all exit 0: scripts/check.py (ruff check: all passed; pytest: 12 passed), `uv run ruff format --check .` (29 files formatted), `uv run contracts/tools/validate.py` (contract satisfied), `git diff --check`. Local caveat: PyPI needs uv's system-certificates option on this machine because of TLS interception; the first pytest run hung at interpreter exit (likely first-load scanning of GDAL DLLs; unconfirmed), later runs finish in ~2-30 s. CI not run yet: branch unpublished."
+        }
+      ],
+      "started": {
+        "at": "2026-11-14T15:26:50Z",
+        "by": "claude-implementer"
+      }
     },
     {
       "id": "BS-04",
@@ -111,12 +147,43 @@
     {
       "id": "DT-01",
       "title": "Ingesta y recorte de los 4 GeoTIFF NISAR (F01)",
-      "state": "proposed",
+      "state": "doing",
       "group": "DT",
       "deps": ["BS-03"],
       "at": "2026-11-14T11:39:27Z",
       "by": "claude-david",
-      "desc": "pipeline lee HH/HV t1/t2 desde data/raw, verifica CRS/rejilla/forma comunes, recorta al AOI del perímetro con margen y genera case.json. Hecho = comando reproducible + test con ráster sintético."
+      "desc": "pipeline lee HH/HV t1/t2 desde data/raw, verifica CRS/rejilla/forma comunes, recorta al AOI del perímetro con margen y genera case.json. Hecho = comando reproducible + test con ráster sintético.",
+      "notes": [
+        {
+          "at": "2026-11-14T17:25:35Z",
+          "by": "claude-david",
+          "text": "Refined spec agreed with David (2026-11-14). Supersedes the description where they differ.\n\nScope: ingest and crop the 4 NISAR GCOV power GeoTIFFs (HH/HV x t1/t2). No dB conversion or valid mask (that is DT-02).\n\n- Inputs: config file with paths (data/raw/nisar/, gitignored) and expected granule IDs (t1 G4284560161-ASF, t2 G4340499432-ASF); record sha256 of every input.\n- Grid check: all 4 inputs share CRS, transform and shape; any mismatch fails with a clear error.\n- AOI: WFIGS 58728 perimeter bbox + 2 km margin, buffered in EPSG:32610 metres. Fail clearly if the AOI exceeds the raster extent.\n- Crop: integer pixel window snapped to the native 10 m grid, no resampling, original nodata preserved. Windowed reads only (inputs ~3 GB each).\n- Metadata: inspect the .h5 first (gamma0/RTC, real nodata, product mask); record findings in Engram; flag any contract impact.\n- Outputs: data/interim/nisar/{t1,t2}_{hh,hv}.tif (float32) + data/interim/nisar/ingest.json (epochs, acquisition, AOI in 32610 and 4326, grid, checksums).\n- case.json is NOT produced here: DT-04 assembles it from DT-01 + DT-03 + CH-01 (it needs method and reference).\n\nDone = reproducible command (uv run python -m pipeline.ingest --config ...), deterministic outputs; synthetic-raster tests for matching grids, CRS/transform/shape mismatch, AOI outside raster, window alignment and nodata preservation; ruff + pytest green locally and in CI; PR carries real-run evidence (crop size, bbox, checksums), no data committed."
+        },
+        {
+          "at": "2026-11-14T17:27:01Z",
+          "by": "human",
+          "text": "Started in the board."
+        },
+        {
+          "at": "2026-11-14T17:35:00Z",
+          "by": "claude-code",
+          "text": "Plan: Opus subagent implements pipeline/ingest.py (config, grid check, AOI bbox+2km in 32610, snapped window crop, ingest.json) with synthetic tests in worktree feat/DT-01-nisar-ingest; separate review afterwards."
+        },
+        {
+          "at": "2026-11-14T17:43:54Z",
+          "by": "claude-code",
+          "text": "Implemented on feat/DT-01-nisar-ingest (ac53c9a, 3bf1e6f; not pushed). pipeline/ingest.py + example TOML config + 22 synthetic tests; scripts/check.py and contract validation pass (29 tests). Real run on the Plaskett pair: source grid 34992x34416 @10 m EPSG:32610; crop 1915x1624 px, snapped bounds (636000, 3967750, 655150, 3983990); outputs byte-identical over 3 runs. .h5 (t2): gamma0 RTC linear power, NaN nodata, no contract impact. Open: DT-02's 1,948,374 valid-pixel target does not match this crop (all 3,109,960 px valid). Pending: independent review (sol6.1 requested; T3 delegation unavailable this session)."
+        },
+        {
+          "at": "2026-11-14T17:58:12Z",
+          "by": "claude-david",
+          "text": "Review by Codex gpt-6.1-sol (medium): changes requested, 4 findings, all fixed in 256f357. P1 output paths could alias inputs (now refused before any write; inputs hashed first). P2 config could change the analysis grid (now fixed to EPSG:32610 / 10 m). P2 AI attribution trailers removed from the unpublished commits (now 23977a1, 4e1a566). P3 corrupt inputs now give 'ingest error' with exit 2. 33 tests pass; ruff, scripts/check.py, contract validation and git diff --check pass. Real Plaskett re-run: outputs and ingest.json byte-identical to the previous run (crop 1915x1624). Not pushed; local backup branch backup/DT-01-pre-trailer-strip."
+        }
+      ],
+      "started": {
+        "at": "2026-11-14T17:35:00Z",
+        "by": "claude-code"
+      }
     },
     {
       "id": "DT-02",
@@ -146,7 +213,14 @@
       "deps": ["DT-02", "CH-01", "DT-03"],
       "at": "2026-11-14T11:39:27Z",
       "by": "claude-david",
-      "desc": "Una PNG RGBA por capa reproyectada a EPSG:3857 con paleta fija, layers.json con coordenadas y leyendas, case.json, stats.json y perimeter.geojson. Hecho = uv run contracts/tools/validate.py data/processed/web pasa."
+      "desc": "Una PNG RGBA por capa reproyectada a EPSG:3857 con paleta fija, layers.json con coordenadas y leyendas, stats.json y perimeter.geojson. También monta case.json final a partir de data/interim/nisar/ingest.json (DT-01), la referencia del perímetro (DT-03) y el método (CH-01). Hecho = uv run contracts/tools/validate.py data/processed/web pasa.",
+      "notes": [
+        {
+          "at": "2026-11-14T17:25:35Z",
+          "by": "claude-david",
+          "text": "case.json assembly moved here from DT-01 (agreed with David)"
+        }
+      ]
     },
     {
       "id": "CH-01",
@@ -341,12 +415,23 @@
     {
       "id": "BS-06",
       "title": "Contrato v1.2: productos para trabajar en paralelo (5 líneas)",
-      "state": "proposed",
+      "state": "done",
       "group": "BS",
       "deps": ["BS-01"],
       "at": "2026-11-14T12:56:38Z",
       "by": "claude-david",
-      "desc": "PR docs/contract-v1.2-parallel: schemas y fixtures de zonas a revisar, historia guiada, lluvia, transecto, anotaciones y capas de contexto (óptico, relieve), más web-state.md y las líneas L1–L5 en AGENTS.md. Hecho = PR mergeado; es lo que desbloquea todas las tareas nuevas."
+      "desc": "PR docs/contract-v1.2-parallel: schemas y fixtures de zonas a revisar, historia guiada, lluvia, transecto, anotaciones y capas de contexto (óptico, relieve), más web-state.md y las líneas L1–L5 en AGENTS.md. Hecho = PR mergeado; es lo que desbloquea todas las tareas nuevas.",
+      "notes": [
+        {
+          "at": "2026-11-14T13:30:51Z",
+          "by": "human",
+          "text": "Started in the board."
+        }
+      ],
+      "started": {
+        "at": "2026-11-14T13:30:51Z",
+        "by": "human"
+      }
     },
     {
       "id": "BS-07",
