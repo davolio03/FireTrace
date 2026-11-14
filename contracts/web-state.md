@@ -1,18 +1,18 @@
-# Contrato interno de la web — estado compartido (v1.2.0)
+# Internal web contract — shared state (v1.2.0)
 
-Lo usan las dos personas de frontend (L4 "mapa" y L5 "experiencia") para trabajar en paralelo. **Todas las features leen y escriben el mismo store** (Zustand, en `web/src/state/`) y **nadie toca la instancia de MapLibre directamente fuera de `features/map/`**.
+Used by the two frontend lanes (L4 "map" and L5 "experience") to work in parallel. **Every feature reads and writes the same store** (Zustand, in `web/src/state/`) and **nobody touches the MapLibre instance outside `features/map/`**.
 
 ```text
-features/story ─┐                    ┌─► features/map        (L4) pinta capas, swipe, selección, cámara
-features/zones ─┤                    ├─► features/inspector  (L4) lee selection → /api/inspect/*
-features/annot ─┼─► store (acciones) ┼─► features/profile    (L4) lee selection.profile → gráfico
-features/...   ─┘                    └─► features/metrics, weather, zones (L5)
+features/story ─┐                      ┌─► features/map        (L4) draws layers, swipe, selection, camera
+features/zones ─┤                      ├─► features/inspector  (L4) reads selection → /api/inspect/*
+features/annot ─┼─► store (actions) ───┼─► features/profile    (L4) reads selection.profile → chart
+features/...   ─┘                      └─► features/metrics, weather, zones (L5)
 ```
 
-## Forma del estado
+## State shape
 
 ```ts
-type LayerId = /* ids de contracts/schemas/layers.schema.json */;
+type LayerId = /* ids from contracts/schemas/layers.schema.json */;
 type LonLat = [number, number];
 
 interface Camera { center: LonLat; zoom: number; bearing?: number; pitch?: number }
@@ -24,10 +24,10 @@ type Selection =
   | { type: "profile"; line: LonLat[] };
 
 interface MapState {
-  camera: Camera;                              // L4 la sincroniza con el mapa en ambos sentidos
+  camera: Camera;                              // L4 keeps it in sync with the map both ways
   visible: LayerId[];
   opacity: Partial<Record<LayerId, number>>;
-  compare: { left: LayerId; right: LayerId; position: number } | null;   // null = sin swipe
+  compare: { left: LayerId; right: LayerId; position: number } | null;   // null = no swipe
   selection: Selection;
   panel: "none" | "inspector" | "zones" | "metrics" | "weather" | "profile";
   tool: "pan" | "inspect" | "draw-profile";
@@ -35,21 +35,21 @@ interface MapState {
 }
 ```
 
-## Acciones (la única forma de cambiar el estado)
+## Actions (the only way to change state)
 
-| Acción | Quién la llama | Efecto que garantiza L4 |
+| Action | Called by | Effect guaranteed by L4 |
 |---|---|---|
-| `flyTo(camera, durationMs?)` | story, zones, usuario | Anima el mapa a la cámara |
-| `setVisible(ids)` / `toggleLayer(id)` / `setOpacity(id, v)` | panel de capas, story | Muestra u oculta capas respetando el `group` |
-| `setCompare(cfg \| null)` / `animateCompare(to, ms)` | story, comparador | Swipe entre dos capas |
-| `select(selection)` | clic en el mapa, zones, story, annotations | Resalta en el mapa y abre el panel adecuado |
-| `setTool(tool)` | barra de herramientas | Cambia el modo de interacción (p. ej., dibujar el transecto) |
-| `applyStoryStep(step)` | story | Aplica un paso de `story.json`: cámara, capas, comparador, foco y panel, **usando las acciones anteriores** |
+| `flyTo(camera, durationMs?)` | story, zones, user | Animates the map to the camera |
+| `setVisible(ids)` / `toggleLayer(id)` / `setOpacity(id, v)` | layer panel, story | Shows/hides layers, respecting their `group` |
+| `setCompare(cfg \| null)` / `animateCompare(to, ms)` | story, comparator | Swipe between two layers |
+| `select(selection)` | map click, zones, story, annotations | Highlights on the map and opens the matching panel |
+| `setTool(tool)` | toolbar | Changes the interaction mode (e.g. draw a transect) |
+| `applyStoryStep(step)` | story | Applies a `story.json` step (camera, layers, compare, focus, panel) **using the actions above** |
 
-Reglas:
+Rules:
 
-1. `applyStoryStep` no tiene caminos especiales: un paso de la historia equivale exactamente a lo que haría un usuario. Si la historia funciona, la app funciona.
-2. Los datos remotos (case, stats, layers, zones, weather, inspect, profile) se piden con **TanStack Query** usando los tipos generados de `contracts/openapi.yaml` y los schemas. Nunca se guardan en el store.
-3. Las anotaciones viven en su propio store persistido (localStorage) con la forma de `annotations.schema.json`. La exportación es ese mismo documento.
-4. El store se crea en BS-07 con **implementaciones mínimas** de cada acción, para que L4 y L5 programen contra él desde el primer día. L4 sustituye después los stubs del mapa por la implementación real, sin cambiar las firmas.
-5. Cambiar una firma de este fichero sigue la misma regla que el resto del contrato: PR propio y revisión por ambos lados (L4 y L5).
+1. `applyStoryStep` has no special code paths: a story step is exactly what a user could do. If the story works, the app works.
+2. Remote data (case, stats, layers, zones, weather, inspect, profile) is fetched with **TanStack Query** using types generated from `contracts/openapi.yaml` and the schemas. It is never copied into the store.
+3. Annotations live in their own persisted store (localStorage) shaped like `annotations.schema.json`. The export is that same document.
+4. BS-07 creates the store with **minimal implementations** of every action so L4 and L5 can code against it from day one. L4 later replaces the map stubs with the real implementation without changing signatures.
+5. Changing a signature here follows the same rule as the rest of the contract: a dedicated PR reviewed by both sides (L4 and L5).

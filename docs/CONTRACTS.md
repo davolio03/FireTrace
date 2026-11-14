@@ -1,4 +1,4 @@
-# Shared interfaces — executable v1.0.0, real science still to verify
+# Shared interfaces — executable v1.2.0, real science still to verify
 
 **Authoritative definitions:** [contracts/README.md](../contracts/README.md), [JSON Schemas](../contracts/schemas/) and [OpenAPI 3.1](../contracts/openapi.yaml). This guide explains their semantics; it does not redefine fields or change interfaces. Schemas, fixtures and tooling already exist. The real pipeline/API/web do not.
 
@@ -10,11 +10,17 @@
 | Pipeline → web/API | `stats.json`: valid/total pixels, coverage, distributions inside/outside reference, nullable P1 highlight | [stats schema](../contracts/schemas/stats.schema.json) |
 | Pipeline → web | `layers.json`: fixed IDs/groups, URLs, legends and four raster corners | [layers schema](../contracts/schemas/layers.schema.json) |
 | Pipeline → web | RGBA PNG layers + WGS84 `perimeter.geojson` | [artifact layout](../contracts/README.md) |
-| API → web | Health, case, stats, layers and point inspection | [OpenAPI](../contracts/openapi.yaml) / [inspection schema](../contracts/schemas/inspect-point.schema.json) |
+| API → web | Health, case, stats, layers and point inspection (optional `terrain`) | [OpenAPI](../contracts/openapi.yaml) / [inspection schema](../contracts/schemas/inspect-point.schema.json) |
+| API → web | Transect: `POST /api/inspect/profile` | [profile schema](../contracts/schemas/profile.schema.json) |
+| Pipeline → web (P1) | `review_zones.geojson`: ranked change-outside / little-change-inside / agreement zones | [review-zones schema](../contracts/schemas/review-zones.schema.json) |
+| Context data → web | `weather.json` (precipitation between acquisitions); `optical_*`, `hillshade`, `slope` layers with mandatory `source` | [weather schema](../contracts/schemas/weather.schema.json) / [layers schema](../contracts/schemas/layers.schema.json) |
+| Storytelling → web | Guided story steps (`web/src/story/story.json`) | [story schema](../contracts/schemas/story.schema.json) |
+| Web → analyst | Annotation export (GeoJSON) for the report | [annotations schema](../contracts/schemas/annotations.schema.json) |
+| Web L4 ↔ L5 | Shared store shape and actions | [web-state](../contracts/web-state.md) |
 
-`contract_version` is `1.0.0`; the versioned JSON envelopes identify `data_status: mock | real`. Do not infer that every PNG/GeoJSON has that property. Mocks require a visible MOCK notice; changing a label to `real` is not evidence of processing.
+`contract_version` is `1.2.0`; the versioned JSON envelopes identify `data_status: mock | real`. Do not infer that every PNG/GeoJSON has that property. Mocks require a visible MOCK notice; changing a label to `real` is not evidence of processing.
 
-The real web output mirrors `contracts/fixtures/web/` under `data/processed/web/`. The mock API examples cover inside/outside perimeter and invalid pixels. `inspect-grid.json` is a compact **mock-only** lookup aid; it is not the real scientific raster representation. Region inspection is not defined by v1: discuss an extension before implementing it.
+The real web output mirrors `contracts/fixtures/web/` under `data/processed/web/`. The mock API examples cover inside/outside perimeter and invalid pixels. `inspect-grid.json` is a compact **mock-only** lookup aid; it is not the real scientific raster representation. Region inspection is covered by precomputed `review_zones.geojson` properties (v1.1); an on-demand region endpoint is still undefined: discuss an extension before implementing it. Zone kinds describe radar change versus the reference perimeter, never burned/unburned.
 
 ## Defined numerical and geographic meaning
 
