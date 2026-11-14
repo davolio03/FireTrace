@@ -1,110 +1,110 @@
-# Contrato de datos y API — v1.2.0
+# Data and API contract — v1.2.0
 
-El contrato permite que **pipeline, API y web avancen en paralelo**. Cada lado programa contra el contrato, no contra el código de los demás.
+The contract lets **pipeline, API and web move in parallel**. Each side codes against the contract, not against the others' code.
 
 ```text
-              contracts/schemas/*.schema.json   ← fuente de verdad (JSON Schema 2020-12)
-              contracts/openapi.yaml            ← endpoints de la API (referencia a los schemas)
+              contracts/schemas/*.schema.json   ← source of truth (JSON Schema 2020-12)
+              contracts/openapi.yaml            ← API endpoints (reference the schemas)
                          │
    ┌─────────────────────┼──────────────────────────┐
    ▼                     ▼                          ▼
 pipeline/            api/ (FastAPI)              web/ (React)
-produce               sirve los productos;       lee data/web/* + API;
-data/processed/web/   sus tests validan las      tipos TS generados del OpenAPI;
-y lo valida con       respuestas contra los      en modo mock usa
-validate.py           schemas                    contracts/fixtures/ + MSW
+writes                serves the products;       reads data/web/* + API;
+data/processed/web/   its tests validate         TS types generated from OpenAPI;
+and checks it with    responses against          in mock mode uses
+validate.py           the schemas                contracts/fixtures/ + MSW
 ```
 
-## La regla clave: misma forma, distinta fuente
+## The key rule: same shape, different source
 
-`contracts/fixtures/web/` tiene **exactamente la misma estructura** que el pipeline real escribe en `data/processed/web/`:
+`contracts/fixtures/web/` has **exactly the same layout** the real pipeline writes to `data/processed/web/`:
 
 ```text
-case.json          metadatos del caso                    → case.schema.json
-stats.json         métricas sobre píxeles válidos        → stats.schema.json
-layers.json        manifiesto de capas + leyendas        → layers.schema.json
-perimeter.geojson  perímetro WFIGS 58728 (EPSG:4326)
-layers/<id>.png    una PNG RGBA por capa ráster, ya en EPSG:3857 (transparente = nodata)
-review_zones.geojson  (P1, opcional) zonas a revisar   → review-zones.schema.json
-weather.json       lluvia diaria entre fechas (contexto) → weather.schema.json
-story.json         SOLO en fixtures: ejemplo de historia guiada → story.schema.json
+case.json             case metadata                          → case.schema.json
+stats.json            metrics over valid pixels              → stats.schema.json
+layers.json           layer manifest + legends               → layers.schema.json
+perimeter.geojson     WFIGS 58728 perimeter (EPSG:4326)
+layers/<id>.png       one RGBA PNG per raster layer, already in EPSG:3857 (transparent = no-data)
+review_zones.geojson  (P1, optional) zones to review         → review-zones.schema.json
+weather.json          daily rain between acquisitions        → weather.schema.json
+story.json            FIXTURES ONLY: example guided story    → story.schema.json
 ```
 
-| Otros contratos | Dónde |
+| Other contracts | Where |
 |---|---|
-| Transecto `POST /api/inspect/profile` | `schemas/profile.schema.json` + `openapi.yaml` |
-| Relieve en el inspector (`terrain`: elevación, pendiente, orientación) | campo opcional de `inspect-point.schema.json` |
-| Exportación de anotaciones del analista (GeoJSON) | `schemas/annotations.schema.json` |
-| Historia guiada (fichero de producción: `web/src/story/story.json`) | `schemas/story.schema.json` |
-| Estado compartido de la web (store y acciones) | [`web-state.md`](web-state.md) |
+| Transect `POST /api/inspect/profile` | `schemas/profile.schema.json` + `openapi.yaml` |
+| Terrain in the inspector (`terrain`: elevation, slope, aspect) | optional field of `inspect-point.schema.json` |
+| Analyst annotation export (GeoJSON) | `schemas/annotations.schema.json` |
+| Guided story (production file: `web/src/story/story.json`) | `schemas/story.schema.json` |
+| Shared web state (store and actions) | [`web-state.md`](web-state.md) |
 
-- **Web:** la ruta base de datos se elige con `VITE_DATA_BASE_URL` y la API con `VITE_API_BASE_URL`; con `VITE_USE_MOCKS=true`, MSW responde a `/api/*` usando `contracts/fixtures/api/`. Pasar de mock a real es cambiar variables de entorno, no código.
-- **API:** los tests usan `contracts/fixtures/`; en producción lee `data/processed/`.
-- **Pipeline:** hecho = `uv run contracts/tools/validate.py data/processed/web` pasa.
+- **Web:** the data base path comes from `VITE_DATA_BASE_URL` and the API from `VITE_API_BASE_URL`; with `VITE_USE_MOCKS=true`, MSW answers `/api/*` from `contracts/fixtures/api/`. Switching from mock to real is an environment change, not a code change.
+- **API:** tests use `contracts/fixtures/`; in production it reads `data/processed/`.
+- **Pipeline:** done = `uv run contracts/tools/validate.py data/processed/web` passes.
 
-Todos los ficheros llevan `data_status: "mock" | "real"`. **La web debe mostrar un aviso visible de MOCK** cuando sea `mock`, para que nunca se enseñe un dato sintético como real.
+Every versioned JSON file carries `data_status: "mock" | "real"`. **The web must show a visible MOCK notice** when it is `mock`, so synthetic data is never presented as real.
 
-## Capas ráster: PNG + coordenadas
+## Raster layers: PNG + corners
 
-Cada capa es una imagen que MapLibre pinta con una fuente `image` y sus 4 esquinas (`coordinates` en `layers.json`). No hay servidor de tiles. Al tamaño del AOI (~20 × 17 km a 10 m, unos 2000 × 1700 px) es sencillo y rápido. La paleta y el rango los fija el pipeline y se describen en `legend`, así que la web pinta la leyenda sin conocer los datos.
+Each layer is an image drawn by MapLibre through an `image` source and its 4 corners (`coordinates` in `layers.json`). There is no tile server. At the AOI size (~20 × 17 km at 10 m, about 2000 × 1700 px) this is simple and fast. The pipeline fixes palette and range and describes them in `legend`, so the web draws legends without knowing the data.
 
-IDs de capa fijos: `sar_t1_hh`, `sar_t2_hh`, `sar_t1_hv`, `sar_t2_hv`, `change_hh`, `change_hv`, `change_index`, `highlight_mask` (P1), `valid_mask`, `perimeter`, `review_zones` (P1), `optical_during`, `optical_after`, `hillshade`, `slope`. El campo `group` (`sar`, `observed_change`, `highlighted_change`, `reference`, `quality`, `optical_context`, `terrain`) mantiene en la UI la separación observación / interpretación / contraste. Las capas que no son NISAR (`optical_context`, `terrain`) **deben** llevar `source`, y la UI lo muestra.
+Fixed layer IDs: `sar_t1_hh`, `sar_t2_hh`, `sar_t1_hv`, `sar_t2_hv`, `change_hh`, `change_hv`, `change_index`, `highlight_mask` (P1), `valid_mask`, `perimeter`, `review_zones` (P1), `optical_during`, `optical_after`, `hillshade`, `slope`. The `group` field (`sar`, `observed_change`, `highlighted_change`, `reference`, `quality`, `optical_context`, `terrain`) keeps the observation / interpretation / contrast separation in the UI. Non-NISAR layers (`optical_context`, `terrain`) **must** carry `source`, and the UI shows it.
 
-Los valores numéricos de cada píxel no salen de las PNG, sino de `GET /api/inspect/point`.
+Per-pixel numbers never come from the PNGs; they come from `GET /api/inspect/point`.
 
-## Zonas a revisar (P1 · EV-04)
+## Zones to review (P1 · EV-04)
 
-`review_zones.geojson` lista regiones conectadas, precalculadas y ordenadas, para que el analista sepa **dónde mirar primero**:
+`review_zones.geojson` lists precomputed, ranked connected regions so the analyst knows **where to look first**:
 
-| `kind` | Prefijo | Qué es |
+| `kind` | Prefix | Meaning |
 |---|---|---|
-| `change_outside_perimeter` | `CO` | Cambio radar destacado **fuera** del perímetro → discrepancia |
-| `no_change_inside_perimeter` | `NI` | Poco cambio radar **dentro** del perímetro → discrepancia (¿isla sin quemar?, ¿límite del radar?) |
-| `change_inside_perimeter` | `CI` | Cambio destacado dentro → ejemplos de **acuerdo** |
+| `change_outside_perimeter` | `CO` | Highlighted radar change **outside** the perimeter → discrepancy |
+| `no_change_inside_perimeter` | `NI` | Little radar change **inside** the perimeter → discrepancy (unburned island? radar limitation?) |
+| `change_inside_perimeter` | `CI` | Highlighted change inside → **agreement** examples |
 
-Cada zona trae la superficie, el centroide y la bbox (para que el mapa vuele a ella), las medianas de HH y HV antes, después y delta, el índice, la distancia al perímetro y la fracción de píxeles en los que se activa cada cautela. `method` documenta los umbrales usados. Todo sale del pipeline: la web no recalcula nada. Las discrepancias se presentan como **"para investigar"**, nunca como errores del radar ni del perímetro.
+Each zone carries area, centroid and bbox (so the map can fly to it), HH and HV medians before/after/delta, the index, the distance to the perimeter and the share of pixels where each caveat fires. `method` documents the thresholds used. Everything comes from the pipeline: the web recomputes nothing. Discrepancies are presented as **"to investigate"**, never as radar or perimeter errors.
 
-## Líneas de trabajo y qué contrato las separa
+## Work lanes and the contract that separates them
 
-Pensado para 4–5 personas. Cada línea entrega contra el contrato y se prueba con fixtures; solo las tareas `IN-*` las juntan.
+Designed for 4–5 people. Each lane delivers against the contract and tests with fixtures; only the `IN-*` tasks bring lanes together. Owners and tasks: [docs/TEAM.md](../docs/TEAM.md).
 
-| Línea | Persona | Produce | Consume (mock hasta IN-*) |
-|---|---|---|---|
-| **L1 Datos radar** | David | dB, índice, stats, zonas, capas SAR (`data/processed/web`, COG de análisis) | — |
-| **L2 Datos de contexto** | geoespacial | perímetro, DEM → `hillshade`/`slope` + COG de terreno, `weather.json`, capas ópticas | AOI de `case.json`; rejilla NISAR de DT-01 para alinear el COG de terreno |
-| **L3 API** | backend | `/api/inspect/point` (+ `terrain`), `/api/inspect/profile`, reglas de cautelas | COG de L1 y L2 (fixtures en los tests) |
-| **L4 Web: mapa** | frontend 1 | mapa, capas, comparador, inspector, transecto, capas de contexto | fixtures + MSW, store de `web-state.md` |
-| **L5 Web: experiencia** | frontend 2 / storytelling | portada, métricas, zonas, historia guiada, anotaciones e informe, demo | fixtures + MSW, store de `web-state.md` |
+| Lane | Produces | Consumes (mock until IN-*) |
+|---|---|---|
+| **L1 Radar data** | dB, index, stats, zones, SAR layers (`data/processed/web`, analysis COGs) | — |
+| **L2 Context data** | perimeter, DEM → `hillshade`/`slope` + terrain COG, `weather.json`, optical layers | AOI from `case.json`; NISAR grid from DT-01 to align the terrain COG |
+| **L3 API** | `/api/inspect/point` (+ `terrain`), `/api/inspect/profile`, caveat rules | COGs from L1 and L2 (fixtures in tests) |
+| **L4 Web: map** | map, layers, swipe, inspector, transect, context layers | fixtures + MSW, store from `web-state.md` |
+| **L5 Web: experience** | overview, metrics, zones, guided story, annotations and report, demo | fixtures + MSW, store from `web-state.md` |
 
-Con 4 personas, L2 y L3 las lleva una misma persona.
+With four people, one person owns L2 and L3.
 
-## Fixtures (todo sintético salvo la geometría del perímetro)
+## Fixtures (all synthetic except the perimeter geometry)
 
-| Fichero | Uso |
+| File | Use |
 |---|---|
-| `fixtures/web/*` | Datos mock con la estructura de producción |
-| `fixtures/api/inspect-point-{inside,outside,invalid}.json` | Respuestas de ejemplo del inspector (casos dentro del perímetro, fuera y píxel sin datos) |
-| `fixtures/api/stats-with-highlight.json` | `stats` con la máscara P1 activada, para maquetar los widgets de F05 |
-| `fixtures/api/inspect-grid.json` | **Solo para mocks**: rejilla compacta que MSW usa para responder a cualquier clic y transecto con valores coherentes (incluye elevación y pendiente) |
-| `fixtures/api/profile-example.json` | Transecto que cruza el perímetro: HV cae al entrar |
-| `fixtures/web/story.json` | Historia de 5 pasos de partida (textos en borrador) |
-| `fixtures/web/weather.json` | Lluvia mock con un episodio el 24–26 de septiembre |
-| `fixtures/exports/annotations.geojson` | Ejemplo de exportación de anotaciones |
+| `fixtures/web/*` | Mock data with the production layout |
+| `fixtures/api/inspect-point-{inside,outside,invalid}.json` | Example inspector responses (inside the perimeter, outside, no-data pixel) |
+| `fixtures/api/stats-with-highlight.json` | `stats` with the P1 mask enabled, to build the F05 widgets |
+| `fixtures/api/inspect-grid.json` | **Mock only**: compact grid MSW uses to answer any click or transect with consistent values (includes elevation and slope) |
+| `fixtures/api/profile-example.json` | Transect crossing the perimeter: HV drops when entering |
+| `fixtures/web/story.json` | Starting 5-step story (draft copy) |
+| `fixtures/web/weather.json` | Mock rain with an event on 24–26 September |
+| `fixtures/exports/annotations.geojson` | Example annotation export |
 
-Regenerar los mocks (deterministas, con semilla fija):
+Regenerate the mocks (deterministic, fixed seed):
 
 ```bash
 uv run contracts/tools/generate_mocks.py
-uv run contracts/tools/generate_mocks.py --perimeter-source data/raw/wfigs_58728_raw.geojson   # re-simplificar el perímetro
-uv run contracts/tools/validate.py          # valida fixtures; en CI
+uv run contracts/tools/generate_mocks.py --perimeter-source data/raw/wfigs_58728_raw.geojson   # re-simplify the perimeter
+uv run contracts/tools/validate.py          # validate fixtures; runs in CI
 ```
 
-## Cómo cambiar el contrato
+## Changing the contract
 
-1. Rama `docs/contract-<tema>` y un PR solo con el cambio de contrato.
-2. Actualiza schema(s) → `openapi.yaml` si aplica → regenera los fixtures → `validate.py` en verde.
-3. Sube `contract_version`: **patch** = aclaración, **minor** = campo opcional nuevo (compatible), **major** = renombrar, quitar o cambiar el significado de un campo.
-4. Revisa al menos una persona de cada lado afectado (datos y web/API).
-5. Guarda la decisión en Engram: `[contract] <qué cambió y por qué>`.
+1. Branch `docs/contract-<topic>` and a PR containing only the contract change.
+2. Update schema(s) → `openapi.yaml` if relevant → regenerate fixtures → `validate.py` green.
+3. Bump `contract_version`: **patch** = clarification, **minor** = new optional field (compatible), **major** = rename, remove or change the meaning of a field.
+4. At least one reviewer from each affected side (data and web/API).
+5. Record the decision in Engram (project `firetrace`, see [docs/ENGRAM_CLOUD.md](../docs/ENGRAM_CLOUD.md)).
 
-Un cambio de contrato no se cuela dentro de un PR de feature.
+A contract change never hides inside a feature PR.
