@@ -223,10 +223,10 @@
       "title": "Reglas deterministas de cautelas (pendiente, geometría)",
       "state": "proposed",
       "group": "EV",
-      "deps": ["DT-02"],
+      "deps": ["DT-02", "DT-05"],
       "at": "2026-11-14T11:39:27Z",
       "by": "claude-david",
-      "desc": "Caveats por píxel a partir de DEM (pendiente/orientación respecto a la geometría descendente) y otras reglas documentadas; sin LLM."
+      "desc": "L3. Cautelas por píxel y por zona con reglas deterministas documentadas: pendiente >30° y sombra/layover a partir del COG de terreno (DT-05), lluvia reciente según weather.json (DT-06) y cercanía al borde del perímetro. Sin LLM."
     },
     {
       "id": "EV-03",
@@ -273,7 +273,7 @@
       "title": "Despliegue de la demo",
       "state": "proposed",
       "group": "DL",
-      "deps": ["IN-01", "IN-02"],
+      "deps": ["IN-01", "IN-02", "IN-03"],
       "at": "2026-11-14T11:39:27Z",
       "by": "claude-david",
       "desc": "Web estática + API desplegadas (o build local reproducible) con datos precalculados; sin descargas ni entrenamiento en directo."
@@ -313,10 +313,140 @@
       "title": "Inspector con API real",
       "state": "proposed",
       "group": "IN",
-      "deps": ["EV-01", "EV-03", "CH-01", "EV-02"],
+      "deps": ["EV-01", "EV-03", "CH-01", "EV-02", "EV-05", "AP-06"],
       "at": "2026-11-14T11:50:39Z",
       "by": "claude-david",
       "desc": "Desactivar MSW y usar la API FastAPI sobre los productos reales; comprobar los valores de varios píxeles contra el ráster original (dentro, fuera e inválido)."
+    },
+    {
+      "id": "EV-04",
+      "title": "Zonas a revisar en la web: lista guiada de coincidencias y discrepancias",
+      "state": "proposed",
+      "group": "EV",
+      "deps": ["AP-02", "EV-03", "BS-07"],
+      "at": "2026-11-14T12:45:32Z",
+      "by": "claude-david",
+      "desc": "Panel junto al mapa con las zonas de review_zones.geojson (contrato v1.1.0), agrupadas en: cambio fuera del perímetro, poco cambio dentro (discrepancias) y ejemplos de acuerdo, ordenadas por superficie. Al pulsar una zona, el mapa vuela a su bbox, la resalta y el inspector muestra sus medianas HH/HV, índice, distancia al perímetro y cautelas. Se desarrolla ya contra el fixture mock. Hecho = la demo recorre las 3 categorías sin buscar a mano."
+    },
+    {
+      "id": "XP-04",
+      "title": "Pipeline: generar review_zones.geojson",
+      "state": "proposed",
+      "group": "XP",
+      "deps": ["XP-01"],
+      "at": "2026-11-14T12:45:41Z",
+      "by": "claude-david",
+      "desc": "Regiones conectadas (rasterio.features.shapes) a partir de la máscara de XP-01 y de una máscara de poco cambio dentro del perímetro; filtro por superficie mínima, ranking y estadísticas por zona según contracts/schemas/review-zones.schema.json. Hecho = validate.py pasa sobre data/processed/web con el fichero publicado."
+    },
+    {
+      "id": "BS-06",
+      "title": "Contrato v1.2: productos para trabajar en paralelo (5 líneas)",
+      "state": "proposed",
+      "group": "BS",
+      "deps": ["BS-01"],
+      "at": "2026-11-14T12:56:38Z",
+      "by": "claude-david",
+      "desc": "PR docs/contract-v1.2-parallel: schemas y fixtures de zonas a revisar, historia guiada, lluvia, transecto, anotaciones y capas de contexto (óptico, relieve), más web-state.md y las líneas L1–L5 en AGENTS.md. Hecho = PR mergeado; es lo que desbloquea todas las tareas nuevas."
+    },
+    {
+      "id": "BS-07",
+      "title": "Estado compartido de la web (store + acciones con stubs)",
+      "state": "proposed",
+      "group": "BS",
+      "deps": ["BS-04", "BS-06"],
+      "at": "2026-11-14T12:56:38Z",
+      "by": "claude-david",
+      "desc": "web/src/state con la forma y las acciones de contracts/web-state.md (flyTo, setVisible, setCompare, select, setTool, applyStoryStep), con implementaciones mínimas y tests. Hecho = L4 y L5 pueden programar contra el store sin depender el uno del otro."
+    },
+    {
+      "id": "DT-05",
+      "title": "Relieve: DEM → hillshade, pendiente y COG de terreno",
+      "state": "proposed",
+      "group": "DT",
+      "deps": ["BS-03", "BS-06"],
+      "at": "2026-11-14T12:56:38Z",
+      "by": "claude-david",
+      "desc": "L2. DEM (NASADEM o Copernicus GLO-30) recortado al AOI; capas hillshade y slope (PNG EPSG:3857 + entrada en layers.json con source) y COG de elevación/pendiente/orientación alineado a la rejilla NISAR de 10 m para la API. Hecho = validate.py pasa y la API puede leer el terreno."
+    },
+    {
+      "id": "DT-06",
+      "title": "Lluvia entre fechas (GPM IMERG) → weather.json",
+      "state": "proposed",
+      "group": "DT",
+      "deps": ["BS-03", "BS-06"],
+      "at": "2026-11-14T12:56:38Z",
+      "by": "claude-david",
+      "desc": "L2. Precipitación diaria media sobre el AOI del 16-ago al 3-oct-2026 con NASA GPM IMERG (Final; si aún no está, Late, documentándolo). Hecho = weather.json válido y una nota en Engram con el resultado (¿llovió antes del 3-oct?)."
+    },
+    {
+      "id": "DT-07",
+      "title": "Óptico: escena Sentinel-2 con humo durante el incendio + escena posterior",
+      "state": "proposed",
+      "group": "DT",
+      "deps": ["BS-03", "BS-06"],
+      "at": "2026-11-14T12:56:38Z",
+      "by": "claude-david",
+      "desc": "L2. Buscar primero si existe una escena Sentinel-2 L2A sobre Plaskett con humo visible (fin de agosto o principios de septiembre) y una posterior despejada; si no la hay, avisar antes de seguir (la historia cambia). Exportar las capas optical_during y optical_after con su fecha y source. Hecho = validate.py pasa."
+    },
+    {
+      "id": "EV-05",
+      "title": "API: transecto POST /api/inspect/profile",
+      "state": "proposed",
+      "group": "EV",
+      "deps": ["EV-01"],
+      "at": "2026-11-14T12:56:38Z",
+      "by": "claude-david",
+      "desc": "L3. Muestreo a lo largo de una polilínea cada spacing_m sobre los COG (HH/HV antes y después, índice, dentro/fuera del perímetro, elevación), con los cruces del perímetro y un límite de muestras. Tests con fixtures validados contra profile.schema.json."
+    },
+    {
+      "id": "AP-05",
+      "title": "Capas de contexto en la web: óptico, relieve y lluvia",
+      "state": "proposed",
+      "group": "AP",
+      "deps": ["BS-07", "AP-02"],
+      "at": "2026-11-14T12:56:38Z",
+      "by": "claude-david",
+      "desc": "L4. Grupos 'Optical context' y 'Terrain' en el panel de capas con su fuente visible, comparador óptico frente a radar y un pequeño gráfico de lluvia (weather.json) con las fechas t1/t2 marcadas. Se desarrolla con fixtures."
+    },
+    {
+      "id": "AP-06",
+      "title": "Herramienta de transecto: dibujar una línea y ver HH/HV a lo largo de ella",
+      "state": "proposed",
+      "group": "AP",
+      "deps": ["BS-07", "AP-02"],
+      "at": "2026-11-14T12:56:38Z",
+      "by": "claude-david",
+      "desc": "L4. Herramienta para dibujar una polilínea en el mapa → gráfico (Recharts) de HH/HV antes y después y del índice frente a la distancia, con los cruces del perímetro marcados y huecos en los píxeles inválidos; al pasar el ratón por el gráfico se marca el punto en el mapa. Se desarrolla con MSW (inspect-grid). Hecho = el ejemplo de profile-example.json se ve claro: HV cae al entrar en el perímetro."
+    },
+    {
+      "id": "AP-07",
+      "title": "Modo historia guiada (5 pasos con el mapa animado)",
+      "state": "proposed",
+      "group": "AP",
+      "deps": ["BS-07"],
+      "at": "2026-11-14T12:56:38Z",
+      "by": "claude-david",
+      "desc": "L5. Reproductor de story.json: tarjeta de texto, anterior/siguiente, reproducción automática y salir a exploración libre en cualquier paso, conservando el estado. Cada paso se aplica con applyStoryStep (cámara, capas, swipe animado, foco, panel). Hecho = los 5 pasos del fixture se reproducen solos en unos 2 minutos. El texto final se ajusta con datos reales en IN-03."
+    },
+    {
+      "id": "AP-08",
+      "title": "Anotaciones del analista + informe exportable",
+      "state": "proposed",
+      "group": "AP",
+      "deps": ["BS-07"],
+      "at": "2026-11-14T12:56:38Z",
+      "by": "claude-david",
+      "desc": "L5. Sobre una zona, un punto o un transecto: veredicto (Consistent with fire effects / Doubtful / Likely not fire-related / Needs field check) + nota, con una instantánea automática de la evidencia. Persistencia local, exportación GeoJSON (annotations.schema.json) e importación, e informe Markdown/PDF con mapa, tabla de anotaciones, método, fuentes y aviso MOCK si aplica. Hecho = exportar → importar devuelve lo mismo."
+    },
+    {
+      "id": "IN-03",
+      "title": "Contexto y historia con datos reales",
+      "state": "proposed",
+      "group": "IN",
+      "deps": ["DT-05", "DT-06", "DT-07", "AP-05", "AP-07", "IN-01"],
+      "at": "2026-11-14T12:56:38Z",
+      "by": "claude-david",
+      "desc": "Capas ópticas, relieve y lluvia reales en la web; reescribir los textos y las cámaras de story.json con lo que muestran los datos reales (sin cifras que no salgan del cálculo). Hecho = la historia se reproduce entera sin datos mock."
     }
   ]
 }
