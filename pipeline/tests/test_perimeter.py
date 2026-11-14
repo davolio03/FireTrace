@@ -18,7 +18,9 @@ from rasterio.crs import CRS
 from rasterio.warp import transform as warp_transform
 from shapely.geometry import Point, Polygon, box, shape
 
+from pipeline import perimeter
 from pipeline.perimeter import PerimeterError, load_config, main, run_perimeter
+from pipeline.sar import SarError
 
 UTM10N = CRS.from_epsg(32610)
 WGS84 = CRS.from_epsg(4326)
@@ -256,3 +258,51 @@ def test_cli_reports_errors_with_exit_code(
 ) -> None:
     assert main(["--config", str(tmp_path / "missing.toml")]) == 2
     assert "perimeter error" in capsys.readouterr().err
+
+
+# --------------------------------------------------------------- review regressions
+
+
+@pytest.mark.parametrize(
+    ("edge_x", "inside_band"), [(504.99, 1), (505.01, 0)], ids=["49.99m", "50.01m"]
+)
+def test_edge_band_threshold_is_exact(tmp_path: Path, edge_x: float, inside_band: int) -> None:
+    # Left edge at X0 + edge_x; the centre of column 45 is at X0 + 455 (distance edge_x - 455).
+    run(tmp_path, [box(X0 + edge_x, Y0 - 1100, X0 + 1100, Y0 - 700)], edge_distance_m=50.0)
+    band = read_mask(tmp_path / "out" / "perimeter_edge.tif")
+    assert band[90, 45] == inside_band  # row 90: centre y = Y0 - 905, mid-edge
+
+
+def test_edge_band_includes_hole_boundaries(tmp_path: Path) -> None:
+    outer = Polygon(
+        box(X0 + 100, Y0 - 1500, X0 + 1900, Y0 - 100).exterior.coords,
+        [box(X0 + 700, Y0 - 1000, X0 + 1300, Y0 - 600).exterior.coords],
+    )
+    run(tmp_path, [outer], edge_distance_m=50.0)
+    band = read_mask(tmp_path / "out" / "perimeter_edge.tif")
+    assert band[80, 72] == 1, "centre 25 m inside the hole edge"
+    assert band[80, 100] == 0, "centre of the hole, 200 m from any boundary"
+    assert band[80, 66] == 1, "centre 35 m outside the hole, inside the polygon"
+
+
+@pytest.mark.parametrize("value", [DATETIME_MS + 999, DATETIME_MS + 0.5], ids=["ms", "fraction"])
+def test_non_whole_second_datetime_is_rejected(tmp_path: Path, value: float) -> None:
+    with pytest.raises(PerimeterError, match="PolygonDateTime"):
+        run(tmp_path, poly_PolygonDateTime=value)
+
+
+def test_failed_publication_keeps_the_previous_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = load_config(write_case(tmp_path), base_dir=tmp_path)
+    run_perimeter(config)
+    before = {p.name: p.read_bytes() for p in sorted((tmp_path / "out").iterdir())}
+
+    def boom(*_args: Any) -> None:
+        raise SarError("injected publish failure")
+
+    monkeypatch.setattr(perimeter, "publish", boom)
+    with pytest.raises(PerimeterError, match="injected"):
+        run_perimeter(config)
+    assert {p.name: p.read_bytes() for p in sorted((tmp_path / "out").iterdir())} == before
+    assert sorted(p.name for p in tmp_path.iterdir() if p.name.startswith(".")) == []

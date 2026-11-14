@@ -35,10 +35,11 @@ from typing import Any
 
 import geopandas as gpd
 import numpy as np
+import shapely
 from affine import Affine
 from pyogrio.errors import DataLayerError, DataSourceError
 from rasterio.features import rasterize
-from shapely.geometry import MultiPolygon, Polygon, mapping, shape
+from shapely.geometry import LineString, MultiPolygon, Polygon, mapping, shape
 from shapely.geometry.base import BaseGeometry
 from shapely.validation import explain_validity, make_valid
 
@@ -137,9 +138,19 @@ def load_config(path: Path, base_dir: Path | None = None) -> PerimeterConfig:
 
 
 def epoch_ms_to_iso(value: Any) -> str:
-    if not isinstance(value, int | float) or isinstance(value, bool):
-        raise PerimeterError(f"PolygonDateTime must be epoch milliseconds, got {value!r}")
-    moment = datetime.fromtimestamp(value / 1000, tz=UTC)
+    """Whole-second UTC ISO string; fractional seconds are rejected, never truncated."""
+    if (
+        not isinstance(value, int | float)
+        or isinstance(value, bool)
+        or not math.isfinite(value)
+        or value != int(value)
+    ):
+        raise PerimeterError(f"PolygonDateTime must be integer epoch milliseconds, got {value!r}")
+    if int(value) % 1000:
+        raise PerimeterError(
+            f"PolygonDateTime {int(value)} ms has fractional seconds; pin the exact instant"
+        )
+    moment = datetime.fromtimestamp(int(value) // 1000, tz=UTC)
     return moment.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
@@ -272,6 +283,42 @@ def rasterize_centres(geometry: BaseGeometry, transform: Affine, width: int, hei
     )
 
 
+def boundary_segments(geometry: BaseGeometry) -> list[LineString]:
+    """Every exterior and hole segment of a (Multi)Polygon."""
+    polygons = list(geometry.geoms) if isinstance(geometry, MultiPolygon) else [geometry]
+    rings = [r for p in polygons for r in (p.exterior, *p.interiors)]
+    return [
+        LineString([a, b])
+        for ring in rings
+        for a, b in zip(ring.coords[:-1], ring.coords[1:], strict=True)
+        if a != b
+    ]
+
+
+def edge_band(
+    geometry: BaseGeometry, distance_m: float, transform: Affine, width: int, height: int
+) -> np.ndarray:
+    """uint8 mask, 1 where the exact centre-to-boundary distance is <= ``distance_m``.
+
+    A slightly wider buffer only selects candidates; the decision uses the exact Euclidean
+    distance from each pixel centre to the nearest exterior or hole segment.
+    """
+    candidates = rasterize_centres(
+        geometry.boundary.buffer(distance_m + ANALYSIS_PIXEL_SIZE_M), transform, width, height
+    )
+    rows, cols = np.nonzero(candidates)
+    band = np.zeros((height, width), dtype=np.uint8)
+    if rows.size == 0:
+        return band
+    xs, ys = transform * (cols + 0.5, rows + 0.5)
+    tree = shapely.STRtree(boundary_segments(geometry))
+    _, distances = tree.query_nearest(
+        shapely.points(np.asarray(xs), np.asarray(ys)), return_distance=True, all_matches=False
+    )
+    band[rows, cols] = (distances <= distance_m).astype(np.uint8)
+    return band
+
+
 def _count_rings(geometry: BaseGeometry) -> tuple[int, int, int]:
     polygons = list(geometry.geoms) if isinstance(geometry, MultiPolygon) else [geometry]
     holes = sum(len(p.interiors) for p in polygons)
@@ -314,8 +361,7 @@ def run_perimeter(config: PerimeterConfig) -> dict[str, Any]:
     inside = int(mask.sum())
     if inside == 0:
         raise PerimeterError("the perimeter covers no pixel centre of the DT-01 crop")
-    band_geom = geom_utm.boundary.buffer(config.edge_distance_m, quad_segs=32)
-    edge = rasterize_centres(band_geom, transform, width, height)
+    edge = edge_band(geom_utm, config.edge_distance_m, transform, width, height)
     polygons, holes, vertices = _count_rings(ref.geometry_4326)
     gis_acres = ref.properties.get("poly_GISAcres")
 
@@ -369,7 +415,10 @@ def run_perimeter(config: PerimeterConfig) -> dict[str, Any]:
                 "rule": "pixel_centre",
                 "all_touched": False,
                 "edge_distance_m": config.edge_distance_m,
-                "edge_rule": "pixel centre within edge_distance_m of the boundary",
+                "edge_rule": (
+                    "exact distance from pixel centre to nearest exterior or hole segment "
+                    "<= edge_distance_m"
+                ),
             },
             "grid": {
                 "crs": ANALYSIS_CRS.to_string(),
