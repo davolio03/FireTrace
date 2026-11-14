@@ -10,14 +10,14 @@ NASA GPM IMERG **Late Run** daily, version V07 (`GPM_3IMERGDL`), from NASA GES D
 
 ## Acquisition (decision H1)
 
-- `uv run python -m pipeline.weather fetch --token-file <file>` (or `EARTHDATA_TOKEN`) queries the public CMR API, downloads each daily granule once with the user's own Earthdata token, and writes `data/raw/imerg/imerg_manifest.json` (date, file, URL, sha256). The token is never written anywhere. The Earthdata account must have approved the "NASA GESDISC DATA ARCHIVE" application (EULA); otherwise downloads return HTTP 403.
+- `uv run python -m pipeline.weather fetch --token-file <file>` (or `EARTHDATA_TOKEN`) queries the public CMR API, downloads each daily granule once with the user's own Earthdata token, and atomically writes `data/raw/imerg/imerg_manifest.json` (date, file, URL, sha256). The token is never written anywhere, and it is only sent over HTTPS to `*.earthdata.nasa.gov` hosts: redirects to other hosts are followed without it, and any redirect to plain HTTP is refused. Only the agreed version (V07C) is accepted; two granules for one day, a day with only other versions, or a manifest of another version stop the run. The Earthdata account must have approved the "NASA GESDISC DATA ARCHIVE" application (EULA); otherwise downloads return HTTP 403.
 - `uv run python -m pipeline.weather build` verifies every granule against the manifest and makes **no network call**. The demo never downloads or authenticates.
 
 Granules are global daily files (~30 MB each, ~1.5 GB in total) in `data/raw/`, which is gitignored.
 
 ## Spatial mean (decision I1)
 
-The AOI is the DT-01 crop bbox in EPSG:4326. Each 0.1° IMERG cell that overlaps it gets a weight equal to its overlapping area on the sphere: Δλ × (sin φ₂ − sin φ₁). Weights are normalised to sum to 1. The AOI spans only about six cells, so the series is a coarse regional estimate. A day is `null` if any weighted cell is missing or negative (fill), which is conservative. `weather_meta.json` lists the cells and weights.
+The AOI is the DT-01 crop bbox in EPSG:4326. Each 0.1° IMERG cell that overlaps it gets a weight equal to its overlapping area on the sphere: Δλ × (sin φ₂ − sin φ₁). Overlaps narrower than 1e-9° (floating-point artefacts at a shared edge) are ignored, and weights are normalised to sum to 1. The AOI spans only about six cells, so the series is a coarse regional estimate. A day is `null` if any weighted cell is missing or negative (fill), which is conservative. `weather_meta.json` lists the cells and weights.
 
 ## Dates (decision J1)
 
@@ -25,7 +25,7 @@ IMERG days are UTC days. The before scene was acquired on 2026-08-16 at 02:56 UT
 
 - `daily` lists every UTC day from the t1 date to the t2 date (49 days). The first day's rain fell almost entirely after t1.
 - `total`, `rain_days_over_1mm` (> 1 mm) and `last_rain_before_t2` use only days **before** the t2 date, because the t2 day's rain fell almost entirely after the after scene.
-- `null` days are excluded from the summary and listed in `weather_meta.json`. Daily values are rounded to 0.0001 mm before summarising.
+- `null` days are excluded from the summary and listed in `weather_meta.json`. Serialized values are rounded to 0.0001 mm; the total and the strict `> 1 mm` test use the unrounded means.
 
 ## Limitations
 

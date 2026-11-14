@@ -30,6 +30,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import shutil
 import sys
 import urllib.error
@@ -49,6 +50,11 @@ WEATHER_FORMAT_VERSION = 1
 MANIFEST_VERSION = 1
 CONTRACT_VERSION = "1.2.0"
 SHORT_NAME = "GPM_3IMERGDL"
+COLLECTION_VERSION = "07"
+VERSION = "V07C"  # agreed granule version (decision G1)
+# The bearer token is only ever sent over HTTPS to NASA Earthdata hosts.
+TOKEN_HOST_SUFFIX = ".earthdata.nasa.gov"
+OVERLAP_EPS_DEG = 1e-9  # overlaps below this are floating-point artefacts, not cells
 CMR_GRANULES_URL = "https://cmr.earthdata.nasa.gov/search/granules.json"
 SOURCE_URL = "https://disc.gsfc.nasa.gov/datasets/GPM_3IMERGDL_07/summary"
 RAIN_DAY_THRESHOLD_MM = 1.0
@@ -106,11 +112,11 @@ def cell_weights(
     raw: dict[tuple[int, int], float] = {}
     for i, x in enumerate(lon):
         dx = min(x + hx, east) - max(x - hx, west)
-        if dx <= 0:
+        if dx <= OVERLAP_EPS_DEG:
             continue
         for j, y in enumerate(lat):
             lo, hi = max(y - hy, south), min(y + hy, north)
-            if hi <= lo:
+            if hi - lo <= OVERLAP_EPS_DEG:
                 continue
             raw[(i, j)] = math.radians(dx) * (
                 math.sin(math.radians(hi)) - math.sin(math.radians(lo))
@@ -122,12 +128,11 @@ def cell_weights(
 
 
 def aoi_mean(values: np.ndarray, weights: Mapping[tuple[int, int], float]) -> float | None:
-    """Weighted mean, or None if any weighted cell is missing (conservative)."""
+    """Unrounded weighted mean, or None if any weighted cell is missing (conservative)."""
     cells = [values[i, j] for i, j in weights]
     if not all(np.isfinite(c) for c in cells):
         return None
-    mean = sum(w * values[i, j] for (i, j), w in weights.items())
-    return round(float(mean), DECIMALS)
+    return float(sum(w * values[i, j] for (i, j), w in weights.items()))
 
 
 # --------------------------------------------------------------------------- manifests
@@ -175,6 +180,10 @@ def load_granules(raw_dir: Path) -> tuple[dict[str, Any], dict[date, Path]]:
         raise WeatherError("imerg_manifest.json: unsupported version")
     if manifest.get("short_name") != SHORT_NAME:
         raise WeatherError(f"imerg_manifest.json: expected {SHORT_NAME} granules")
+    if manifest.get("version") != VERSION:
+        raise WeatherError(
+            f"imerg_manifest.json: version {manifest.get('version')!r}, expected {VERSION}"
+        )
     files: dict[date, Path] = {}
     for g in manifest.get("granules", []):
         try:
@@ -182,6 +191,8 @@ def load_granules(raw_dir: Path) -> tuple[dict[str, Any], dict[date, Path]]:
         except (KeyError, TypeError) as exc:
             raise WeatherError(f"imerg_manifest.json: malformed granule {g!r}") from exc
         path = raw_dir / Path(name).name
+        if granule_version(path.name) != VERSION:
+            raise WeatherError(f"{path.name}: not an IMERG {VERSION} granule")
         if not path.is_file():
             raise WeatherError(f"granule not found: {path.name}")
         if _sha256(path) != sha:
@@ -223,6 +234,7 @@ def run_build(raw_dir: Path, ingest_dir: Path, output_dir: Path) -> dict[str, An
     weights: dict[tuple[int, int], float] | None = None
     grid_ref: tuple[np.ndarray, np.ndarray] | None = None
     daily: list[dict[str, Any]] = []
+    means: list[tuple[date, float | None]] = []
     missing: list[str] = []
     for day in days:
         value: float | None = None
@@ -236,12 +248,16 @@ def run_build(raw_dir: Path, ingest_dir: Path, output_dir: Path) -> dict[str, An
             value = aoi_mean(precip, weights)
         if value is None:
             missing.append(day.isoformat())
-        daily.append({"date": day.isoformat(), "value": value})
+        means.append((day, value))
+        daily.append(
+            {"date": day.isoformat(), "value": None if value is None else round(value, DECIMALS)}
+        )
     if weights is None or grid_ref is None:
         raise WeatherError("no IMERG granule covers the period")
 
-    summary = [d for d in daily if d["value"] is not None and date.fromisoformat(d["date"]) < t2]
-    rainy = [d["date"] for d in summary if d["value"] > RAIN_DAY_THRESHOLD_MM]
+    # Thresholds and totals use the unrounded means; only serialized values are rounded.
+    summary = [(d, v) for d, v in means if v is not None and d < t2]
+    rainy = [d.isoformat() for d, v in summary if v > RAIN_DAY_THRESHOLD_MM]
     version = str(manifest.get("version", "unknown"))
     document: dict[str, Any] = {
         "contract_version": CONTRACT_VERSION,
@@ -256,7 +272,7 @@ def run_build(raw_dir: Path, ingest_dir: Path, output_dir: Path) -> dict[str, An
         },
         "period": {"start": t1.isoformat(), "end": t2.isoformat()},
         "daily": daily,
-        "total": round(sum(d["value"] for d in summary), DECIMALS),
+        "total": round(sum(v for _, v in summary), DECIMALS),
         "rain_days_over_1mm": len(rainy),
         "last_rain_before_t2": rainy[-1] if rainy else None,
         "notes": (
@@ -285,7 +301,8 @@ def run_build(raw_dir: Path, ingest_dir: Path, output_dir: Path) -> dict[str, An
             "a day is null if any weighted cell is missing",
             "summary_days": f"UTC days before {t2.isoformat()} (t2 acquisition day excluded)",
             "rain_day": f"value > {RAIN_DAY_THRESHOLD_MM} mm",
-            "rounding": f"daily values rounded to {DECIMALS} decimals before summarising",
+            "rounding": f"serialized values rounded to {DECIMALS} decimals; totals and the "
+            "> 1 mm test use unrounded means",
         },
         "missing_days": missing,
     }
@@ -312,9 +329,20 @@ def run_build(raw_dir: Path, ingest_dir: Path, output_dir: Path) -> dict[str, An
 # --------------------------------------------------------------------------- fetch
 
 
+def granule_version(filename: str) -> str | None:
+    """IMERG granule version from its file name, e.g. 'V07C'."""
+    match = re.search(r"\.(V\d+[A-Z]?)\.nc4$", filename)
+    return match.group(1) if match else None
+
+
 def parse_cmr_granules(cmr: Mapping[str, Any]) -> list[dict[str, str]]:
-    """HTTPS .nc4 granule links from a CMR granules.json response, one per day, by date."""
+    """One HTTPS .nc4 granule of the agreed version per day, sorted by date.
+
+    Fails on two granules of that version for one day, or on a day that only has other
+    versions, instead of silently picking one.
+    """
     granules: dict[str, dict[str, str]] = {}
+    other_versions: dict[str, set[str]] = {}
     for entry in cmr.get("feed", {}).get("entry", []):
         links = [
             link.get("href", "")
@@ -325,11 +353,19 @@ def parse_cmr_granules(cmr: Mapping[str, Any]) -> list[dict[str, str]]:
             continue
         day = str(entry.get("time_start", ""))[:10]
         url = links[0]
-        granules[day] = {
-            "date": day,
-            "url": url,
-            "file": urllib.parse.urlparse(url).path.split("/")[-1],
-        }
+        name = urllib.parse.urlparse(url).path.split("/")[-1]
+        version = granule_version(name)
+        if version != VERSION:
+            other_versions.setdefault(day, set()).add(str(version))
+            continue
+        if day in granules:
+            raise WeatherError(f"CMR lists two {VERSION} granules for {day}; refusing to guess")
+        granules[day] = {"date": day, "url": url, "file": name}
+    only_other = sorted(set(other_versions) - set(granules))
+    if only_other:
+        raise WeatherError(
+            f"no {VERSION} granule for {only_other} (found {sorted(other_versions[only_other[0]])})"
+        )
     return [granules[d] for d in sorted(granules)]
 
 
@@ -338,6 +374,7 @@ def query_cmr(start: date, end: date) -> list[dict[str, str]]:
     params = urllib.parse.urlencode(
         {
             "short_name": SHORT_NAME,
+            "version": COLLECTION_VERSION,
             "temporal": f"{start.isoformat()}T00:00:00Z,{end.isoformat()}T23:59:59Z",
             "page_size": 200,
             "sort_key": "start_date",
@@ -350,18 +387,44 @@ def query_cmr(start: date, end: date) -> list[dict[str, str]]:
         raise WeatherError(f"CMR search failed: {exc}") from exc
 
 
+def token_allowed(url: str) -> bool:
+    """True only for HTTPS URLs on NASA Earthdata hosts."""
+    parts = urllib.parse.urlsplit(url)
+    host = (parts.hostname or "").lower()
+    return parts.scheme == "https" and host.endswith(TOKEN_HOST_SUFFIX)
+
+
+class TokenRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Follows HTTPS redirects, sending the bearer token only to Earthdata hosts.
+
+    The token is attached as an unredirected header, so urllib never copies it; each hop
+    re-adds it only when ``token_allowed``. Any redirect to a non-HTTPS URL is refused.
+    """
+
+    def __init__(self, token: str) -> None:
+        super().__init__()
+        self._token = token
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
+        if urllib.parse.urlsplit(newurl).scheme != "https":
+            raise WeatherError("refusing a redirect to a non-HTTPS URL during download")
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is not None:
+            new.remove_header("Authorization")
+            if token_allowed(newurl):
+                new.add_unredirected_header("Authorization", f"Bearer {self._token}")
+        return new
+
+
 def download_with_token(url: str, token: str) -> bytes:
-    """GET ``url`` with an Earthdata bearer token, kept across the login redirects."""
-
-    class KeepAuth(urllib.request.HTTPRedirectHandler):
-        def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
-            new = super().redirect_request(req, fp, code, msg, headers, newurl)
-            if new is not None:
-                new.add_unredirected_header("Authorization", f"Bearer {token}")
-            return new
-
-    opener = urllib.request.build_opener(KeepAuth, urllib.request.HTTPCookieProcessor())
-    request = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
+    """GET ``url`` with an Earthdata bearer token across the Earthdata login redirects."""
+    if not token_allowed(url):
+        raise WeatherError("downloads must start from an HTTPS NASA Earthdata URL")
+    opener = urllib.request.build_opener(
+        TokenRedirectHandler(token), urllib.request.HTTPCookieProcessor()
+    )
+    request = urllib.request.Request(url)
+    request.add_unredirected_header("Authorization", f"Bearer {token}")
     try:
         with opener.open(request, timeout=300) as response:
             return response.read()
@@ -405,14 +468,25 @@ def fetch(
             tmp.replace(path)
             sha = _sha256(path)
         records.append({"date": g["date"], "file": path.name, "url": g["url"], "sha256": sha})
-    versions = {r["file"].rsplit(".", 2)[-2] for r in records if r["file"].count(".") >= 2}
+    bad = sorted(r["file"] for r in records if granule_version(r["file"]) != VERSION)
+    if bad:
+        raise WeatherError(f"granules not in the agreed version {VERSION}: {bad}")
     manifest = {
         "imerg_manifest_version": MANIFEST_VERSION,
         "short_name": SHORT_NAME,
-        "version": sorted(versions)[0] if len(versions) == 1 else "mixed",
+        "version": VERSION,
         "granules": records,
     }
-    _write_json(old, manifest)
+    # Atomic replacement: an interrupted write never truncates the previous manifest.
+    tmp = old.with_name(old.name + ".tmp")
+    try:
+        _write_json(tmp, manifest)
+        os.replace(tmp, old)
+    except OSError as exc:
+        raise WeatherError(f"cannot write imerg_manifest.json: {exc.strerror}") from None
+    finally:
+        if tmp.exists():
+            tmp.unlink()
     return manifest
 
 

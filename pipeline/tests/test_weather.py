@@ -300,3 +300,92 @@ def test_float32_longitudes_like_real_imerg_are_accepted(tmp_path: Path) -> None
     lon, lat, precip = read_daily_grid(write_day(tmp_path / "d.nc4", values, np.float32))
     assert np.array_equal(lon, LON)
     assert sum(cell_weights(lon, lat, AOI).values()) == pytest.approx(1.0)
+
+
+# --------------------------------------------------------------- review regressions
+
+
+def _redirect(target: str) -> urllib.request.Request | None:
+    handler = weather.TokenRedirectHandler("TOKEN")
+    req = urllib.request.Request("https://data.gesdisc.earthdata.nasa.gov/data/x.nc4")
+    req.add_unredirected_header("Authorization", "Bearer TOKEN")
+    return handler.redirect_request(req, None, 302, "Found", {}, target)
+
+
+def _auth(req: urllib.request.Request | None) -> str | None:
+    assert req is not None
+    return req.get_header("Authorization") or req.unredirected_hdrs.get("Authorization")
+
+
+def test_token_follows_only_earthdata_https_redirects() -> None:
+    assert _auth(_redirect("https://urs.earthdata.nasa.gov/oauth/authorize?x=1")) == "Bearer TOKEN"
+    assert _auth(_redirect("https://evil.example/collect")) is None
+    assert _auth(_redirect("https://earthdata.nasa.gov.evil.example/x")) is None
+    with pytest.raises(WeatherError, match="non-HTTPS"):
+        _redirect("http://data.gesdisc.earthdata.nasa.gov/data/x.nc4")
+
+
+def test_download_refuses_untrusted_start_url() -> None:
+    for url in ("https://evil.example/x.nc4", "http://data.gesdisc.earthdata.nasa.gov/x.nc4"):
+        with pytest.raises(WeatherError, match="Earthdata URL"):
+            weather.download_with_token(url, "TOKEN")
+
+
+def test_boundary_touching_cells_get_no_weight_on_a_global_grid() -> None:
+    lon = np.round(np.arange(-179.95, 180.0, 0.1), 4)
+    lat = np.round(np.arange(-89.95, 90.0, 0.1), 4)
+    weights = cell_weights(lon, lat, AOI)
+    assert len(weights) == 4
+    values = np.full((lon.size, lat.size), 2.0)
+    i_out = int(np.argmin(abs(lon - (-121.55))))  # touches the AOI's west edge only
+    values[i_out, :] = np.nan
+    assert weather.aoi_mean(values, weights) == pytest.approx(2.0)
+
+
+def test_cmr_duplicates_and_other_versions_are_rejected() -> None:
+    dup = {"feed": {"entry": [CMR_SAMPLE["feed"]["entry"][1]] * 2}}
+    with pytest.raises(WeatherError, match="two V07C"):
+        parse_cmr_granules(dup)
+    other = json.loads(json.dumps(CMR_SAMPLE).replace("V07C", "V07D"))
+    with pytest.raises(WeatherError, match="no V07C"):
+        parse_cmr_granules(other)
+
+
+def test_build_rejects_a_manifest_of_another_version(tmp_path: Path) -> None:
+    raw = write_raw(tmp_path / "raw", {d: grid(0.0) for d in DAYS})
+    manifest = json.loads((raw / "imerg_manifest.json").read_text(encoding="utf-8"))
+    manifest["version"] = "mixed"
+    (raw / "imerg_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(WeatherError, match="version"):
+        run_build(raw, write_ingest(tmp_path / "nisar"), tmp_path / "out")
+
+
+def test_failed_manifest_write_keeps_the_previous_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fake_download(url: str, bearer: str) -> bytes:
+        return url.encode()
+
+    granules = parse_cmr_granules(CMR_SAMPLE)
+    fetch(granules, tmp_path / "raw", "T", download=fake_download)
+    before = (tmp_path / "raw" / "imerg_manifest.json").read_bytes()
+
+    def broken_replace(*_args: Any) -> None:
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(weather.os, "replace", broken_replace)
+    with pytest.raises(WeatherError, match="imerg_manifest.json"):
+        fetch(granules, tmp_path / "raw", "T", download=fake_download)
+    assert (tmp_path / "raw" / "imerg_manifest.json").read_bytes() == before
+    assert not (tmp_path / "raw" / "imerg_manifest.json.tmp").exists()
+
+
+def test_threshold_uses_unrounded_means(tmp_path: Path) -> None:
+    daily = {d: grid(0.0) for d in DAYS}
+    daily["2026-08-17"] = grid(1.0001)  # serialized as 1.0001; strictly > 1 mm
+    daily["2026-08-18"] = grid(1.00004)  # serialized as 1.0, but still > 1 mm
+    doc = build(tmp_path, daily)
+    values = {d["date"]: d["value"] for d in doc["daily"]}
+    assert values["2026-08-18"] == 1.0
+    assert doc["rain_days_over_1mm"] == 2
+    assert doc["last_rain_before_t2"] == "2026-08-18"
