@@ -38,6 +38,8 @@ Canonical upstream commands (Python is wired; the others need their scaffold/dep
 | Web (run within `web/`) | `npm install`; `npm run lint`; `npm run test`; `npm run build`; add the selected prettier check to lint |
 | Real pipeline output | `uv run contracts/tools/validate.py data/processed/web` |
 
+The first implemented pipeline stage is the DT-01 NISAR ingest/crop: `uv run python -m pipeline.ingest --config pipeline/configs/ingest_plaskett.toml`. It reads the four local GCOV GeoTIFFs from `data/raw/nisar/` (relative paths resolve against the working directory) and writes float32 crops plus `ingest.json` to `data/interim/nisar/`. It needs the gitignored raw inputs and is not run in CI; its tests use synthetic rasters only.
+
 `uv run python -m pipeline.run --all`, `uv run uvicorn api.main:app --reload` and `npm run dev` within `web/` are planned upstream processing/start targets, **not working commands in this checkout**. Do not run or document them as implemented until their scaffold task supplies evidence.
 
 Cover deterministic numerical rules and realistic failure paths with small synthetic rasters. Application integration must verify actual lookup/display alignment, no-data, coverage arithmetic, provenance and mock-to-real switching. Real science requires separate reproducible sample evidence and an agreed method/domain; schema-valid mocks are not that evidence.
