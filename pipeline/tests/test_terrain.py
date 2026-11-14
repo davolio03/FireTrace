@@ -10,6 +10,7 @@ import json
 import math
 from pathlib import Path
 
+import jsonschema
 import numpy as np
 import pytest
 import rasterio
@@ -649,7 +650,6 @@ def test_unreadable_hdf_is_a_terrain_error(tmp_path: Path):
 
 
 def test_fragment_validates_against_the_layers_schema(case):
-    jsonschema = pytest.importorskip("jsonschema")
     run_terrain(load_config(case["config"]))
     root = Path(__file__).resolve().parents[2]
     schema = json.loads((root / "contracts/schemas/layers.schema.json").read_text("utf-8"))
