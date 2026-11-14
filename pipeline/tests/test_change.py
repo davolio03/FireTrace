@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -50,7 +51,7 @@ def test_change_keeps_sign_and_masks_invalid_pixels() -> None:
     t2 = np.array([[-19.0, -10.0, -10.0]], dtype=np.float32)
     mask = np.array([[1, 1, 0]], dtype=np.uint8)
     d = change_db(t1, t2, mask)
-    assert d.dtype == np.float32
+    assert d.dtype == np.float64, "kept in float64 until storage"
     assert d[0, 0] == -6.0, "a decrease must stay negative"
     assert d[0, 1] == 3.0
     assert math.isnan(d[0, 2]), "mask = 0 must give NaN"
@@ -251,3 +252,73 @@ def test_malformed_manifest_reported_by_cli(
     assert main(["--sar-dir", str(sar), "--output-dir", str(out)]) == 2
     assert "change error" in capsys.readouterr().err
     assert not out.exists()
+
+
+# --------------------------------------------------------------- review regressions
+
+
+def test_float32_rounding_does_not_create_a_false_zero_mad() -> None:
+    t1 = np.full(5, -100.0, dtype=np.float32)
+    t2 = (np.array([1, 2, 3, 4, 5]) * 1e-6).astype(np.float32)  # distinct in float32
+    # In float32, 100.000001 ... 100.000005 collapse to tied values and the MAD would be 0.
+    assert np.unique((t2 - t1).astype(np.float32)).size < 5
+    mask = np.ones(5, dtype=np.uint8)
+    d = change_db(t1, t2, mask)
+    s = combine(d, np.zeros(5))
+    assert robust_stats(s)[1] > 0
+
+
+def test_percentiles_use_linear_interpolation() -> None:
+    p = change.percentiles(np.array([np.nan, 0.0, 10.0, 20.0, 30.0, 40.0]))
+    assert (p["p25"], p["p50"], p["p5"], p["mean"]) == (10.0, 20.0, 2.0, 20.0)
+
+
+@pytest.mark.parametrize("bad", [np.nan, np.inf], ids=["nan", "inf"])
+def test_non_finite_input_under_mask_is_rejected(tmp_path: Path, bad: float) -> None:
+    db, mask = known_case()
+    db["t2_hv"][7, 7] = bad
+    with pytest.raises(ChangeError, match="non-finite"):
+        run_change(write_sar_dir(tmp_path / "sar", db, mask), tmp_path / "change")
+    assert not (tmp_path / "change").exists()
+
+
+def test_non_10m_grid_is_rejected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    coarse = Affine(20.0, 0.0, 636_000.0, 0.0, -20.0, 3_983_990.0)
+    monkeypatch.setattr(sys.modules[__name__], "TRANSFORM", coarse)
+    with pytest.raises(ChangeError, match="north-up 10 m"):
+        run_change(write_sar_dir(tmp_path / "sar", *known_case()), tmp_path / "change")
+    assert not (tmp_path / "change").exists()
+
+
+@pytest.mark.parametrize(
+    "target",
+    ["sar/t1_hh_db.tif", "sar/preview.png", "change/preview.png", "change/sub/preview.png"],
+    ids=["input_alias", "in_input_dir", "in_output_dir", "nested_in_output_dir"],
+)
+def test_quicklook_inside_protected_dirs_is_rejected(tmp_path: Path, target: str) -> None:
+    sar = write_sar_dir(tmp_path / "sar", *known_case())
+    before = {p.name: p.read_bytes() for p in sorted(sar.iterdir())}
+    with pytest.raises(ChangeError, match="quicklook"):
+        run_change(sar, tmp_path / "change", quicklook=tmp_path / target)
+    assert {p.name: p.read_bytes() for p in sorted(sar.iterdir())} == before
+    assert not (tmp_path / "change").exists()
+
+
+def test_quicklook_failure_keeps_the_previous_set(tmp_path: Path) -> None:
+    sar = write_sar_dir(tmp_path / "sar", *known_case())
+    run_change(sar, tmp_path / "change")
+    before = {p.name: p.read_bytes() for p in sorted((tmp_path / "change").iterdir())}
+    blocker = tmp_path / "evidence"
+    blocker.write_text("a file where a directory is expected", encoding="utf-8")
+    with pytest.raises(ChangeError, match="quicklook"):
+        run_change(sar, tmp_path / "change", quicklook=blocker / "q.png")
+    after = {p.name: p.read_bytes() for p in sorted((tmp_path / "change").iterdir())}
+    assert after == before
+
+
+def test_quicklook_is_deterministic_without_sidecar(tmp_path: Path) -> None:
+    sar = write_sar_dir(tmp_path / "sar", *known_case())
+    run_change(sar, tmp_path / "a", quicklook=tmp_path / "ev" / "a.png")
+    run_change(sar, tmp_path / "b", quicklook=tmp_path / "ev" / "b.png")
+    assert (tmp_path / "ev" / "a.png").read_bytes() == (tmp_path / "ev" / "b.png").read_bytes()
+    assert sorted(p.name for p in (tmp_path / "ev").iterdir()) == ["a.png", "b.png"]

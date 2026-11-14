@@ -23,8 +23,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import shutil
 import sys
+import warnings
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -32,11 +34,12 @@ from typing import Any
 import numpy as np
 import rasterio
 from affine import Affine
-from rasterio.crs import CRS
+from rasterio.errors import NotGeoreferencedWarning
 
 from pipeline.sar import (
     _RASTER_IO_ERRORS,
     ANALYSIS_CRS,
+    ANALYSIS_PIXEL_SIZE_M,
     SarError,
     _staging_dirs,
     publish,
@@ -93,11 +96,14 @@ class ChangeError(Exception):
 
 
 def change_db(t1_db: np.ndarray, t2_db: np.ndarray, mask: np.ndarray) -> np.ndarray:
-    """Signed float32 dB difference ``t2 - t1`` (float64 arithmetic); NaN where mask == 0."""
+    """Signed float64 dB difference ``t2 - t1``; NaN where mask == 0.
+
+    Kept in float64 through normalization; outputs are cast to float32 only for storage.
+    """
     out = np.full(t1_db.shape, np.nan, dtype=np.float64)
     valid = mask.astype(bool)
     out[valid] = t2_db[valid].astype(np.float64) - t1_db[valid].astype(np.float64)
-    return out.astype(np.float32)
+    return out
 
 
 def combine(change_hh: np.ndarray, change_hv: np.ndarray) -> np.ndarray:
@@ -114,8 +120,8 @@ def robust_stats(values: np.ndarray) -> tuple[float, float]:
     mad = float(np.median(np.abs(finite - median)))
     if not mad > 0:
         raise ChangeError(
-            f"MAD of the change magnitude is {mad}: the change is (almost) constant, so a "
-            "robust z-score is undefined; check the inputs"
+            f"MAD of the change magnitude is {mad}: at least half of the valid pixels share "
+            "the median change, so a robust z-score is undefined for this input"
         )
     return median, mad
 
@@ -126,6 +132,7 @@ def robust_z(values: np.ndarray, median: float, mad: float) -> np.ndarray:
 
 
 def percentiles(values: np.ndarray) -> dict[str, float]:
+    """Percentiles (NumPy default linear interpolation) and mean of the finite values."""
     finite = values[np.isfinite(values)].astype(np.float64)
     result = {f"p{p}": float(np.percentile(finite, p)) for p in PERCENTILES}
     result["mean"] = float(finite.mean())
@@ -209,6 +216,19 @@ def read_checked(path: Path, sha256: str, grid: Mapping[str, Any], dtype: str) -
         raise ChangeError(f"{path.name}: expected 1 {dtype} band, got {count} {actual_dtype}")
     if crs != ANALYSIS_CRS:
         raise ChangeError(f"{path.name}: CRS {crs} is not the analysis CRS EPSG:32610")
+    coeffs = tuple(float(v) for v in tuple(transform)[:6])
+    north_up_10m = (ANALYSIS_PIXEL_SIZE_M, 0.0, 0.0, -ANALYSIS_PIXEL_SIZE_M)
+    if (
+        not all(math.isfinite(v) for v in coeffs)
+        or (
+            coeffs[0],
+            coeffs[1],
+            coeffs[3],
+            coeffs[4],
+        )
+        != north_up_10m
+    ):
+        raise ChangeError(f"{path.name}: not the north-up 10 m analysis grid: {coeffs}")
     if [float(v) for v in tuple(transform)[:6]] != [float(v) for v in grid["transform"]]:
         raise ChangeError(f"{path.name}: transform differs from sar.json")
     if (height, width) != (grid["height"], grid["width"]):
@@ -231,7 +251,7 @@ def check_output_dir(output_dir: Path) -> None:
 # --------------------------------------------------------------------------- quicklook
 
 
-def write_quicklook(path: Path, index: np.ndarray, transform: Affine, crs: CRS) -> None:
+def write_quicklook(path: Path, index: np.ndarray) -> None:
     """RGBA PNG of the index (p2-p98 stretch, viridis, transparent NaN) for PR evidence only.
 
     It is not the web product (DT-04 renders EPSG:3857 PNGs with the agreed legend).
@@ -250,23 +270,35 @@ def write_quicklook(path: Path, index: np.ndarray, transform: Affine, crs: CRS) 
     rgba[3] = np.where(np.isfinite(index), 255, 0).astype(np.uint8)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        with rasterio.open(
-            path,
-            "w",
-            driver="PNG",
-            width=index.shape[1],
-            height=index.shape[0],
-            count=4,
-            dtype="uint8",
-            crs=crs,
-            transform=transform,
-        ) as out:
-            out.write(rgba)
+        # Deliberately ungeoreferenced: a plain picture, so GDAL writes no .aux.xml sidecar.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", NotGeoreferencedWarning)
+            with rasterio.open(
+                path,
+                "w",
+                driver="PNG",
+                width=index.shape[1],
+                height=index.shape[0],
+                count=4,
+                dtype="uint8",
+            ) as out:
+                out.write(rgba)
     except _RASTER_IO_ERRORS as exc:
         raise ChangeError(f"{path.name}: cannot write quicklook: {exc}") from exc
-    aux = path.with_name(path.name + ".aux.xml")
-    if aux.exists():  # GDAL sidecar with georeferencing; not needed for evidence
-        aux.unlink()
+
+
+def check_quicklook_path(quicklook: Path, sar_dir: Path, output_dir: Path) -> None:
+    """The preview must be a .png outside the input and product directories."""
+    target = quicklook.resolve()
+    if target.suffix.lower() != ".png":
+        raise ChangeError(f"quicklook must be a .png file, got {quicklook.name}")
+    staging, previous = _staging_dirs(output_dir)
+    for protected in (sar_dir, output_dir, staging, previous):
+        if target.is_relative_to(protected.resolve()):
+            raise ChangeError(
+                f"quicklook {quicklook.name} must be outside {protected.name}: it is review "
+                "evidence and must never overwrite inputs or products"
+            )
 
 
 # --------------------------------------------------------------------------- run
@@ -276,8 +308,8 @@ def run_change(sar_dir: Path, output_dir: Path, quicklook: Path | None = None) -
     """Compute the change products from ``sar_dir`` and return the ``change.json`` written."""
     if output_dir.resolve() == sar_dir.resolve():
         raise ChangeError("output_dir must differ from sar_dir")
-    if quicklook is not None and quicklook.resolve().parent == output_dir.resolve():
-        raise ChangeError("write the quicklook outside output_dir; it is evidence, not a product")
+    if quicklook is not None:
+        check_quicklook_path(quicklook, sar_dir, output_dir)
     check_output_dir(output_dir)
     sar = load_sar(sar_dir)
     grid = sar["grid"]
@@ -292,22 +324,31 @@ def run_change(sar_dir: Path, output_dir: Path, quicklook: Path | None = None) -
     if not np.isin(mask, (0, 1)).all():
         raise ChangeError(f"{sar['valid_mask']['file']}: values must be 0 or 1")
 
+    valid = mask.astype(bool)
+    for name, data in db.items():
+        bad = int((~np.isfinite(data[valid])).sum())
+        if bad:
+            raise ChangeError(
+                f"{layers[name]['file']}: {bad} non-finite value(s) where valid_mask = 1; "
+                "the DT-02 outputs are inconsistent"
+            )
     change_hh = change_db(db["t1_hh"], db["t2_hh"], mask)
     change_hv = change_db(db["t1_hv"], db["t2_hv"], mask)
     magnitude = combine(change_hh, change_hv)
     median, mad = robust_stats(magnitude)
-    index = robust_z(magnitude, median, mad).astype(np.float32)
+    # Normalise in float64; cast to float32 only for storage. Percentiles describe the stored
+    # values that consumers (API, web export) will read.
+    products = {
+        "change_hh_db.tif": change_hh.astype(np.float32),
+        "change_hv_db.tif": change_hv.astype(np.float32),
+        "change_index.tif": robust_z(magnitude, median, mad).astype(np.float32),
+    }
     transform = Affine(*grid["transform"])
 
     staging, _ = _staging_dirs(output_dir)
     try:
         if staging.exists():
             shutil.rmtree(staging)
-        products = {
-            "change_hh_db.tif": change_hh,
-            "change_hv_db.tif": change_hv,
-            "change_index.tif": index,
-        }
         for name, data in products.items():
             write_cog(staging / name, data, crs=ANALYSIS_CRS, transform=transform, nodata=np.nan)
         document = {
@@ -326,9 +367,7 @@ def run_change(sar_dir: Path, output_dir: Path, quicklook: Path | None = None) -
             "valid_pixels": int(mask.sum()),
             "total_pixels": int(mask.size),
             "percentiles": {
-                "change_hh_db": percentiles(change_hh),
-                "change_hv_db": percentiles(change_hv),
-                "change_index": percentiles(index),
+                name.removesuffix(".tif"): percentiles(data) for name, data in products.items()
             },
             "outputs": {
                 name.removesuffix(".tif"): {
@@ -345,6 +384,9 @@ def run_change(sar_dir: Path, output_dir: Path, quicklook: Path | None = None) -
         }
         text = json.dumps(document, indent=2, sort_keys=True, ensure_ascii=True, allow_nan=False)
         (staging / "change.json").write_text(text + "\n", encoding="utf-8", newline="\n")
+        if quicklook is not None:
+            # Rendered before publication: a failing preview never replaces the previous set.
+            write_quicklook(quicklook, products["change_index.tif"])
         publish(staging, output_dir)
     except SarError as exc:
         raise ChangeError(str(exc)) from exc
@@ -353,8 +395,6 @@ def run_change(sar_dir: Path, output_dir: Path, quicklook: Path | None = None) -
     finally:
         if staging.exists():
             shutil.rmtree(staging, ignore_errors=True)
-    if quicklook is not None:
-        write_quicklook(quicklook, index, transform, ANALYSIS_CRS)
     return document
 
 

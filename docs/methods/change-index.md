@@ -14,7 +14,7 @@ change_index = (S - median(S)) / (1.4826 * MAD(S))
 MAD(S)       = median(|S - median(S)|)
 ```
 
-Pixels with `valid_mask == 0` are NaN in all three outputs and never enter the median or MAD. Differences are computed in float64 and stored as float32 COGs on the unchanged 10 m EPSG:32610 crop grid.
+Pixels with `valid_mask == 0` are NaN in all three outputs and never enter the median or MAD. Differences, the median, the MAD and the index are computed in float64 and cast to float32 only for storage, on the unchanged 10 m EPSG:32610 crop grid. Input dB values must be finite wherever `valid_mask == 1`; otherwise the run fails, so all three outputs and the statistics share one valid domain.
 
 ## Decisions (agreed 2026-11-14)
 
@@ -25,7 +25,7 @@ Pixels with `valid_mask == 0` are NaN in all three outputs and never enter the m
 | Signed changes | Kept in `change_{hh,hv}_db` | A decrease (typical when foliage and branches burn, especially in HV) and an increase (for example wetter soil) tell different stories. Only the index uses magnitudes. |
 | Robust z-score | Median and 1.4826 × MAD | The median/MAD are not dragged by the large changes that matter; 1.4826 makes the MAD comparable to a standard deviation for normally distributed data. |
 | Clipping / threshold | None | The scientific value is stored in full. Colour stretch is a display choice (DT-04); thresholds are P1 (XP-01). |
-| MAD = 0 or no valid pixels | Error | A robust z-score is undefined; it signals broken inputs, not a real scene. |
+| MAD = 0 or no valid pixels | Error | A robust z-score is undefined when at least half of the valid pixels share the median change (or none are valid). On real radar pairs this is unexpected and worth investigating before any reporting. |
 
 The combination of absolute HH/HV log-ratio changes follows the methodological reference cited in the [proposal](../propuesta.md) (Timber/Plaskett preprint). It is a simplified single-pair version, not a reproduction of that work, and the preprint's reported performance is not FireTrace performance.
 
@@ -59,6 +59,6 @@ Large index values mean large radar change, which can have causes other than fir
 
 ## Outputs
 
-`data/interim/change/`: `change_hh_db.tif`, `change_hv_db.tif`, `change_index.tif` (COG float32, NaN no-data) and `change.json` (method, median, MAD, percentiles, valid count, checksums). DT-04 copies `change.json` → `method` into `case.json`; CH-02 builds `stats.json`. Layout: [ARCHITECTURE](../ARCHITECTURE.md).
+`data/interim/change/`: `change_hh_db.tif`, `change_hv_db.tif`, `change_index.tif` (COG float32, NaN no-data) and `change.json` (method, median, MAD, percentiles, valid count, checksums). Percentiles describe the stored float32 values over valid pixels, using NumPy's default linear interpolation. DT-04 copies `change.json` → `method` into `case.json`; CH-02 builds `stats.json`. Layout: [ARCHITECTURE](../ARCHITECTURE.md).
 
-Command: `uv run python -m pipeline.change --sar-dir data/interim/sar --output-dir data/interim/change [--quicklook <png>]`. The optional quicklook is a viridis p2–p98 preview for review evidence, not the web product.
+Command: `uv run python -m pipeline.change --sar-dir data/interim/sar --output-dir data/interim/change [--quicklook <png>]`. The optional quicklook is an ungeoreferenced viridis p2–p98 PNG for review evidence, not the web product; it must be written outside the input and output directories and is rendered before the outputs are published.
