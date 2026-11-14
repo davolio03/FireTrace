@@ -2,6 +2,8 @@
 
 **Decision:** use project **firetrace** and Cloud transport. Keep old memory projects untouched; no migration/deletion is required. Do not export or commit memory chunks. `.engram/config.json` selects identity only: it does not deploy, configure credentials, enroll a client or authorize remote access.
 
+Teammates connecting an enrolled client can follow the [user guide](ENGRAM_CLOUD_USER.md).
+
 **Operational status:** this is an operator recipe, not a deployed/tested server. Remote execution requires explicit destination, operation and credential/session authorization. Never inspect ambient SSH/session access to infer permission.
 
 ## Operator: isolated server configuration
