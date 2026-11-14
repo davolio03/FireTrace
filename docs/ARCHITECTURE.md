@@ -48,6 +48,20 @@ The proposed real continuous baseline combines absolute HH/HV log-ratio magnitud
 
 COG names in current board proposals are implementation intentions, not a complete internal storage manifest. Record the numerical artifact layout, input integrity identifiers, crop/configuration and code/dependency versions during pipeline implementation. Extend shared metadata only through the contract process.
 
+### Numerical artifact layout (implemented)
+
+Internal, gitignored pipeline products on the 10 m EPSG:32610 crop grid. They are not web contracts; consumers (for example the EV-01 point-inspection API) should read them through their manifests and checksums.
+
+| Stage | Path | Content |
+| --- | --- | --- |
+| DT-01 ingest | `data/interim/nisar/{t1,t2}_{hh,hv}.tif` | float32 GCOV linear power crops, source nodata (NaN) preserved, no resampling |
+| DT-01 ingest | `data/interim/nisar/ingest.json` | epochs, acquisition, AOI (32610 and 4326), source/crop grid, input/output sha256 |
+| DT-02 dB | `data/interim/sar/{t1,t2}_{hh,hv}_db.tif` | COG, float32 dB = `10*log10(x)` for finite x > 0 and not nodata; NaN nodata |
+| DT-02 dB | `data/interim/sar/valid_mask.tif` | COG, uint8 (no nodata): 1 = valid in all four layers, 0 = invalid in at least one |
+| DT-02 dB | `data/interim/sar/sar.json` | formula, mask rule, per-layer counts (valid / nodata / non_positive), valid pixels and coverage %, sha256 of ingest.json, sources and outputs |
+
+COGs use 256 px deflate blocks and nearest-neighbour overviews for display only; scientific lookups read the full-resolution level.
+
 ## Reproducibility, diagnostics and deployment
 
 - Precompute before the demo: no Earthdata login, catalogue dependence, gigabyte downloads or training on the presentation path.
