@@ -39,8 +39,10 @@ from typing import Any
 import numpy as np
 import rasterio
 from affine import Affine
+from rasterio.crs import CRS
 from rasterio.errors import NotGeoreferencedWarning, RasterioError
 from rasterio.warp import Resampling, reproject
+from rasterio.warp import transform as warp_transform
 from rasterio.windows import Window
 
 from pipeline.perimeter import PerimeterError, load_crop_grid
@@ -79,6 +81,7 @@ SLOPE_STOPS: tuple[tuple[float, str], ...] = (
 )
 RADAR_GRID = "//science/LSAR/GCOV/metadata/radarGrid/"
 CUBE_MARGIN_M = 1000.0
+LONLAT = CRS.from_epsg(4326)
 EPSG_TAG = "science_LSAR_GCOV_metadata_radarGrid_projection_epsg_code"
 
 
@@ -219,6 +222,47 @@ def horn_gradient(z: np.ndarray, pixel_m: float) -> tuple[np.ndarray, np.ndarray
     return p, q
 
 
+WGS84_A = 6378137.0
+WGS84_F = 1 / 298.257223563
+NORTH_STEP_M = 10.0
+
+
+def grid_north_rotation(
+    transform: Affine, width: int, height: int
+) -> tuple[np.ndarray, np.ndarray]:
+    """Per-pixel true bearing of UTM grid north (deg, clockwise) and point scale factor.
+
+    A step of ``NORTH_STEP_M`` grid metres toward grid north is projected to lon/lat; its
+    true east/north lengths use the WGS84 meridional and prime-vertical radii. Returns
+    ``beta`` (true bearing of grid north) and ``k`` (grid metres per true metre).
+    """
+    cols, rows = np.meshgrid(np.arange(width) + 0.5, np.arange(height) + 0.5)
+    flat_x = (transform.c + cols * transform.a).ravel()
+    flat_y = (transform.f + rows * transform.e).ravel()
+    lon0, lat0 = warp_transform(ANALYSIS_CRS, LONLAT, flat_x, flat_y)
+    lon1, lat1 = warp_transform(ANALYSIS_CRS, LONLAT, flat_x, flat_y + NORTH_STEP_M)
+    lon0, lat0, lon1, lat1 = (np.asarray(v, dtype=np.float64) for v in (lon0, lat0, lon1, lat1))
+    phi = np.radians(lat0)
+    e2 = WGS84_F * (2 - WGS84_F)
+    w = np.sqrt(1 - e2 * np.sin(phi) ** 2)
+    meridional = WGS84_A * (1 - e2) / w**3
+    prime_vertical = WGS84_A / w
+    d_north = meridional * np.radians(lat1 - lat0)
+    d_east = prime_vertical * np.cos(phi) * np.radians(lon1 - lon0)
+    beta = np.degrees(np.arctan2(d_east, d_north)).reshape(height, width)
+    k = (NORTH_STEP_M / np.hypot(d_east, d_north)).reshape(height, width)
+    return beta, k
+
+
+def to_true_gradient(
+    p: np.ndarray, q: np.ndarray, beta_deg: np.ndarray, k: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    """Grid-axis gradients (per grid metre) to true east/north gradients (per true metre)."""
+    b = np.radians(beta_deg)
+    cos_b, sin_b = np.cos(b), np.sin(b)
+    return k * (p * cos_b + q * sin_b), k * (-p * sin_b + q * cos_b)
+
+
 def slope_deg(p: np.ndarray, q: np.ndarray) -> np.ndarray:
     """Slope in degrees (0 flat, 90 vertical)."""
     return np.degrees(np.arctan(np.hypot(p, q)))
@@ -230,6 +274,13 @@ def aspect_deg(p: np.ndarray, q: np.ndarray) -> np.ndarray:
         aspect = np.degrees(np.arctan2(-p, -q)) % 360.0
     aspect = np.where(aspect >= 360.0, 0.0, aspect)
     return np.where((p == 0) & (q == 0), np.nan, aspect)
+
+
+def aspect_float32(aspect: np.ndarray) -> np.ndarray:
+    """float32 aspect kept in [0, 360): values that round up to 360 wrap to 0."""
+    out = np.asarray(aspect, dtype=np.float32).copy()
+    out[out >= np.float32(360.0)] = np.float32(0.0)
+    return out
 
 
 def hillshade(
@@ -303,18 +354,31 @@ def interpolate_cube(
     zz = np.where(finite, z, heights[0])
     iz, fz = _bracket(heights, zz)
     fx2, fy2 = fx[None, :], fy[:, None]
+    r0, c0 = iy[:, None], ix[None, :]
     out = np.zeros(z.shape, dtype=np.float64)
     for k in range(int(iz.min()), int(iz.max()) + 2):
         level = cube[k]
-        v = (
-            (1 - fy2) * (1 - fx2) * level[iy[:, None], ix[None, :]]
-            + (1 - fy2) * fx2 * level[iy[:, None], ix[None, :] + 1]
-            + fy2 * (1 - fx2) * level[iy[:, None] + 1, ix[None, :]]
-            + fy2 * fx2 * level[iy[:, None] + 1, ix[None, :] + 1]
+        v = _weighted_sum(
+            [
+                ((1 - fy2) * (1 - fx2), level[r0, c0]),
+                ((1 - fy2) * fx2, level[r0, c0 + 1]),
+                (fy2 * (1 - fx2), level[r0 + 1, c0]),
+                (fy2 * fx2, level[r0 + 1, c0 + 1]),
+            ]
         )
         weight = np.where(iz == k, 1 - fz, 0.0) + np.where(iz + 1 == k, fz, 0.0)
-        out += weight * v
+        out = out + _weighted_sum([(weight, v)])
     return np.where(finite, out, np.nan)
+
+
+def _weighted_sum(terms: Sequence[tuple[np.ndarray, np.ndarray]]) -> np.ndarray:
+    """Sum of ``weight * value`` skipping zero-weight terms, so a missing sample only
+    yields NaN when it actually contributes."""
+    total: np.ndarray | float = 0.0
+    for weight, value in terms:
+        with np.errstate(invalid="ignore"):
+            total = total + np.where(weight > 0, weight * value, 0.0)
+    return np.asarray(total, dtype=np.float64)
 
 
 def _look_vector(
@@ -366,44 +430,62 @@ def layover_shadow(
     return flags
 
 
-def read_radar_grid(h5: Path, bounds: tuple[float, float, float, float]) -> RadarGrid:
-    """Read the radarGrid cubes around ``bounds`` (EPSG:32610) from a NISAR GCOV .h5."""
-    left, bottom, right, top = bounds
-
-    def path(name: str) -> str:
-        return f'HDF5:"{h5.as_posix()}":{RADAR_GRID}{name}'
-
+def _read_hdf(h5: Path, name: str, window: Window | None = None) -> np.ndarray:
+    """One radarGrid dataset as (bands, rows, cols) float64 via the GDAL HDF5 driver."""
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", NotGeoreferencedWarning)
-            with rasterio.open(path("xCoordinates")) as src:
-                xs = src.read().ravel().astype(np.float64)
-            with rasterio.open(path("yCoordinates")) as src:
-                ys = src.read().ravel().astype(np.float64)
-            with rasterio.open(path("heightAboveEllipsoid")) as src:
-                heights = src.read().ravel().astype(np.float64)
-            with rasterio.open(h5) as src:  # file-level attributes carry the cube projection
-                epsg = src.tags().get(EPSG_TAG)
-            cols = np.nonzero((xs >= left - CUBE_MARGIN_M) & (xs <= right + CUBE_MARGIN_M))[0]
-            rows = np.nonzero((ys >= bottom - CUBE_MARGIN_M) & (ys <= top + CUBE_MARGIN_M))[0]
-            if cols.size < 2 or rows.size < 2:
-                raise TerrainError(f"{h5.name}: the radar grid does not cover the crop")
-            window = Window(
-                int(cols[0]), int(rows[0]), int(cols[-1] - cols[0] + 1), int(rows[-1] - rows[0] + 1)
-            )
-            cubes = {}
-            for name in ("incidenceAngle", "losUnitVectorX", "losUnitVectorY"):
-                with rasterio.open(path(name)) as src:
-                    if src.count != heights.size:
-                        raise TerrainError(f"{h5.name}: {name} has {src.count} height levels")
-                    cubes[name] = src.read(window=window).astype(np.float64)
+            with rasterio.open(f'HDF5:"{h5.as_posix()}":{RADAR_GRID}{name}') as src:
+                return src.read(window=window).astype(np.float64)
     except (RasterioError, OSError) as exc:
-        raise TerrainError(f"{h5.name}: cannot read the radar grid: {exc}") from exc
+        raise TerrainError(f"{h5.name}: cannot read radarGrid/{name}: {exc}") from exc
+
+
+def _hdf_epsg(h5: Path) -> str | None:
+    """EPSG code of the radarGrid cubes, from the file-level attributes."""
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", NotGeoreferencedWarning)
+            with rasterio.open(h5) as src:
+                return src.tags().get(EPSG_TAG)
+    except (RasterioError, OSError) as exc:
+        raise TerrainError(f"{h5.name}: cannot read the file attributes: {exc}") from exc
+
+
+def cube_window(
+    xs: np.ndarray, ys: np.ndarray, bounds: tuple[float, float, float, float], margin_m: float
+) -> Window:
+    """Smallest window of cube nodes covering ``bounds`` expanded by ``margin_m``."""
+    left, bottom, right, top = bounds
+    cols = np.nonzero((xs >= left - margin_m) & (xs <= right + margin_m))[0]
+    rows = np.nonzero((ys >= bottom - margin_m) & (ys <= top + margin_m))[0]
+    if cols.size < 2 or rows.size < 2:
+        raise TerrainError("the radar grid does not cover the crop")
+    return Window(
+        int(cols[0]), int(rows[0]), int(cols[-1] - cols[0] + 1), int(rows[-1] - rows[0] + 1)
+    )
+
+
+def read_radar_grid(h5: Path, bounds: tuple[float, float, float, float]) -> RadarGrid:
+    """Read the radarGrid cubes around ``bounds`` (EPSG:32610) from a NISAR GCOV .h5."""
+    epsg = _hdf_epsg(h5)
     if epsg is None or int(float(epsg)) != ANALYSIS_CRS.to_epsg():
         raise TerrainError(f"{h5.name}: radar grid EPSG {epsg} is not {ANALYSIS_CRS.to_epsg()}")
+    xs = _read_hdf(h5, "xCoordinates").ravel()
+    ys = _read_hdf(h5, "yCoordinates").ravel()
+    heights = _read_hdf(h5, "heightAboveEllipsoid").ravel()
+    window = cube_window(xs, ys, bounds, CUBE_MARGIN_M)
+    cubes = {}
+    for name in ("incidenceAngle", "losUnitVectorX", "losUnitVectorY"):
+        cube = _read_hdf(h5, name, window)
+        expected = (heights.size, int(window.height), int(window.width))
+        if cube.shape != expected:
+            raise TerrainError(f"{h5.name}: {name} has shape {cube.shape}, expected {expected}")
+        cubes[name] = cube
+    c0, r0 = int(window.col_off), int(window.row_off)
     return RadarGrid(
-        xs=xs[cols[0] : cols[-1] + 1],
-        ys=ys[rows[0] : rows[-1] + 1],
+        xs=xs[c0 : c0 + int(window.width)],
+        ys=ys[r0 : r0 + int(window.height)],
         heights=heights,
         incidence_deg=cubes["incidenceAngle"],
         los_east=cubes["losUnitVectorX"],
@@ -586,7 +668,9 @@ def run_terrain(config: TerrainConfig) -> dict[str, Any]:
     dem_m, dem_info = warp_dem(config.dem.raw, margin_transform, width + 2 * m, height + 2 * m)
     p_m, q_m = horn_gradient(dem_m, ANALYSIS_PIXEL_SIZE_M)
     crop = (slice(m, m + height), slice(m, m + width))
-    elevation, p, q = dem_m[crop], p_m[crop], q_m[crop]
+    elevation = dem_m[crop]
+    beta, scale = grid_north_rotation(transform, width, height)
+    p, q = to_true_gradient(p_m[crop], q_m[crop], beta, scale)
     slope = slope_deg(p, q)
     aspect = aspect_deg(p, q)
     shade = hillshade(
@@ -615,7 +699,7 @@ def run_terrain(config: TerrainConfig) -> dict[str, Any]:
     floats = {
         "elevation.tif": elevation.astype(np.float32),
         "slope.tif": slope.astype(np.float32),
-        "aspect.tif": aspect.astype(np.float32),
+        "aspect.tif": aspect_float32(aspect),
         "local_incidence.tif": local.astype(np.float32),
     }
     staging, _ = _staging_dirs(config.output_dir)
@@ -704,8 +788,13 @@ def run_terrain(config: TerrainConfig) -> dict[str, Any]:
                 "resampling": "bilinear (DEM to the 10 m crop grid)",
                 "margin_m": config.margin_m,
                 "effective_resolution_m": 30.0,
-                "slope": "Horn 3x3 on the 10 m grid, metres; degrees 0-90",
-                "aspect": "downslope direction, degrees clockwise from north; NaN where flat",
+                "slope": (
+                    "Horn 3x3 on the 10 m grid; gradients rotated from UTM grid axes to true "
+                    "east/north and scaled to true metres; degrees 0-90"
+                ),
+                "aspect": "downslope direction, degrees clockwise from true north; NaN where flat",
+                "grid_convergence_deg": _summary(beta),
+                "point_scale_factor": _summary(scale),
                 "hillshade": {
                     "azimuth_deg": config.hillshade_azimuth_deg,
                     "altitude_deg": config.hillshade_altitude_deg,

@@ -20,8 +20,9 @@ The geometry granule name must carry the ingest track, direction and frame (`_04
 
 1. The DEM is warped with **bilinear** resampling onto the crop grid **extended by a 100 m margin**. The DEM must cover this extended grid entirely; otherwise the run stops.
 2. The **Horn (1981) 3x3** gradient is computed in metres on the 10 m grid. Then the margin is trimmed, so crop-edge pixels still have full neighbourhoods. A pixel whose 3x3 window holds no-data gets no slope.
-3. `slope = atan(|∇z|)` in degrees (0-90).
-4. `aspect` is the downslope direction in degrees clockwise from north, in [0, 360). It is NaN where the slope is exactly 0 (flat, aspect undefined).
+3. The gradient is expressed in the **true east/north basis per true metre**. Away from the UTM central meridian, grid north is not true north: on Plaskett the grid-north bearing (convergence) is 0.88-1.01° and the point scale factor 0.99983-0.99990. For each pixel a 10 m grid-north step is projected to lon/lat (WGS84 meridional and prime-vertical radii), and the gradient is rotated and scaled by the resulting bearing and scale. Slope, aspect and the ENU radar line of sight therefore share one basis.
+4. `slope = atan(|∇z|)` in degrees (0-90).
+5. `aspect` is the downslope direction in degrees clockwise from **true** north, in [0, 360). It is NaN where the slope is exactly 0 (flat, aspect undefined). The wrap to 0 is applied after the float32 conversion, so a stored value never equals 360.
 
 The **effective resolution stays about 30 m**: interpolating to 10 m adds no terrain detail, it only aligns the values pixel-for-pixel with the radar products. Slopes are therefore smoothed compared with the real hillsides.
 
@@ -29,7 +30,7 @@ GLO-30 stores the open sea at 0 m. On Plaskett, about 418,000 crop pixels (13 %)
 
 ## Radar geometry and layover/shadow (decision D1)
 
-The cubes are interpolated to every pixel centre: bilinear in x/y, then linear in height using the pixel's DEM elevation. Cube heights are **ellipsoidal**, while DEM heights are geoid heights. The offset of a few tens of metres is neglected. On Plaskett the incidence angle changes by at most 0.02° per 500 m of height, so the effect is below about 0.002°.
+The cubes are interpolated to every pixel centre: bilinear in x/y, then linear in height using the pixel's DEM elevation. A missing cube sample only makes the result NaN when it actually contributes (non-zero weight). Cube heights are **ellipsoidal**, while DEM heights are geoid heights. The offset of a few tens of metres is neglected. On Plaskett the incidence angle changes by at most 0.02° per 500 m of height, so the effect is below about 0.002°.
 
 NISAR looks **left**. On this descending pass the target-to-sensor vector points west-north-west (east component about −0.62, north about +0.21), and the ellipsoid incidence is 40.4-41.6° over the crop. The code takes the direction from the cubes and assumes nothing about it.
 
@@ -67,8 +68,9 @@ The set is built in a staging directory and swapped in only when complete. The s
 | --- | --- |
 | Elevation | 0.0-1,142.2 m (median 594.6 m) |
 | Slope | median 20.4°, max 63.0°; 14.4 % of pixels > 30°, 0.7 % > 40° |
-| Local incidence | 0.04-89.1° (median 40.9°) |
-| Layover / shadow | 2,819 px (0.09 %) / 0 px |
+| Grid convergence / scale | 0.88-1.01° / 0.99983-0.99990 |
+| Local incidence | 0.08-89.0° (median 40.9°) |
+| Layover / shadow | 2,858 px (0.09 %) / 0 px |
 | Web PNGs | 1,938 x 1,660 px |
 
 Layover concentrates on steep west-facing coastal and canyon slopes, which face the west-looking sensor. No pixel reaches the local shadow criterion: the facing-away slope would have to exceed about 49°, which 30 m terrain rarely shows.

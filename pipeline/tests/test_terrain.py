@@ -18,6 +18,7 @@ from rasterio.crs import CRS
 from rasterio.warp import transform as warp_transform
 
 from pipeline import terrain
+from pipeline.sar import SarError
 from pipeline.terrain import (
     LAYOVER,
     NONE,
@@ -26,6 +27,9 @@ from pipeline.terrain import (
     RadarGrid,
     TerrainError,
     aspect_deg,
+    aspect_float32,
+    cube_window,
+    grid_north_rotation,
     hillshade,
     horn_gradient,
     interpolate_cube,
@@ -35,7 +39,9 @@ from pipeline.terrain import (
     main,
     run_terrain,
     slope_deg,
+    to_true_gradient,
 )
+from pipeline.webexport import WebExportError
 
 UTM10N = CRS.from_epsg(32610)
 X0, Y0 = 600_000.0, 3_970_000.0
@@ -315,6 +321,95 @@ def read(path: Path) -> tuple[np.ndarray, rasterio.profiles.Profile]:
         return src.read(1), src.profile
 
 
+def spherical_convergence_and_scale(x: float, y: float) -> tuple[float, float]:
+    """Textbook UTM grid convergence (deg, grid north east of true north > 0) and scale."""
+    (lon,), (lat,) = warp_transform(UTM10N, CRS.from_epsg(4326), [x], [y])
+    dlon, phi = math.radians(lon - (-123.0)), math.radians(lat)
+    gamma = math.degrees(math.atan(math.tan(dlon) * math.sin(phi)))
+    k = 0.9996 / math.sqrt(1 - (math.cos(phi) * math.sin(dlon)) ** 2)
+    return gamma, k
+
+
+def test_grid_north_rotation_matches_the_utm_convergence_formula():
+    beta, k = grid_north_rotation(TRANSFORM, W, H)
+    gamma, k_ref = spherical_convergence_and_scale(X0 + 5.0, Y0 - 5.0)
+    assert gamma > 0.5  # 100 km east of the central meridian: clearly non-zero
+    assert beta[0, 0] == pytest.approx(gamma, abs=0.005)
+    assert k[0, 0] == pytest.approx(k_ref, abs=2e-5)
+    # On the central meridian grid north is true north.
+    on_cm = Affine(10.0, 0.0, 500_000.0 - 5.0, 0.0, -10.0, Y0)
+    beta_cm, _ = grid_north_rotation(on_cm, 1, 1)
+    assert beta_cm[0, 0] == pytest.approx(0.0, abs=1e-6)
+
+
+def test_to_true_gradient_rotates_and_scales():
+    pe, pn = to_true_gradient(np.array([0.0]), np.array([1.0]), np.array([90.0]), np.array([2.0]))
+    # Grid north points true east: a rise toward grid north is a rise toward true east.
+    assert pe[0] == pytest.approx(2.0) and pn[0] == pytest.approx(0.0, abs=1e-12)
+
+
+def test_true_east_plane_is_reported_against_true_north(
+    case, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Regression (review P2): gradients and the ENU line of sight share one basis.
+
+    A plane facing TRUE east, seen by a sensor to the true north-east (oblique look, where a
+    0.65 deg grid-convergence error acts at first order), must give aspect 90, the
+    closed-form local incidence and the layover flag of its 40.1 deg range foreslope.
+    """
+    look = math.radians(45.0)
+    los_e, los_n = (
+        math.sin(math.radians(THETA)) * math.sin(look),
+        math.sin(math.radians(THETA)) * math.cos(look),
+    )
+
+    def oblique(path: Path, bounds: tuple[float, float, float, float]) -> RadarGrid:
+        grid = synthetic_radar_grid(path, bounds)
+        shape = grid.incidence_deg.shape
+        return RadarGrid(
+            grid.xs,
+            grid.ys,
+            grid.heights,
+            grid.incidence_deg,
+            np.full(shape, los_e),
+            np.full(shape, los_n),
+        )
+
+    monkeypatch.setattr(terrain, "read_radar_grid", oblique)
+    (lon0,), (lat0,) = warp_transform(UTM10N, CRS.from_epsg(4326), [X0 - 400.0], [Y0 + 400.0])
+    n_cos = 6378137.0 * math.cos(math.radians(lat0))
+    res = 1 / 3600
+    cols = rows = 60
+    lons = lon0 + (np.arange(cols) + 0.5) * res
+    slope_true = 50.0  # range foreslope atan(tan 50 * sin 45) = 40.12 deg > 40 deg
+    a = -math.tan(math.radians(slope_true))  # rises toward true WEST: faces true east
+    z = 500.0 + a * np.radians(lons - lon0) * n_cos
+    dem = tmp_path / "true_east.tif"
+    profile = {
+        "driver": "GTiff",
+        "width": cols,
+        "height": rows,
+        "count": 1,
+        "dtype": "float64",
+        "crs": CRS.from_epsg(4326),
+        "transform": Affine(res, 0, lon0, 0, -res, lat0),
+    }
+    with rasterio.open(dem, "w", **profile) as dst:
+        dst.write(np.repeat(z[None, :], rows, axis=0), 1)
+    case["write_config"](dem=dem.as_posix())
+    run_terrain(load_config(case["config"]))
+    aspect, _ = read(case["out"] / "aspect.tif")
+    slope, _ = read(case["out"] / "slope.tif")
+    flags, _ = read(case["out"] / "layover_shadow.tif")
+    local, _ = read(case["out"] / "local_incidence.tif")
+    np.testing.assert_allclose(aspect, 90.0, atol=0.05)  # faces true east
+    np.testing.assert_allclose(slope, slope_true, atol=0.05)
+    sx, sz = math.sin(math.radians(THETA)), math.cos(math.radians(THETA))
+    cos_local = (-a * sx * math.sin(look) + sz) / math.sqrt(1 + a * a)
+    np.testing.assert_allclose(local, math.degrees(math.acos(cos_local)), atol=0.05)
+    assert (flags == LAYOVER).all()
+
+
 def test_run_builds_grid_aligned_terrain_products(case):
     doc = run_terrain(load_config(case["config"]))
     out = case["out"]
@@ -326,12 +421,15 @@ def test_run_builds_grid_aligned_terrain_products(case):
     elev, _ = read(out / "elevation.tif")
     # Pixel (row 10, col 20) centre: x = X0 + 205, y = Y0 - 105.
     assert elev[10, 20] == pytest.approx(200.0 + A * 205.0 - B * 105.0, abs=1e-3)
+    # The plane is defined in UTM grid metres; slope/aspect are reported per true metre and
+    # from true north, so apply the (independent, spherical) convergence and scale here.
+    gamma, k = spherical_convergence_and_scale(X0 + 200.0, Y0 - 150.0)
     slope, _ = read(out / "slope.tif")
-    expected_slope = math.degrees(math.atan(math.hypot(A, B)))
-    np.testing.assert_allclose(slope, expected_slope, atol=1e-3)
+    expected_slope = math.degrees(math.atan(k * math.hypot(A, B)))
+    np.testing.assert_allclose(slope, expected_slope, atol=2e-3)
     aspect, _ = read(out / "aspect.tif")
-    expected_aspect = math.degrees(math.atan2(-A, -B)) % 360.0
-    np.testing.assert_allclose(aspect, expected_aspect, atol=1e-3)
+    expected_aspect = (math.degrees(math.atan2(-A, -B)) + gamma) % 360.0
+    np.testing.assert_allclose(aspect, expected_aspect, atol=0.01)
     flags, prof = read(out / "layover_shadow.tif")
     assert prof["nodata"] == UNKNOWN and flags.dtype == np.uint8
     assert (flags == NONE).all()  # 20 deg backslope with a 40 deg look: no flag
@@ -453,3 +551,124 @@ def test_margin_must_cover_the_horn_window(case):
     case["write_config"](margin_m=5.0)
     with pytest.raises(TerrainError, match="margin_m"):
         load_config(case["config"])
+
+
+# --------------------------------------------------------------------------- review regressions
+
+
+def test_zero_weight_missing_samples_do_not_poison_interpolation():
+    """Regression (review P2): only contributing NaN samples give NaN."""
+    xs = np.array([0.0, 500.0])
+    ys = np.array([500.0, 0.0])
+    hs = np.array([0.0, 500.0, 1000.0])
+    cube = np.ones((3, 2, 2))
+    cube[0] = np.nan  # missing at 0 m only
+    px, py = np.array([100.0, 200.0]), np.array([100.0])
+    z = np.array([[250.0, 750.0]])
+    out = interpolate_cube(cube, xs, ys, hs, px, py, z)
+    assert np.isnan(out[0, 0]) and out[0, 1] == pytest.approx(1.0)
+    # Exact top node with a missing zero-weight neighbour below.
+    cube = np.ones((3, 2, 2))
+    cube[1] = np.nan
+    out = interpolate_cube(cube, xs, ys, hs, px[:1], py, np.array([[1000.0]]))
+    assert out[0, 0] == pytest.approx(1.0)
+    # Exact horizontal node with a missing zero-weight neighbour.
+    cube = np.ones((3, 2, 2))
+    cube[:, :, 1] = np.nan
+    out = interpolate_cube(cube, xs, ys, hs, np.array([0.0]), py, np.array([[100.0]]))
+    assert out[0, 0] == pytest.approx(1.0)
+
+
+def test_stored_aspect_never_reaches_360():
+    """Regression (review P3): float32 rounding of 359.9999994 must wrap to 0."""
+    p = np.array([[np.sin(np.radians(-359.99999943))]])
+    q = np.array([[-np.cos(np.radians(-359.99999943))]])
+    asp64 = aspect_deg(-p, q)
+    stored = aspect_float32(np.array([[359.99999943]]))
+    assert stored.dtype == np.float32 and stored[0, 0] == 0.0
+    assert ((aspect_float32(asp64) >= 0) & (aspect_float32(asp64) < 360)).all()
+
+
+def test_cube_window_selects_nodes_around_the_crop():
+    xs = 1000.0 * np.arange(10)  # 0 .. 9000
+    ys = 9000.0 - 1000.0 * np.arange(10)  # 9000 .. 0
+    win = cube_window(xs, ys, (3500.0, 2500.0, 5500.0, 6500.0), 1000.0)
+    assert (win.col_off, win.width) == (3, 4)  # x 3000..6000
+    assert (win.row_off, win.height) == (2, 6)  # y 7000..2000
+    with pytest.raises(TerrainError, match="cover"):
+        cube_window(xs, ys, (20_000.0, 0.0, 21_000.0, 1000.0), 0.0)
+
+
+def _fake_hdf(levels: int = 4, epsg: str | None = "32610", bands: int | None = None):
+    xs = X0 - 2000.0 + 500.0 * np.arange(10)
+    ys = Y0 + 2000.0 - 500.0 * np.arange(10)
+    hs = np.linspace(-1000.0, 2000.0, levels)
+
+    def read_hdf(h5: Path, name: str, window=None) -> np.ndarray:
+        if name == "xCoordinates":
+            return xs.reshape(1, 1, -1)
+        if name == "yCoordinates":
+            return ys.reshape(1, 1, -1)
+        if name == "heightAboveEllipsoid":
+            return hs.reshape(1, 1, -1)
+        full = np.zeros((bands or levels, ys.size, xs.size))
+        full += {"incidenceAngle": 40.0, "losUnitVectorX": -0.6, "losUnitVectorY": 0.2}[name]
+        r, c = window.toslices()
+        return full[:, r, c]
+
+    return read_hdf, (lambda h5: epsg)
+
+
+def test_read_radar_grid_windows_and_checks(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    read_hdf, epsg = _fake_hdf()
+    monkeypatch.setattr(terrain, "_read_hdf", read_hdf)
+    monkeypatch.setattr(terrain, "_hdf_epsg", epsg)
+    bounds = (X0, Y0 - H * 10.0, X0 + W * 10.0, Y0)
+    grid = terrain.read_radar_grid(tmp_path / "x.h5", bounds)
+    assert grid.xs[0] <= X0 - 500 and grid.xs[-1] >= X0 + W * 10.0 + 500
+    assert grid.incidence_deg.shape == (4, grid.ys.size, grid.xs.size)
+    assert (grid.los_east == -0.6).all() and (grid.los_north == 0.2).all()
+
+    read_hdf, epsg = _fake_hdf(epsg="32611")
+    monkeypatch.setattr(terrain, "_hdf_epsg", epsg)
+    with pytest.raises(TerrainError, match="EPSG"):
+        terrain.read_radar_grid(tmp_path / "x.h5", bounds)
+
+    read_hdf, epsg = _fake_hdf(bands=3)
+    monkeypatch.setattr(terrain, "_read_hdf", read_hdf)
+    monkeypatch.setattr(terrain, "_hdf_epsg", epsg)
+    with pytest.raises(TerrainError, match="shape"):
+        terrain.read_radar_grid(tmp_path / "x.h5", bounds)
+
+
+def test_unreadable_hdf_is_a_terrain_error(tmp_path: Path):
+    bad = tmp_path / "bad.h5"
+    bad.write_bytes(b"not hdf5")
+    with pytest.raises(TerrainError, match="cannot read"):
+        terrain._read_hdf(bad, "xCoordinates")
+
+
+def test_fragment_validates_against_the_layers_schema(case):
+    jsonschema = pytest.importorskip("jsonschema")
+    run_terrain(load_config(case["config"]))
+    root = Path(__file__).resolve().parents[2]
+    schema = json.loads((root / "contracts/schemas/layers.schema.json").read_text("utf-8"))
+    doc = json.loads((case["out"] / "terrain_layers.json").read_text("utf-8"))
+    validator = jsonschema.Draft202012Validator(
+        schema, format_checker=jsonschema.Draft202012Validator.FORMAT_CHECKER
+    )
+    assert list(validator.iter_errors(doc)) == []
+
+
+@pytest.mark.parametrize("stage", ["publish", "write_png"])
+def test_failure_after_staging_keeps_previous_outputs(case, monkeypatch, stage):
+    run_terrain(load_config(case["config"]))
+    before = {p.name: p.read_bytes() for p in case["out"].iterdir()}
+
+    def boom(*args, **kwargs):
+        raise (SarError if stage == "publish" else WebExportError)("injected failure")
+
+    monkeypatch.setattr(terrain, stage, boom)
+    assert main(["--config", str(case["config"])]) == 2
+    assert {p.name: p.read_bytes() for p in case["out"].iterdir()} == before
+    assert not (case["out"].parent / f".{case['out'].name}.staging").exists()
