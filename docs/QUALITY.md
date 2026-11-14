@@ -46,6 +46,8 @@ The DT-02 stage converts those crops to dB and builds the common valid mask: `uv
 
 The CH-01 stage computes the continuous change index: `uv run python -m pipeline.change --sar-dir data/interim/sar --output-dir data/interim/change` (add `--quicklook <png>` outside the output directory for a review preview). The method is documented in [change-index](methods/change-index.md).
 
+The DT-03 stage pins the WFIGS reference perimeter and rasterizes it on the crop grid: `uv run python -m pipeline.perimeter --config pipeline/configs/perimeter_plaskett.toml`. It verifies the raw GeoJSON sha256, never downloads, and is documented in [reference-perimeter](methods/reference-perimeter.md).
+
 `npm run dev` within `web/` starts the web scaffold. `uv run python -m pipeline.run --all` and `uv run uvicorn api.main:app --reload` remain planned processing/start targets, **not working commands in this checkout**.
 
 Cover deterministic numerical rules and realistic failure paths with small synthetic rasters. Application integration must verify actual lookup/display alignment, no-data, coverage arithmetic, provenance and mock-to-real switching. Real science requires separate reproducible sample evidence and an agreed method/domain; schema-valid mocks are not that evidence.

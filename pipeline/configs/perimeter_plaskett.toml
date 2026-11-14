@@ -1,0 +1,13 @@
+# DT-03 reference perimeter for the Plaskett case. Paths are relative to the repository root.
+# The pipeline never downloads: refresh data/raw/wfigs_58728_raw.geojson from `url` only on
+# purpose, review the change and update `sha256` (and `polygon_datetime` if it moved).
+raw = "data/raw/wfigs_58728_raw.geojson"
+sha256 = "3f80b51120531c36ac37bb8568528cb8270fbaeaee2a2b906433386a6020e0c9"
+objectid = 58728
+polygon_datetime = "2026-09-14T20:44:00Z"
+url = "https://services3.arcgis.com/T4QMspbfLg3qTGWY/arcgis/rest/services/WFIGS_Interagency_Perimeters_YearToDate/FeatureServer/0/query?where=OBJECTID%3D58728&outFields=*&returnGeometry=true&outSR=4326&f=geojson"
+source = "NIFC WFIGS Interagency Perimeters YearToDate"
+note = "Official WFIGS daily fire perimeter dated 2026-09-14 20:44 UTC, before the 2026-10-03 after scene. Dated reference for contrast, not a final perimeter or pixel-level ground truth."
+ingest_dir = "data/interim/nisar"
+output_dir = "data/interim/perimeter"
+edge_distance_m = 50.0
