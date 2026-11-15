@@ -68,5 +68,5 @@ These shares come from the DT-05 and DT-06 runs, not from running these rules on
 ## Limitations
 
 - `low_backscatter` and `other_disturbance` are in the contract enum but not implemented: they need a scientific threshold decision first.
-- Zone fractions for `review_zones.geojson` are XP-04's; it may reuse these rule functions per pixel.
+- Zone fractions for `review_zones.geojson` are computed by XP-04 with the same slope, layover/shadow and edge-band rules and thresholds ([review zones](review-zones.md)); `pipeline/review_zones.py` mirrors them rather than importing `api/`.
 - The 30° and 7-day thresholds are conventions for a visible caution, not tested against radar error rates.

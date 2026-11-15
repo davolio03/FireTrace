@@ -4,7 +4,8 @@
 # Relative paths resolve against the current working directory. Every input is verified
 # against its upstream manifest; terrain_dir, optical_dir, weather_dir and highlight_dir are
 # optional and are merged only when their manifest (terrain.json / optical.json /
-# weather_meta.json / highlight_meta.json) exists. highlight_dir is the XP-01 P1 mask.
+# weather_meta.json / highlight_meta.json / review_zones_meta.json) exists. highlight_dir is
+# the XP-01 P1 mask; review_zones_dir is the XP-04 P1 zone list (needs highlight and terrain).
 # Case identity fields below are not produced by any pipeline stage: name, location and
 # fire_start come from docs/PRODUCT.md and the CAL FIRE incident page.
 
@@ -22,6 +23,7 @@ terrain_dir = "data/interim/terrain"
 weather_dir = "data/interim/weather"
 optical_dir = "data/interim/optical"
 highlight_dir = "data/interim/highlight"
+review_zones_dir = "data/interim/review_zones"
 output_dir = "data/processed/web"
 
 [[sources]]
