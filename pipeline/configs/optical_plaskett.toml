@@ -1,0 +1,25 @@
+# DT-07 optical context for the Plaskett case. Paths are relative to the repository root.
+#   uv run python -m pipeline.optical fetch --config pipeline/configs/optical_plaskett.toml
+#   uv run python -m pipeline.optical build --config pipeline/configs/optical_plaskett.toml
+# Scenes chosen by visual inspection (decision K1): STAC eo:cloud_cover does not flag smoke.
+stac_items_url = "https://earth-search.aws.element84.com/v1/collections/sentinel-2-l2a/items"
+source_label = "Copernicus Sentinel-2 L2A (ESA), via Earth Search on AWS Open Data"
+source_url = "https://registry.opendata.aws/sentinel-2-l2a-cogs/"
+reflectance_max = 0.3
+gamma = 2.2
+# Earth Search sentinel-2-l2a COGs for these scenes store reflectance x 10000 WITHOUT the
+# +1000 L2A offset, although STAC raster:bands declares offset -0.1: 90-99% of valid land DNs
+# in the 2026-10-15 crop (31% in the 2026-08-30 crop) are < 1000. "none" therefore computes
+# reflectance = DN * 0.0001. Build stops if, under "none", no band has > 1% of valid DNs below
+# 1000 (the data look offset), or, under "stac", > 1% of reflectance is negative. These are
+# bounds, not proof: see docs/methods/optical.md.
+dn_offset_policy = "none"
+ingest_dir = "data/interim/nisar"
+raw_dir = "data/raw/sentinel2"
+output_dir = "data/interim/optical"
+
+[scenes.optical_during]
+id = "S2A_10SFE_20260830_0_L2A"
+
+[scenes.optical_after]
+id = "S2B_10SFE_20261015_0_L2A"

@@ -74,6 +74,9 @@ Internal, gitignored pipeline products on the 10 m EPSG:32610 crop grid. They ar
 | DT-06 weather | `data/raw/imerg/` | IMERG Late daily V07 granules downloaded once by `pipeline.weather fetch` + `imerg_manifest.json` (URLs, sha256) |
 | DT-06 weather | `data/interim/weather/weather.json` | Web contract (`weather.schema.json`): AOI area-weighted daily precipitation, summary up to the day before t2; copied by DT-04 ([method](methods/weather.md)) |
 | DT-06 weather | `data/interim/weather/weather_meta.json` | Input checksums, IMERG version, cells and weights, date and rain-day rules, missing days |
+| DT-07 optical | `data/raw/sentinel2/` | Exact AOI windows of the Sentinel-2 L2A B04/B03/B02 (10 m) and SCL (20 m) assets + `optical_manifest.json` (scene metadata, asset URLs, windows, sha256) |
+| DT-07 optical | `data/interim/optical/optical_{during,after}.{png,tif}` | EPSG:3857 true-colour PNGs (fixed 0-0.3 reflectance stretch) and 3-band uint16 L2A DN COGs on the crop grid ([method](methods/optical.md)) |
+| DT-07 optical | `data/interim/optical/optical_layers.json` + `optical.json` | `layers.schema.json` entries (group `optical_context`, `acquired`, `source`) merged by DT-04; provenance, stretch, coverage, SCL shares, checksums |
 | DT-04 export | `data/processed/web/{case,layers}.json` + `layers/<id>.png` | Web contract bundle: EPSG:3857 RGBA PNGs (nearest, common-mask transparency, shared stretches), corners and legends, `case.json` from the upstream manifests ([method](methods/web-export.md)) |
 | DT-04 export | `data/processed/web/{stats.json,perimeter.geojson,weather.json}` | Byte-for-byte copies of the CH-02, DT-03 and (optional) DT-06 products, plus merged DT-05 terrain layers when present |
 | DT-04 export | `data/processed/web/export.json` | Not a contract file: input and output sha256, optional inputs merged, web grid, resampling, stretch rules and domains |

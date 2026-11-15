@@ -11,6 +11,7 @@ import json
 import os
 import shutil
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -517,7 +518,7 @@ def test_optional_inputs_are_merged_only_when_present(tmp_path: Path):
     assert "hillshade" not in _layers(bare.output_dir)
     assert not (bare.output_dir / "weather.json").exists()
     manifest = _load(bare.output_dir / "export.json")
-    assert manifest["optional"] == {"terrain": False, "weather": False}
+    assert manifest["optional"] == {"terrain": False, "optical": False, "weather": False}
 
     full = write_inputs(tmp_path / "full", terrain=True, weather=True)
     run_export(full)
@@ -526,7 +527,11 @@ def test_optional_inputs_are_merged_only_when_present(tmp_path: Path):
     assert (full.output_dir / "layers/slope.png").read_bytes() == (
         full.terrain_dir / "slope.png"
     ).read_bytes()
-    assert _load(full.output_dir / "export.json")["optional"] == {"terrain": True, "weather": True}
+    assert _load(full.output_dir / "export.json")["optional"] == {
+        "terrain": True,
+        "optical": False,
+        "weather": True,
+    }
 
 
 def test_reruns_are_byte_identical(tmp_path: Path):
@@ -684,7 +689,7 @@ def test_foreign_files_in_the_output_dir_are_refused(tmp_path: Path):
     assert (config.output_dir / "notes.txt").read_text(encoding="utf-8") == "mine"
     (config.output_dir / "notes.txt").unlink()
     (config.output_dir / "layers").mkdir()
-    (config.output_dir / "layers" / "optical_after.png").write_bytes(b"x")
+    (config.output_dir / "layers" / "not_a_layer.png").write_bytes(b"x")
     with pytest.raises(ExportError, match="does not own"):
         run_export(config)
 
@@ -922,3 +927,140 @@ def test_junction_in_the_output_is_refused(tmp_path: Path):
     with pytest.raises(ExportError, match="does not own"):
         run_export(config)
     assert (elsewhere / "slope.png").read_bytes() == b"precious"
+
+
+# --------------------------------------------------------------------------- DT-07 optical
+
+
+def write_optical(directory: Path, ingest_path: Path, **layer_overrides: Any) -> None:
+    directory.mkdir(parents=True, exist_ok=True)
+    grey = np.linspace(0.0, 1.0, H * W).reshape(H, W)
+    warped = warp_to_web(grey, src_transform=TRANSFORM, src_crs=UTM10N, resampling="bilinear")
+    web = {"coordinates": warped.coordinates, "width_px": warped.width, "height_px": warped.height}
+    layers = []
+    for lid, when in (
+        ("optical_during", "2026-08-30T18:54:53Z"),
+        ("optical_after", "2026-10-15T19:04:33Z"),
+    ):
+        write_png(directory / f"{lid}.png", colorize(warped.data, [(0, "#000000"), (1, "#ffffff")]))
+        layers.append(
+            {
+                "id": lid,
+                "title": f"Optical {lid}",
+                "kind": "raster",
+                "group": "optical_context",
+                "url": f"layers/{lid}.png",
+                "default_visible": False,
+                "default_opacity": 1.0,
+                "acquired": when,
+                "source": {
+                    "label": "Sentinel-2 L2A",
+                    "url": "https://example.org/s2",
+                    "product_id": lid,
+                },
+                "legend": {"type": "rgb", "note": "True colour. Complementary context."},
+                **web,
+                **layer_overrides,
+            }
+        )
+    _json(
+        directory / "optical_layers.json",
+        {"contract_version": "1.2.0", "data_status": "real", "layers": layers},
+    )
+    doc = {
+        "optical_format_version": 1,
+        "ingest": {"sha256": _sha(ingest_path)},
+        "grid": {**GRID, "crs": "EPSG:32610"},
+        "outputs": {
+            name: {"file": name, "sha256": _sha(directory / name)}
+            for name in ("optical_during.png", "optical_after.png", "optical_layers.json")
+        },
+    }
+    _json(directory / "optical.json", doc)
+
+
+def _with_optical(tmp_path: Path, **layer_overrides: Any) -> ExportConfig:
+    config = write_inputs(tmp_path)
+    optical_dir = tmp_path / "optical"
+    write_optical(optical_dir, config.ingest_dir / "ingest.json", **layer_overrides)
+    return replace(config, optical_dir=optical_dir)
+
+
+def test_optical_layers_are_merged_and_validate(tmp_path: Path):
+    config = _with_optical(tmp_path)
+    run_export(config)
+    layers = _layers(config.output_dir)
+    assert layers["optical_during"]["group"] == "optical_context"
+    assert layers["optical_after"]["acquired"] == "2026-10-15T19:04:33Z"
+    assert (config.output_dir / "layers/optical_during.png").read_bytes() == (
+        config.optical_dir / "optical_during.png"
+    ).read_bytes()
+    manifest = _load(config.output_dir / "export.json")
+    assert manifest["optional"]["optical"] is True and "optical.json" in manifest["inputs"]
+    spec = importlib.util.spec_from_file_location("validate", ROOT / "contracts/tools/validate.py")
+    assert spec and spec.loader
+    validate = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(validate)
+    errors: list[str] = []
+    validate.check_web_dir(config.output_dir, errors)
+    assert errors == []
+
+
+@pytest.mark.parametrize(
+    ("override", "message"),
+    [
+        ({"group": "terrain"}, "optical_context"),
+        ({"url": "layers/other.png"}, "url"),
+        ({"width_px": 3}, "size differs"),
+    ],
+    ids=["group", "url", "size"],
+)
+def test_invalid_optical_fragment_is_rejected(
+    tmp_path: Path, override: dict[str, Any], message: str
+) -> None:
+    config = _with_optical(tmp_path, **override)
+    with pytest.raises(ExportError, match=message):
+        run_export(config)
+    assert not config.output_dir.exists()
+
+
+def test_optical_dir_is_optional_in_the_config(tmp_path: Path):
+    config = load_config(ROOT / "pipeline/configs/case_plaskett.toml", base_dir=tmp_path)
+    assert config.optical_dir == tmp_path / "data/interim/optical"
+
+
+def test_empty_optical_dir_is_treated_as_not_run(tmp_path: Path):
+    config = write_inputs(tmp_path)
+    (tmp_path / "optical").mkdir()
+    run_export(replace(config, optical_dir=tmp_path / "optical"))
+    assert _load(config.output_dir / "export.json")["optional"]["optical"] is False
+
+
+@pytest.mark.parametrize(
+    ("override", "message"),
+    [
+        ({"source": {}}, "source"),
+        ({"acquired": "invalid"}, "acquired"),
+        ({"legend": {"type": "continuous"}}, "legend"),
+    ],
+    ids=["empty_source", "bad_acquired", "bad_legend"],
+)
+def test_contract_invalid_optical_metadata_keeps_the_previous_bundle(
+    tmp_path: Path, override: dict[str, Any], message: str
+) -> None:
+    good = _with_optical(tmp_path / "good")
+    run_export(good)
+    before = {
+        p.relative_to(good.output_dir): p.read_bytes()
+        for p in good.output_dir.rglob("*")
+        if p.is_file()
+    }
+    write_optical(good.optical_dir, good.ingest_dir / "ingest.json", **override)
+    with pytest.raises(ExportError, match=message):
+        run_export(good)
+    after = {
+        p.relative_to(good.output_dir): p.read_bytes()
+        for p in good.output_dir.rglob("*")
+        if p.is_file()
+    }
+    assert after == before
