@@ -30,6 +30,11 @@ latitude using the keyboard, to view the point evidence. The inspector uses
 the mock API by default; its synthetic values are not scientific validation.
 Fixture display is not evidence of real-data alignment.
 
+The Results panel reads `stats.json` from `VITE_DATA_BASE_URL` and displays
+valid coverage and descriptive change-index statistics inside and outside the
+official perimeter. These are not measurements of burned area. P1 highlight
+fields are not displayed.
+
 ## Shared map state
 
 Frontend features use `useMapStore` from `src/state/mapStore.ts` and its actions.
