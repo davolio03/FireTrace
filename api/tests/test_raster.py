@@ -1030,6 +1030,16 @@ def test_steep_slope_pixel_lists_the_slope_value(tmp_path: Path) -> None:
     assert "steep_slope" not in at_threshold
 
 
+def test_float32_slope_just_above_threshold_reads_above_it(tmp_path: Path) -> None:
+    root, _, _ = _case_data(tmp_path)
+    _with_terrain(root, slope=np.full((2, 2), 30.000001, dtype=np.float32))
+
+    steep = _caveats_by_id(_inspect(root, 0, 0))["steep_slope"]
+
+    assert steep["triggered"] is True
+    assert steep["reason"].startswith("slope 30.000002° > 30°:")
+
+
 def test_nan_slope_is_unknown_and_not_listed(tmp_path: Path) -> None:
     root, _, _ = _case_data(tmp_path)
     _with_terrain(root, slope=np.full((2, 2), np.nan, dtype=np.float32))
@@ -1124,7 +1134,12 @@ def test_tampered_weather_is_unavailable(tmp_path: Path) -> None:
         {"last_rain_before_t2": "yesterday"},
         {"last_rain_before_t2": 5},
         {"data_status": "synthetic"},
+        {"data_status": []},
+        {"data_status": {}},
+        {"data_status": 1},
         {"period": None},
+        {"period": ["2026-08-16", "2026-10-03"]},
+        {"period": {"start": "2026-08-16", "end": 20261003}},
         {"last_rain_before_t2": "2026-10-03"},  # rain on t2 breaks the rule's precondition
     ],
 )

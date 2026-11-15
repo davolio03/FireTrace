@@ -451,8 +451,6 @@ class FireTraceRasterService:
         if not isinstance(outputs, Mapping) or "weather.json" not in outputs:
             return None
         document = self._web_json("weather.json", export)
-        if document.get("data_status") not in {"mock", "real"}:
-            raise HTTPException(status_code=503, detail="weather.json has an invalid data_status")
         try:
             summary = weather_summary_from_json(document)
         except (KeyError, TypeError, ValueError) as exc:

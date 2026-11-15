@@ -30,7 +30,7 @@ Items are returned in the order of the contract enum. An **invalid radar pixel r
 | `vegetation_structure` | never (no per-pixel rule yet) | always listed as the generic caution |
 | `near_perimeter_edge` | pixel in the 50 m band | not listed |
 
-`reason` states the rule and the value, for example `slope 34.2° > 30°`. The slope is shown with one decimal, or two when one decimal would round onto the threshold (30.01° is shown as `30.01°`, never `30.0° > 30°`).
+`reason` states the rule and the value, for example `slope 34.2° > 30°`. The slope is shown with the fewest decimals, from one up to six, whose shown value is still strictly greater than 30° (34.24° is shown as `34.2°`, 30.01° as `30.01°`, never `30.0° > 30°`). A slope even closer to the threshold, such as 30.0000001°, reads `slope just above 30°` instead of a rounded number.
 
 ### Soil moisture
 

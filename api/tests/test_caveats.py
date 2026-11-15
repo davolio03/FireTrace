@@ -79,6 +79,32 @@ def test_slope_reason_never_shows_threshold_as_exceeding_itself() -> None:
     assert "slope 30.01° > 30°" in caveats["steep_slope"]["reason"]
 
 
+@pytest.mark.parametrize(
+    ("slope", "shown"),
+    [
+        (30.000001, "slope 30.000001° > 30°"),
+        (30.000001907348633, "slope 30.000002° > 30°"),  # float32(30.000001)
+        (30.0000001, "slope just above 30°"),
+    ],
+)
+def test_slope_reason_just_above_threshold_never_reads_as_the_threshold(
+    slope: float, shown: str
+) -> None:
+    reason = _by_id(evaluate_caveats(_pixel(slope_deg=slope), _dry()))["steep_slope"]["reason"]
+    assert reason.startswith(f"{shown}:")
+    assert "30.0°" not in reason
+    assert "30.00°" not in reason
+
+
+def test_float32_slope_just_above_threshold_shows_a_value_above_it() -> None:
+    np = pytest.importorskip("numpy")
+    slope = np.float32(30.000001)
+    assert float(slope) > SLOPE_THRESHOLD_DEG
+    reason = _by_id(evaluate_caveats(_pixel(slope_deg=slope), _dry()))["steep_slope"]["reason"]
+    shown = reason.removeprefix("slope ").split("°", 1)[0]
+    assert float(shown) > SLOPE_THRESHOLD_DEG
+
+
 def test_numpy_sampled_values_are_accepted() -> None:
     np = pytest.importorskip("numpy")
     pixel = _pixel(
@@ -218,6 +244,32 @@ def test_weather_with_explicit_null_last_rain_is_dry() -> None:
     assert weather_summary_from_json(doc) == WeatherSummary(
         t2_date=T2, last_rain_before_t2=None, data_status="real"
     )
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"data_status": []},
+        {"data_status": {}},
+        {"data_status": 1},
+        {"data_status": "synthetic"},
+        {"period": ["2026-08-16", "2026-10-03"]},
+        {"period": "2026-10-03"},
+        {"period": {"start": "2026-08-16", "end": 20261003}},
+        {"period": {"start": 20260816, "end": "2026-10-03"}},
+        {"last_rain_before_t2": 5},
+        {"last_rain_before_t2": ["2026-09-30"]},
+    ],
+)
+def test_weather_with_wrong_types_is_rejected_as_value_error(overrides: dict[str, Any]) -> None:
+    doc: dict[str, Any] = {
+        "data_status": "real",
+        "period": {"start": "2026-08-16", "end": "2026-10-03"},
+        "last_rain_before_t2": "2026-09-30",
+    }
+    doc.update(overrides)
+    with pytest.raises(ValueError, match="weather.json"):
+        weather_summary_from_json(doc)
 
 
 # --- vegetation_structure, invalid pixels, order and contract ---------------------
