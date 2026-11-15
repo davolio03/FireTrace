@@ -39,7 +39,7 @@ import tomllib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 import numpy as np
 from affine import Affine
@@ -260,6 +260,19 @@ def load_config(path: Path, base_dir: Path | None = None) -> HighlightConfig:
 # --------------------------------------------------------------------------- inputs
 
 
+class InputDirs(Protocol):
+    """The three upstream directories a highlight-style stage reads (also XP-02)."""
+
+    @property
+    def change_dir(self) -> Path: ...
+
+    @property
+    def sar_dir(self) -> Path: ...
+
+    @property
+    def perimeter_dir(self) -> Path: ...
+
+
 @dataclass(frozen=True)
 class Inputs:
     grid: dict[str, Any]
@@ -283,7 +296,7 @@ def _manifest(path: Path) -> tuple[dict[str, Any], str]:
     return doc, hashlib.sha256(payload).hexdigest()
 
 
-def load_inputs(config: HighlightConfig) -> Inputs:
+def load_inputs(config: InputDirs) -> Inputs:
     """Read CH-01, DT-02 and DT-03 products and check versions, linkage, grids and hashes.
 
     The checks are the CH-02 ones (``pipeline.stats``), so both stages accept exactly the
