@@ -7,7 +7,7 @@ compatibility: Requires Python 3.8 or later.
 
 # Kanvas
 
-The board is live at `http://andriudevserver.tail8ddc4a.ts.net:8765/FireTrace/`. Change it only through the CLI in `.agents/skills/kanvas/`; the CLI reads `remote.json` and writes the live board, so a client needs only `git pull`. The CLI enforces the workflow and keeps the board valid:
+The canonical board is remote. Configure the ignored `.agents/skills/kanvas/remote.json` with the approved endpoint supplied privately by the maintainer before running `status` or `ready`. Change the board only through the CLI in `.agents/skills/kanvas/`; it enforces the workflow and keeps the board valid:
 
 ```bash
 python .agents/skills/kanvas/kanvas.py <command>
@@ -17,7 +17,9 @@ Use `python3` where `python` is missing. Never edit `kanvas.json` by hand and ne
 
 ## Live board
 
-`remote.json`, next to this file, points every command at the live board. Do not add a client-specific configuration: a `git pull` brings the URL and this file. If the live board cannot be reached, stop and tell the human; do not fall back to a local board. The `--local` flag (or `KANVAS_LOCAL=1`) is only for the computer running `kanvas serve`. `attach` is not supported on the live board yet: upload images from the board in the browser.
+`remote.example.json`, next to this file, contains a reserved, nonoperational example. For a new checkout, copy it to `remote.json` and replace its URL with the endpoint supplied privately by the maintainer. Keep existing configured files; do not overwrite them with the example. `remote.json` is ignored and must never be committed. A `git pull` brings the example and CLI, not private infrastructure settings.
+
+Configure this file before `status` or `ready`; missing or empty configuration is an error, not permission to use a local snapshot. If the live board cannot be reached, stop and tell the human; do not fall back to a local board. The `--local` flag (or `KANVAS_LOCAL=1`) is only for the computer running `kanvas serve`. `attach` is not supported on the live board yet: upload images from the board in the browser.
 
 ## Workflow
 

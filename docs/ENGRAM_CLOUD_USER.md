@@ -6,13 +6,18 @@ administrator's token or put a token in chat, Git, shell history, or logs.
 
 ## 1. Check access
 
-You need Tailscale access to `tail8ddc4a.ts.net`, the Engram CLI, Python 3 and a
-local FireTrace checkout. Engram 3.6.0 supports manual sync; 3.7.2 or newer is
+Obtain the approved private endpoint and required network access from the
+administrator. The `https://engram.example.invalid` URL below is a reserved
+placeholder: replace it locally before using any command or script. Never commit
+the real endpoint or token.
+
+You also need the Engram CLI, Python 3 and a local FireTrace checkout.
+Engram 3.6.0 supports manual sync; 3.7.2 or newer is
 recommended for current autosync behavior.
 
 ```sh
 tailscale status
-curl -4 -sS https://andriudevserver.tail8ddc4a.ts.net/health
+curl -4 -sS https://engram.example.invalid/health
 engram --version
 ```
 
@@ -26,7 +31,7 @@ Run these commands as the same operating-system user and with the same
 `ENGRAM_DATA_DIR` used by your agent. The default is `~/.engram`.
 
 ```sh
-engram cloud config --server https://andriudevserver.tail8ddc4a.ts.net
+engram cloud config --server https://engram.example.invalid
 python3 - <<'PY'
 import getpass
 import json
@@ -39,7 +44,7 @@ config = json.loads(path.read_text()) if path.exists() else {}
 token = getpass.getpass("Personal Engram token: ").strip()
 if not token:
     raise SystemExit("No token provided; nothing changed.")
-config["server_url"] = "https://andriudevserver.tail8ddc4a.ts.net"
+config["server_url"] = "https://engram.example.invalid"
 config["token"] = token
 directory.mkdir(parents=True, exist_ok=True)
 fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)

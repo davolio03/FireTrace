@@ -3083,12 +3083,19 @@ def remote_url_for(args):
         return None
     if getattr(args, "command", None) in LOCAL_ONLY_COMMANDS:
         return None
+    # A shipped example marks projects that require the live board, not a snapshot.
+    requires_remote = os.path.isfile(
+        os.path.join(os.path.dirname(REMOTE_CONFIG), "remote.example.json")
+    )
+    missing_message = "Configure remote.json with the approved live board URL before running Kanvas."
     url = os.environ.get("KANVAS_REMOTE_URL")
     if url is None:
         try:
             with open(REMOTE_CONFIG, encoding="utf-8") as f:
                 data = json.load(f)
         except FileNotFoundError:
+            if requires_remote:
+                raise KanvasError(missing_message) from None
             return None
         except (OSError, ValueError) as e:
             raise KanvasError(f"Cannot read {REMOTE_CONFIG}: {e}")
@@ -3097,9 +3104,13 @@ def remote_url_for(args):
         url = data.get("url")
     if not isinstance(url, str):
         if url is None:
+            if requires_remote:
+                raise KanvasError(missing_message)
             return None
         raise KanvasError(f"{REMOTE_CONFIG} needs a string \"url\"")
     url = url.strip()
+    if not url and requires_remote:
+        raise KanvasError(missing_message)
     return url or None
 
 
