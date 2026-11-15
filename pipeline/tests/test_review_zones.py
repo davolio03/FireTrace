@@ -625,3 +625,26 @@ def test_module_constants_match_the_caveat_method_doc():
     assert "| `SLOPE_THRESHOLD_DEG` | 30° |" in doc
     assert review_zones.SLOPE_THRESHOLD_DEG == 30.0
     assert highlight.MASK_NODATA == 255
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "message"),
+    [
+        ("window", 1.9, "window must be an integer"),
+        ("window", 2, "positive odd integer"),
+        ("window", True, "window must be an integer"),
+        ("connectivity", 8.9, "connectivity must be an integer"),
+        ("connectivity", 6, "4 or 8"),
+        ("threshold", "2.0", "finite number"),
+        ("min_region_px", 0, "at least 1"),
+    ],
+)
+def test_malformed_highlight_parameters_are_rejected_not_coerced(
+    tmp_path: Path, key: str, value: Any, message: str
+):
+    config = config_for(tmp_path)
+    meta_path = config.highlight_dir / "highlight_meta.json"
+    meta = _load(meta_path)
+    meta["parameters"][key] = value
+    _json(meta_path, meta)
+    _fails_without_writing(config, message)

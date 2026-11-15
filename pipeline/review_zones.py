@@ -428,6 +428,42 @@ def _boundary_utm(payload: bytes) -> BaseGeometry:
     return boundary
 
 
+def check_highlight_params(params: Any) -> dict[str, Any]:
+    """The XP-01 parameters this stage reuses, rejected (never coerced) when malformed."""
+    source = "highlight_meta.json: parameters"
+    if not isinstance(params, Mapping):
+        raise ReviewZonesError(f"{source} must be an object")
+
+    def integer(key: str) -> int:
+        value = params.get(key)
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise ReviewZonesError(f"{source}.{key} must be an integer, got {value!r}")
+        return value
+
+    threshold = params.get("threshold")
+    if (
+        not isinstance(threshold, int | float)
+        or isinstance(threshold, bool)
+        or not math.isfinite(threshold)
+    ):
+        raise ReviewZonesError(f"{source}.threshold must be a finite number, got {threshold!r}")
+    window = integer("window")
+    if window < 1 or window % 2 == 0:
+        raise ReviewZonesError(f"{source}.window must be a positive odd integer, got {window}")
+    connectivity = integer("connectivity")
+    if connectivity not in CONNECTIVITY:
+        raise ReviewZonesError(f"{source}.connectivity must be 4 or 8, got {connectivity}")
+    min_region = integer("min_region_px")
+    if min_region < 1:
+        raise ReviewZonesError(f"{source}.min_region_px must be at least 1, got {min_region}")
+    return {
+        "threshold": float(threshold),
+        "window": window,
+        "connectivity": connectivity,
+        "min_region_px": min_region,
+    }
+
+
 def load_inputs(config: ReviewZonesConfig) -> Inputs:
     """Read every product and check versions, the manifest chain, grids and checksums."""
     try:
@@ -471,14 +507,7 @@ def load_inputs(config: ReviewZonesConfig) -> Inputs:
         hl_grid = stats._grid(hl_meta, "highlight_meta.json")
         if hl_grid != grid:
             raise ReviewZonesError("highlight_meta.json: grid differs from change.json")
-        hl_params = stats._get(hl_meta, "parameters", "highlight_meta.json")
-        if not isinstance(hl_params, Mapping) or not {
-            "threshold",
-            "window",
-            "connectivity",
-            "min_region_px",
-        } <= set(hl_params):
-            raise ReviewZonesError("highlight_meta.json: incomplete 'parameters'")
+        hl_params = check_highlight_params(stats._get(hl_meta, "parameters", "highlight_meta.json"))
         mask = stats._read(
             config.highlight_dir,
             stats._record(hl_meta, ("outputs", "highlight_mask.tif"), "highlight_meta.json"),
