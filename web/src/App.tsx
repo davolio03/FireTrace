@@ -1,8 +1,8 @@
-import { type SyntheticEvent, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import storyJson from './story/story.json'
 import { parseStory } from './features/story/story'
-import { StoryPlayer } from './features/story/StoryPlayer'
+import { StoryView } from './features/story/StoryView'
 import { storyDurationMs } from './features/story/timing'
 import {
   usePrefersReducedMotion,
@@ -62,7 +62,9 @@ function AppContent() {
   })
   const [manifestError, setManifestError] = useState(false)
   const [caseData, setCaseData] = useState<CaseData | null>(null)
-  const [view, setView] = useState<'overview' | 'analysis'>('overview')
+  const [view, setView] = useState<'overview' | 'analysis' | 'story'>(
+    'overview',
+  )
   const [profileSample, setProfileSample] = useState<LonLat | null>(null)
   const reducedMotion = usePrefersReducedMotion()
   // Only play the story written for the loaded case.
@@ -71,15 +73,15 @@ function AppContent() {
       ? productionStory
       : null
   const player = useStoryPlayer(story, layers, reducedMotion)
-  const pauseOnInteraction = (event: SyntheticEvent) => {
-    if (
-      player.status === 'playing' &&
-      event.target instanceof Element &&
-      !event.target.closest('[data-story-card]')
-    )
-      player.pause()
+  const { start, resume } = player
+  const watchStory = () => {
+    setView('story')
+    start(0)
   }
-
+  const resumeStory = () => {
+    setView('story')
+    resume()
+  }
   useEffect(() => {
     let active = true
     loadCaseData(import.meta.env.VITE_DATA_BASE_URL || '/')
@@ -209,10 +211,7 @@ function AppContent() {
             {player.available && (
               <button
                 type="button"
-                onClick={() => {
-                  setView('analysis')
-                  player.start(0)
-                }}
+                onClick={watchStory}
                 className="rounded bg-slate-900 px-4 py-2 text-white focus-visible:outline-2 focus-visible:outline-offset-2"
               >
                 Watch the story ({storyMinutes} min)
@@ -231,6 +230,17 @@ function AppContent() {
             </button>
           </div>
         </>
+      ) : view === 'story' && player.active ? (
+        <StoryView
+          player={player}
+          layers={layers}
+          dataBaseUrl={import.meta.env.VITE_DATA_BASE_URL || '/'}
+          dates={dates}
+          isMock={status === 'mock'}
+          reducedMotion={reducedMotion}
+          onLeave={player.exit}
+          onExplore={player.exit}
+        />
       ) : (
         <>
           <div className="mt-4 flex flex-wrap gap-3">
@@ -244,36 +254,31 @@ function AppContent() {
             >
               Back to overview
             </button>
-            {player.available && !player.active && (
+            {player.available && (
               <button
                 type="button"
-                onClick={() => player.start(0)}
+                onClick={watchStory}
                 className="rounded border px-4 py-2 focus-visible:outline-2 focus-visible:outline-offset-2"
               >
                 Play story
               </button>
             )}
+            {player.status === 'exploring' && (
+              <button
+                type="button"
+                onClick={resumeStory}
+                className="rounded bg-slate-900 px-4 py-2 text-white focus-visible:outline-2 focus-visible:outline-offset-2"
+              >
+                Resume story · {player.index + 1}/{player.count}
+              </button>
+            )}
           </div>
-          <div
-            className="mt-6 overflow-hidden rounded-lg border border-slate-300"
-            onPointerDownCapture={pauseOnInteraction}
-            onWheelCapture={pauseOnInteraction}
-            onKeyDownCapture={pauseOnInteraction}
-          >
+          <div className="mt-6 overflow-hidden rounded-lg border border-slate-300">
             <CaseMap
               layers={layers}
               dates={dates}
               dataBaseUrl={import.meta.env.VITE_DATA_BASE_URL || '/'}
               profileSample={profileSample}
-              overlay={
-                player.available ? (
-                  <StoryPlayer
-                    player={player}
-                    isMock={status === 'mock'}
-                    reducedMotion={reducedMotion}
-                  />
-                ) : null
-              }
             />
           </div>
           <Inspector caseData={caseData} />

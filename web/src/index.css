@@ -17,6 +17,26 @@ body {
   margin: 0;
 }
 
+/* Guided story: each caption rises in when its step starts. */
+.story-caption {
+  animation: story-caption 700ms ease-out both;
+}
+@keyframes story-caption {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .story-caption {
+    animation: none;
+  }
+}
+
 /* Guided story: time left on the current step. */
 @keyframes story-progress {
   from {

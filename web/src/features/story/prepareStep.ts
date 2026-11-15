@@ -1,6 +1,6 @@
 import type { LayerId, StoryStep } from '../../state/mapStore'
-import { isSupportedComparison } from '../map/comparison'
-import { type Layer, visibleMapLayers } from '../map/layers'
+import { storyMapLayers } from '../map/cinematicLayers'
+import type { Layer } from '../map/layers'
 
 export interface StepContext {
   /** Layers from the loaded manifest. */
@@ -9,14 +9,15 @@ export interface StepContext {
 }
 
 /**
- * Adapts a story step to what the app can show right now, so a step never
- * asks for something a user could not do: layers the map does not draw are
- * dropped, unsupported comparisons are removed, zone focus is skipped (there
- * is no zones panel yet) and animations are disabled under reduced motion.
+ * Adapts a story step to what the story map can show right now, so a step
+ * never asks for something a user could not do: layers it does not draw are
+ * dropped, comparisons need both layers (the story map crossfades them), zone
+ * focus is skipped (there is no zones panel yet) and animations are disabled
+ * under reduced motion.
  */
 export function prepareStep(step: StoryStep, context: StepContext): StoryStep {
   const drawable = new Set<LayerId>(
-    visibleMapLayers(context.layers).map((layer) => layer.id),
+    storyMapLayers(context.layers).map((layer) => layer.id),
   )
   const visible = step.layers.visible.filter((id) => drawable.has(id))
   const opacity = Object.fromEntries(
@@ -26,7 +27,7 @@ export function prepareStep(step: StoryStep, context: StepContext): StoryStep {
   ) as Partial<Record<LayerId, number>>
 
   let compare = step.compare
-  if (compare && !isSupportedComparison(compare, context.layers)) {
+  if (compare && !(drawable.has(compare.left) && drawable.has(compare.right))) {
     compare = undefined
   }
   const camera = { ...step.camera }

@@ -3,7 +3,7 @@ import caseFixture from '../../../../contracts/fixtures/web/case.json'
 import manifest from '../../../../contracts/fixtures/web/layers.json'
 import storyJson from '../../story/story.json'
 import storyFixture from '../../../../contracts/fixtures/web/story.json'
-import { isSupportedComparison } from '../map/comparison'
+import { storyMapLayers } from '../map/cinematicLayers'
 import type { Layer } from '../map/layers'
 import { parseStory } from './story'
 import { storyDurationMs } from './timing'
@@ -30,13 +30,22 @@ describe('production story', () => {
     }
   })
 
-  it('only names layers and comparisons the manifest provides', () => {
-    const known = new Set(layers.map((layer) => layer.id))
+  it('only names layers the story map draws', () => {
+    const drawn = new Set(storyMapLayers(layers).map((layer) => layer.id))
     for (const step of story.steps) {
-      for (const id of step.layers.visible) expect(known).toContain(id)
-      if (step.compare)
-        expect(isSupportedComparison(step.compare, layers)).toBe(true)
+      for (const id of step.layers.visible) expect(drawn).toContain(id)
+      if (step.compare) {
+        expect(drawn).toContain(step.compare.left)
+        expect(drawn).toContain(step.compare.right)
+      }
     }
+  })
+
+  it('opens from orbit and tilts the camera over the fire', () => {
+    expect(story.steps[0].id).toBe('orbit')
+    expect(story.steps[0].camera.zoom).toBeLessThan(4)
+    for (const step of story.steps.slice(1))
+      expect(step.camera.pitch ?? 0).toBeGreaterThan(30)
   })
 
   it('does not rely on mock-only review zones', () => {

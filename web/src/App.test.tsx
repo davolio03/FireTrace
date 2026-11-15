@@ -9,6 +9,7 @@ import type { ReactNode } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import caseFixture from '../../contracts/fixtures/web/case.json'
 import storyJson from './story/story.json'
+import { mapStore } from './state/mapStore'
 import App from './App'
 
 vi.mock('./data/caseData', () => ({
@@ -32,6 +33,10 @@ vi.mock('./features/map/CaseMap', () => ({
       {overlay}
     </div>
   ),
+}))
+
+vi.mock('./features/map/CinematicMap', () => ({
+  CinematicMap: () => <div data-testid="cinematic-map" />,
 }))
 
 vi.mock('./features/map/LocationMap', () => ({
@@ -65,22 +70,29 @@ describe('application scaffold', () => {
     ).toBeTruthy()
   })
 
-  it('starts the guided story from the overview and leaves it with Esc', async () => {
+  it('plays the story full screen and leaves it with Esc', async () => {
     render(<App />)
     const watch = await screen.findByRole('button', {
       name: /watch the story \(2 min\)/i,
     })
     fireEvent.click(watch)
-    const card = screen.getByRole('region', { name: /guided story/i })
-    expect(card.textContent).toContain(storyJson.steps[0].title)
-    expect(card.textContent).toContain('MOCK data')
-    expect(screen.queryByRole('button', { name: /play story/i })).toBeNull()
+    const caption = screen.getByRole('region', { name: /guided story/i })
+    expect(caption.textContent).toContain(storyJson.steps[0].title)
+    expect(screen.getByTestId('cinematic-map')).toBeTruthy()
+    expect(screen.queryByRole('region', { name: /map of big sur/i })).toBeNull()
+    expect(screen.getByText(/MOCK data/)).toBeTruthy()
     fireEvent.keyDown(document.body, { key: 'Escape' })
-    expect(screen.queryByRole('region', { name: /guided story/i })).toBeNull()
-    expect(
-      screen.getByRole('button', { name: /resume story · 1\/6/i }),
-    ).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: /back to overview/i }))
+    expect(screen.queryByTestId('cinematic-map')).toBeNull()
+    expect(screen.getByRole('region', { name: /map of big sur/i })).toBeTruthy()
+    const camera = mapStore.getState().camera
+    expect(camera.pitch).toBe(0)
+    expect(camera.zoom).toBeGreaterThanOrEqual(10)
+    fireEvent.click(
+      screen.getByRole('button', { name: /resume story · 1\/7/i }),
+    )
+    expect(screen.getByTestId('cinematic-map')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: /close the story/i }))
+    expect(screen.getByRole('region', { name: /map of big sur/i })).toBeTruthy()
   })
 
   it('hides the story when it was written for another case', async () => {

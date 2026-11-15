@@ -23,10 +23,26 @@ const base: StoryStep = {
 }
 
 describe('prepareStep', () => {
-  it('keeps only layers the map can draw', () => {
-    const step = prepareStep(base, { layers, reducedMotion: false })
-    expect(step.layers.visible).toEqual(['change_index', 'perimeter'])
-    expect(step.layers.opacity).toEqual({ change_index: 0.5 })
+  it('keeps only layers the story map can draw', () => {
+    const step = prepareStep(
+      {
+        ...base,
+        layers: {
+          ...base.layers,
+          visible: [...base.layers.visible, 'valid_mask'],
+        },
+      },
+      { layers, reducedMotion: false },
+    )
+    expect(step.layers.visible).toEqual([
+      'change_index',
+      'highlight_mask',
+      'perimeter',
+    ])
+    expect(step.layers.opacity).toEqual({
+      change_index: 0.5,
+      highlight_mask: 0.9,
+    })
     expect(step.compare).toEqual(base.compare)
     expect(step.camera.duration_ms).toBe(2000)
   })
@@ -37,11 +53,11 @@ describe('prepareStep', () => {
     expect(step.compare).toBeUndefined()
   })
 
-  it('removes comparisons the comparator does not support', () => {
+  it('removes comparisons with a layer the story map does not draw', () => {
     const step = prepareStep(
       {
         ...base,
-        compare: { left: 'change_index', right: 'sar_t2_hv', position: 0.5 },
+        compare: { left: 'valid_mask', right: 'sar_t2_hv', position: 0.5 },
       },
       { layers, reducedMotion: false },
     )

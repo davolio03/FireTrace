@@ -4,31 +4,44 @@
   "title": "Plaskett Fire through the eyes of NISAR",
   "steps": [
     {
+      "id": "orbit",
+      "title": "NISAR, 747 km up",
+      "panel": "none",
+      "body_md": "NISAR, the joint NASA–ISRO radar mission, orbits about 747 km above Earth. On 16 August and 3 October 2026 it imaged this frame over California from the same descending track.",
+      "camera": {
+        "center": [-128, 33],
+        "zoom": 2.4,
+        "pitch": 0,
+        "bearing": 0,
+        "duration_ms": 2500
+      },
+      "layers": { "visible": ["perimeter"] }
+    },
+    {
       "id": "context",
       "title": "A wildfire in Big Sur",
       "panel": "none",
-      "body_md": "The **Plaskett Fire** started on 26 August 2026 in the Santa Lucia Mountains of Big Sur. Its official perimeter, mapped from infrared flights on 14 September, covers about 12,100 ha. NISAR imaged the area on 16 August and 3 October.",
+      "body_md": "The **Plaskett Fire** started on 26 August in the Santa Lucia Mountains. The official perimeter, mapped from infrared flights on 14 September, covers about 12,100 ha of steep terrain.",
       "camera": {
-        "center": [-121.3865, 35.916],
-        "zoom": 10.5,
-        "duration_ms": 2500
+        "center": [-121.41, 35.88],
+        "zoom": 11.2,
+        "pitch": 62,
+        "bearing": 35,
+        "duration_ms": 6000
       },
-      "layers": {
-        "visible": ["hillshade", "perimeter"],
-        "opacity": {
-          "hillshade": 0.7
-        }
-      }
+      "layers": { "visible": ["perimeter"] }
     },
     {
       "id": "smoke",
       "title": "Smoke hides the ground, radar does not",
       "panel": "none",
-      "body_md": "During the fire, an optical Sentinel-2 image shows a **smoke plume** over the area. NISAR's L-band radar, with a wavelength of about 24 cm, passes through smoke and cloud. Right: the radar image after the fire.",
+      "body_md": "During the fire, Sentinel-2 saw a **smoke plume** over the area. NISAR's L-band radar, with a wavelength of about 24 cm, passes through smoke and cloud. Watch the smoke give way to radar.",
       "camera": {
         "center": [-121.3865, 35.916],
-        "zoom": 11,
-        "duration_ms": 2000
+        "zoom": 11.3,
+        "pitch": 55,
+        "bearing": -20,
+        "duration_ms": 2500
       },
       "layers": {
         "visible": ["optical_during", "sar_t2_hv", "perimeter"]
@@ -36,19 +49,21 @@
       "compare": {
         "left": "optical_during",
         "right": "sar_t2_hv",
-        "position": 0.9,
-        "animate_to": 0.3
+        "position": 1,
+        "animate_to": 0
       }
     },
     {
       "id": "before-after",
       "title": "What the radar observed",
       "panel": "none",
-      "body_md": "Same orbit and viewing geometry, before (16 August) and after (3 October). HV backscatter responds to vegetation volume, so it typically **drops** where foliage and branches were lost. This is the **observation**, not yet an interpretation.",
+      "body_md": "Before fades into after, from the same orbit and geometry. HV backscatter responds to vegetation volume, so it typically **drops** where foliage and branches were lost. This is the **observation**.",
       "camera": {
-        "center": [-121.3865, 35.916],
-        "zoom": 11.5,
-        "duration_ms": 2000
+        "center": [-121.39, 35.93],
+        "zoom": 11.8,
+        "pitch": 60,
+        "bearing": 60,
+        "duration_ms": 2500
       },
       "layers": {
         "visible": ["sar_t1_hv", "sar_t2_hv", "perimeter"]
@@ -56,64 +71,61 @@
       "compare": {
         "left": "sar_t1_hv",
         "right": "sar_t2_hv",
-        "position": 0.5,
-        "animate_to": 0.15
+        "position": 1,
+        "animate_to": 0
       }
     },
     {
       "id": "change-index",
       "title": "Measuring how much changed",
       "panel": "none",
-      "body_md": "The change index combines how much HH and HV changed, up or down. It is higher inside the perimeter than outside, but the two distributions **overlap**. A high index means large radar change, *not* confirmed fire.",
+      "body_md": "The change index combines how much HH and HV changed, up or down. It is higher inside the perimeter, but the distributions **overlap**. High change is *not* confirmed fire.",
       "camera": {
         "center": [-121.3865, 35.916],
-        "zoom": 11,
-        "duration_ms": 2000
+        "zoom": 11.2,
+        "pitch": 50,
+        "bearing": 110,
+        "duration_ms": 2500
       },
       "layers": {
         "visible": ["change_index", "perimeter"],
-        "opacity": {
-          "change_index": 0.8
-        }
+        "opacity": { "change_index": 0.85 }
       }
     },
     {
       "id": "highlight",
       "title": "Where radar and perimeter agree",
       "panel": "none",
-      "body_md": "The strongest, smoothed changes cover about 1,050 ha, almost all inside the perimeter, yet only about 9 % of it: the radar does not flag the whole fire area. Many patches follow slopes and drainages, a reason for **caution**.",
+      "body_md": "The strongest changes cover about 1,050 ha, almost all inside the perimeter, yet only 9 % of it. Many patches follow slopes and drainages: a reason for **caution**, not a finding.",
       "camera": {
-        "center": [-121.3865, 35.916],
-        "zoom": 11.5,
-        "duration_ms": 2000
+        "center": [-121.38, 35.93],
+        "zoom": 11.8,
+        "pitch": 65,
+        "bearing": 160,
+        "duration_ms": 2500
       },
       "layers": {
         "visible": ["change_index", "highlight_mask", "perimeter"],
-        "opacity": {
-          "change_index": 0.5
-        }
+        "opacity": { "change_index": 0.45 }
       }
     },
     {
       "id": "evidence",
       "title": "Check the evidence yourself",
       "panel": "inspector",
-      "body_md": "Inspect any pixel: dB values before and after, the HH and HV change, the method and its caveats. The perimeter is an operational outline, not ground truth; moisture, terrain and geometry also change the signal. **Radar change is not confirmed fire.**",
+      "body_md": "Every pixel keeps its evidence: dB before and after, HH and HV change, method and caveats. The perimeter is an outline, not ground truth. **Radar change is not confirmed fire.**",
       "camera": {
-        "center": [-121.380849, 35.965833],
-        "zoom": 12.5,
-        "duration_ms": 2500
+        "center": [-121.380849, 35.945],
+        "zoom": 10.8,
+        "pitch": 40,
+        "bearing": 200,
+        "duration_ms": 3000
       },
       "layers": {
         "visible": ["change_index", "perimeter"],
-        "opacity": {
-          "change_index": 0.8
-        }
+        "opacity": { "change_index": 0.8 }
       },
-      "focus": {
-        "type": "point",
-        "point": [-121.380849, 35.965833]
-      }
+      "focus": { "type": "point", "point": [-121.380849, 35.965833] }
     }
   ]
 }
