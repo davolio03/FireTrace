@@ -15,7 +15,7 @@ This page answers proposal §11, criterion 10: it declares how the team used AI 
 | --- | --- | --- |
 | T3 Code | desktop app that runs and orchestrates coding agents | Running Claude Code and Codex sessions and delegating reviews between them |
 | Claude Code | Anthropic (Claude models) | Writing pipeline, API and web code with tests, documentation and Kanvas board notes |
-| OpenCode | open-source coding agent, used with models from Chinese providers; the exact models were not recorded | Writing web and integration code, tests and board notes |
+| OpenCode | open-source coding agent, used with Anthropic Claude models | Writing web and integration code, tests and board notes |
 | Codex (gpt-6.1-sol) | OpenAI | Independent, read-only code reviews before pull requests; its findings were fixed and re-tested before a person reviewed the pull request |
 | Engram | open-source memory for coding agents | Shared memory of the team's agreed decisions; it stores text and generates nothing |
 
@@ -33,7 +33,11 @@ The tool list comes from the agent signatures recorded on the Kanvas board (for 
 | Member | AI tools | Used for |
 | --- | --- | --- |
 | David | T3 Code with Claude Code and Codex (gpt-6.1-sol for reviews); Engram | NISAR data pipeline, change products, P1 experiments, documentation |
-| Gabriel | OpenCode with models from Chinese providers | Application and frontend |
+| Gabriel | OpenCode with Claude models | Application and frontend |
 | Other members | T3 Code with Claude Code and Codex | Their Kanvas tasks |
 
-Reported by David on 2026-11-15. The exact model versions behind OpenCode were not recorded.
+Reported by David on 2026-11-15.
+
+## Challenge rules
+
+The NASA Space Apps 2026 [Project Submission Guide](https://www.spaceappschallenge.org/resources/project-submission-guide/) calls these tools "Super Intelligence (SI)" and allows them, provided the team states where and how they were used and acknowledges SI-generated code in descriptive text and metadata. This page is the descriptive text; the repository [NOTICE](../NOTICE) file carries the same acknowledgement as metadata. FireTrace includes no SI-generated images, video or audio and uses no NASA branding.

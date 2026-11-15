@@ -33,7 +33,7 @@ Task state lives only in Kanvas (`python3 .agents/skills/kanvas/kanvas.py status
 | **Copernicus DEM GLO-30** | Terrain context (slope, hillshade, layover/shadow) | Tile `Copernicus_DSM_COG_10_N35_00_W122_00_DEM` ([DOI](https://doi.org/10.5270/ESA-c5d3d65)) | "Produced using Copernicus WorldDEM-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved" |
 | **Copernicus Sentinel-2 L2A** | Optical context (smoke during, clear after) | `S2A_10SFE_20260830_0_L2A`, `S2B_10SFE_20261015_0_L2A`, via Earth Search ([AWS Open Data](https://registry.opendata.aws/sentinel-2-l2a-cogs/)) | Contains modified Copernicus Sentinel data 2026 (ESA) |
 
-NISAR is the primary source. The other sources are context and never replace or validate the radar result. The web shows each layer's source with it. The attribution texts above are those the sources and `layers.json` carry; each source's usage terms have **not yet been checked** against the challenge rules, and that check is a human task. The scientific background is the Döweler, Leuzinger and Bader preprint on Plaskett and Timber ([SSRN](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=7553393)). Its AUC-ROC of 0.984 is their result, not FireTrace's.
+NISAR is the primary source. The other sources are context and never replace or validate the radar result. The web shows each layer's source with it. Every data set, service, software package and reference, with its licence, is listed in [REFERENCES](docs/REFERENCES.md), as the NASA Space Apps rules require. The scientific background is the Döweler, Leuzinger and Bader preprint on Plaskett and Timber ([SSRN](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=7553393)). Its AUC-ROC of 0.984 is their result, not FireTrace's.
 
 ## Methodology
 
@@ -102,7 +102,7 @@ git diff --check
 
 ## Use of AI
 
-AI coding agents (Claude Code and Codex through T3 Code, and OpenCode) helped write and review code and documentation. People made the scientific decisions, approved every task and reviewed and merged every change. The product runs no AI and shows no AI-generated evidence. See [AI_USE](docs/AI_USE.md).
+AI coding agents (Claude Code and Codex through T3 Code, and OpenCode with Claude models) helped write and review code and documentation. People made the scientific decisions, approved every task and reviewed and merged every change. The product runs no AI and shows no AI-generated evidence. See [AI_USE](docs/AI_USE.md).
 
 ## Team navigation
 
@@ -114,11 +114,16 @@ AI coding agents (Claude Code and Codex through T3 Code, and OpenCode) helped wr
 | [CONTRACTS](docs/CONTRACTS.md) / [contracts](contracts/README.md) | Executable schemas, OpenAPI and fixtures |
 | [Methods](docs/methods/) | How each product is computed, with its real-data result |
 | [LIMITATIONS](docs/LIMITATIONS.md) / [AI_USE](docs/AI_USE.md) | Discrepancies, limitations and the AI-use declaration |
+| [REFERENCES](docs/REFERENCES.md) | Data, software and references with their licences |
 | [TEAM](docs/TEAM.md) / [CONTRIBUTING](CONTRIBUTING.md) | Owners, Kanvas, worktrees and human review |
 | [STATUS](docs/STATUS.md) / [DEMO](docs/DEMO.md) | Evidence snapshot and rehearsal runbook |
 | [QUALITY](docs/QUALITY.md) / [quality.json](quality.json) | Quality gate and pipeline commands |
 | [ENGRAM_CLOUD](docs/ENGRAM_CLOUD.md) | Shared team memory |
 
+## Licence
+
+FireTrace's code and documentation are licensed under the [Apache License 2.0](LICENSE); see [NOTICE](NOTICE). Data are not in the repository and keep the licences listed in [REFERENCES](docs/REFERENCES.md).
+
 ## Safety and delivery
 
-One writer per worktree. Contract changes need approval from the affected side and their own versioned PR. People own publication, review and merge. No direct or force pushes to `main`, and no secrets, raw data, model weights or memory exports in Git. The official challenge submission rules still need human confirmation.
+One writer per worktree. Contract changes need approval from the affected side and their own versioned PR. People own publication, review and merge. No direct or force pushes to `main`, and no secrets, raw data, model weights or memory exports in Git.
