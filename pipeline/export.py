@@ -44,6 +44,7 @@ import os
 import re
 import sys
 import tomllib
+import zlib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
@@ -105,7 +106,7 @@ BUNDLE_SUBDIRS: dict[str, frozenset[str] | publishing.Tree] = {
     TILES_DIR: terrain_tiles.TILE_TREE,
 }
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
-MAX_ZOOM = 22
+TILE_MAX_ZOOM = 15  # terrain-tiles.schema.json
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 
 GREY = ("#000000", "#ffffff")
@@ -630,22 +631,106 @@ def _int(doc: Mapping[str, Any], key: str, source: str, lo: int, hi: int) -> int
     return value
 
 
+def _number(value: Any) -> bool:
+    return isinstance(value, int | float) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def _optional_str(doc: Mapping[str, Any], keys: Sequence[str], source: str) -> None:
+    for key in keys:
+        if key in doc and not isinstance(doc[key], str):
+            raise ExportError(f"{source}: '{key}' must be a string")
+
+
 def _tile_bounds(doc: Mapping[str, Any]) -> tuple[float, float, float, float]:
     bounds = doc.get("bounds")
-    if (
-        not isinstance(bounds, list)
-        or len(bounds) != 4
-        or not all(
-            isinstance(v, int | float) and not isinstance(v, bool) and math.isfinite(v)
-            for v in bounds
-        )
-    ):
+    if not isinstance(bounds, list) or len(bounds) != 4 or not all(map(_number, bounds)):
         raise ExportError(f"tiles.json: 'bounds' must be 4 finite numbers, got {bounds!r}")
     west, south, east, north = (float(v) for v in bounds)
     lat = terrain_tiles.MAX_LAT
     if not (-180 <= west < east <= 180 and -lat <= south < north <= lat):
         raise ExportError(f"tiles.json: 'bounds' must be west < east, south < north, got {bounds}")
     return west, south, east, north
+
+
+def _dem_shas(info: Mapping[str, Any], source: str) -> set[str]:
+    dems = info.get("dem")
+    if not isinstance(dems, list) or not dems:
+        raise ExportError(f"{source}: 'firetrace.dem' must be a non-empty list")
+    shas: set[str] = set()
+    for i, dem in enumerate(dems):
+        if not isinstance(dem, dict) or not isinstance(dem.get("product_id"), str):
+            raise ExportError(f"{source}: firetrace.dem[{i}] needs a product_id")
+        digest = dem.get("sha256")
+        if not isinstance(digest, str) or not _SHA256.fullmatch(digest):
+            raise ExportError(f"{source}: firetrace.dem[{i}] needs a lowercase sha256")
+        _optional_str(dem, ("file", "url"), f"{source} firetrace.dem[{i}]")
+        shas.add(digest)
+    return shas
+
+
+def _check_tiles_manifest(
+    doc: Any, case_id: str
+) -> tuple[int, int, tuple[float, float, float, float], dict[str, str], set[str], int]:
+    """The terrain-tiles.schema.json rules (checked here, before publishing) plus the
+    stricter export rules; returns zooms, bounds, outputs, DEM digests and tile size."""
+    source = terrain_tiles.MANIFEST
+    if not isinstance(doc, dict):
+        raise ExportError(f"{source}: top level must be an object")
+    if doc.get("tilejson") != "3.0.0":
+        raise ExportError(f"{source}: 'tilejson' must be '3.0.0'")
+    _optional_str(doc, ("name",), source)
+    if doc.get("encoding") != "terrarium":
+        raise ExportError(f"{source}: 'encoding' must be 'terrarium'")
+    if doc.get("tiles") != ["{z}/{x}/{y}.png"]:
+        raise ExportError(f"{source}: 'tiles' must be ['{{z}}/{{x}}/{{y}}.png']")
+    size = doc.get("tileSize")
+    if isinstance(size, bool) or size not in (256, 512):
+        raise ExportError(f"{source}: 'tileSize' must be 256 or 512")
+    attribution = doc.get("attribution")
+    if not isinstance(attribution, str) or not attribution.strip():
+        raise ExportError(f"{source}: 'attribution' must be a non-empty string")
+    lo = _int(doc, "minzoom", source, 0, TILE_MAX_ZOOM)
+    hi = _int(doc, "maxzoom", source, 0, TILE_MAX_ZOOM)
+    if lo > hi:
+        raise ExportError(f"{source}: minzoom {lo} is greater than maxzoom {hi}")
+    bounds = _tile_bounds(doc)
+    info = doc.get("firetrace")
+    if not isinstance(info, dict):
+        raise ExportError(f"{source}: missing the 'firetrace' provenance block")
+    version = info.get("tiles_format_version")
+    if isinstance(version, bool) or version != terrain_tiles.TILES_FORMAT_VERSION:
+        raise ExportError(
+            f"{source}: tiles_format_version must be {terrain_tiles.TILES_FORMAT_VERSION}"
+        )
+    if info.get("case_id") != case_id:
+        raise ExportError(f"{source}: case_id {info.get('case_id')!r} differs from {case_id!r}")
+    if info.get("data_status") != "real":
+        raise ExportError(f"{source}: data_status must be 'real'")
+    if not isinstance(info.get("vertical_datum"), str):
+        raise ExportError(f"{source}: 'firetrace.vertical_datum' must be a string")
+    if info.get("surface_model") not in ("DSM", "DTM"):
+        raise ExportError(f"{source}: 'firetrace.surface_model' must be DSM or DTM")
+    _optional_str(info, ("note", "source_url", "resampling"), f"{source} firetrace")
+    if "precision_m" in info and not (_number(info["precision_m"]) and info["precision_m"] > 0):
+        raise ExportError(f"{source}: 'firetrace.precision_m' must be a positive number")
+    elevation = info.get("elevation_m_at_maxzoom", {})
+    if not isinstance(elevation, dict) or not all(
+        _number(elevation[k]) for k in ("min", "max") if k in elevation
+    ):
+        raise ExportError(f"{source}: 'firetrace.elevation_m_at_maxzoom' must hold numbers")
+    dem_shas = _dem_shas(info, source)
+    outputs = info.get("outputs")
+    if not isinstance(outputs, dict) or not outputs:
+        raise ExportError(f"{source}: 'firetrace.outputs' must list the tiles")
+    count = info.get("tile_count")
+    if isinstance(count, bool) or count != len(outputs):
+        raise ExportError(f"{source}: tile_count {count!r} differs from {len(outputs)} outputs")
+    for name, digest in outputs.items():
+        if not terrain_tiles.TILE_NAME.fullmatch(name):
+            raise ExportError(f"{source}: tile name {name!r} is not z/x/y.png")
+        if not isinstance(digest, str) or not _SHA256.fullmatch(digest):
+            raise ExportError(f"{source}: {name} needs a lowercase sha256, got {digest!r}")
+    return lo, hi, bounds, outputs, dem_shas, size
 
 
 def _expected_tiles(bounds: tuple[float, float, float, float], lo: int, hi: int) -> set[str]:
@@ -662,66 +747,87 @@ def _expected_tiles(bounds: tuple[float, float, float, float], lo: int, hi: int)
     }
 
 
+def _check_tile_png(name: str, payload: bytes, size: int) -> None:
+    """A complete, CRC-valid PNG of ``size`` x ``size`` 8-bit RGB or RGBA pixels.
+
+    Parsed strictly in memory: every chunk's CRC, one IHDR first, the IDAT stream fully
+    decompressed to exactly the scanline bytes the header implies, IEND last and nothing
+    after it. GDAL's PNG reader accepts truncated files, so it is not used here.
+    """
+    if not payload.startswith(PNG_SIGNATURE):
+        raise ExportError(f"{name}: not a PNG file")
+    pos, header, idat, ended = len(PNG_SIGNATURE), None, bytearray(), False
+    while pos < len(payload) and not ended:
+        if pos + 12 > len(payload):
+            raise ExportError(f"{name}: not a readable PNG: truncated chunk")
+        length = int.from_bytes(payload[pos : pos + 4], "big")
+        kind = payload[pos + 4 : pos + 8]
+        data = payload[pos + 8 : pos + 8 + length]
+        crc = payload[pos + 8 + length : pos + 12 + length]
+        if len(data) != length or len(crc) != 4:
+            raise ExportError(f"{name}: not a readable PNG: truncated chunk")
+        if zlib.crc32(kind + data).to_bytes(4, "big") != crc:
+            raise ExportError(f"{name}: not a readable PNG: bad CRC in {kind!r}")
+        if header is None and kind != b"IHDR":
+            raise ExportError(f"{name}: not a readable PNG: IHDR is not first")
+        if kind == b"IHDR":
+            if header is not None or length != 13:
+                raise ExportError(f"{name}: not a readable PNG: bad IHDR")
+            header = data
+        elif kind == b"IDAT":
+            idat += data
+        elif kind == b"IEND":
+            ended = True
+        pos += 12 + length
+    if header is None or not ended or pos != len(payload):
+        raise ExportError(f"{name}: not a readable PNG: missing IEND or trailing bytes")
+    width = int.from_bytes(header[0:4], "big")
+    height = int.from_bytes(header[4:8], "big")
+    depth, colour, _, _, interlace = header[8:13]
+    channels = {2: 3, 6: 4}.get(colour)
+    if (width, height) != (size, size) or depth != 8 or channels is None or interlace != 0:
+        raise ExportError(
+            f"{name}: expected a {size} px 8-bit RGB(A) non-interlaced PNG, got "
+            f"{width}x{height}, depth {depth}, colour type {colour}, interlace {interlace}"
+        )
+    expected = height * (1 + width * channels)
+    try:
+        inflater = zlib.decompressobj()
+        pixels = inflater.decompress(bytes(idat), expected + 1)
+    except zlib.error as exc:
+        raise ExportError(f"{name}: not a readable PNG: {exc}") from exc
+    if len(pixels) != expected or not inflater.eof or inflater.unused_data:
+        raise ExportError(f"{name}: not a readable PNG: image data is incomplete")
+
+
 def load_terrain_tiles(
     config: ExportConfig, inputs: Inputs, terrain: Terrain | None
 ) -> Tiles | None:
     """AP-07 relief tiles verified tile by tile, or None when the stage has not been run.
 
     The input directory may hold exactly ``tiles.json`` and the tiles it lists (plain files,
-    no links); the listed set must be exactly what the bounds give at each zoom; each tile
-    is read once, checked against its sha256 and kept as those bytes. When the DT-05 terrain
-    layers are in the bundle too, the tiles must come from the same DEM.
+    no links); everything is read once, in one identity-checked walk, and only those bytes
+    are verified and published. The manifest must satisfy terrain-tiles.schema.json, the
+    listed set must be exactly what the bounds give at each zoom and every tile must be a
+    complete PNG of the declared size. When the DT-05 terrain layers are in the bundle too,
+    the tiles must come from the same DEM.
     """
     directory = config.terrain_tiles_dir
     manifest = terrain_tiles.MANIFEST
     if directory is None or not (directory / manifest).exists():
         return None  # the stage has not been run (an empty directory is not an error)
     try:
-        present = publishing.owned_files(directory, terrain_tiles.TILE_TREE)
+        present = publishing.read_owned_tree(
+            directory, terrain_tiles.TILE_TREE, max_files=terrain_tiles.MAX_TILES + 1
+        )
     except PublishError as exc:
         raise ExportError(f"terrain_tiles_dir: {exc}") from exc
-    payload = _read_bytes(directory / manifest)
-    doc = _parse(payload, manifest)
-    if not isinstance(doc, dict):
-        raise ExportError(f"{manifest}: top level must be an object")
-    if doc.get("encoding") != "terrarium":
-        raise ExportError(f"{manifest}: 'encoding' must be 'terrarium'")
-    if doc.get("tiles") != ["{z}/{x}/{y}.png"]:
-        raise ExportError(f"{manifest}: 'tiles' must be ['{{z}}/{{x}}/{{y}}.png']")
-    if doc.get("tileSize") not in (256, 512) or isinstance(doc.get("tileSize"), bool):
-        raise ExportError(f"{manifest}: 'tileSize' must be 256 or 512")
-    attribution = doc.get("attribution")
-    if not isinstance(attribution, str) or not attribution.strip():
-        raise ExportError(f"{manifest}: 'attribution' must be a non-empty string")
-    lo = _int(doc, "minzoom", manifest, 0, MAX_ZOOM)
-    hi = _int(doc, "maxzoom", manifest, 0, MAX_ZOOM)
-    if lo > hi:
-        raise ExportError(f"{manifest}: minzoom {lo} is greater than maxzoom {hi}")
-    bounds = _tile_bounds(doc)
-    info = doc.get("firetrace")
-    if not isinstance(info, dict):
-        raise ExportError(f"{manifest}: missing the 'firetrace' provenance block")
-    if info.get("tiles_format_version") != terrain_tiles.TILES_FORMAT_VERSION:
-        raise ExportError(
-            f"{manifest}: tiles_format_version must be {terrain_tiles.TILES_FORMAT_VERSION}"
-        )
-    if info.get("case_id") != config.case_id:
-        raise ExportError(
-            f"{manifest}: case_id {info.get('case_id')!r} differs from {config.case_id!r}"
-        )
-    if info.get("data_status") != "real":
-        raise ExportError(f"{manifest}: data_status must be 'real'")
-    outputs = info.get("outputs")
-    if not isinstance(outputs, dict) or not outputs:
-        raise ExportError(f"{manifest}: 'firetrace.outputs' must list the tiles")
-    count = info.get("tile_count")
-    if isinstance(count, bool) or count != len(outputs):
-        raise ExportError(f"{manifest}: tile_count {count!r} differs from {len(outputs)} outputs")
-    for name, digest in outputs.items():
-        if not terrain_tiles.TILE_NAME.fullmatch(name):
-            raise ExportError(f"{manifest}: tile name {name!r} is not z/x/y.png")
-        if not isinstance(digest, str) or not _SHA256.fullmatch(digest):
-            raise ExportError(f"{manifest}: {name} needs a lowercase sha256, got {digest!r}")
+    if manifest not in present:
+        raise ExportError(f"terrain_tiles_dir: {manifest} disappeared while reading")
+    payload = present.pop(manifest)
+    lo, hi, bounds, outputs, dem_shas, size = _check_tiles_manifest(
+        _parse(payload, manifest), config.case_id
+    )
     expected = _expected_tiles(bounds, lo, hi)
     if set(outputs) != expected:
         extra, missing = sorted(set(outputs) - expected), sorted(expected - set(outputs))
@@ -729,41 +835,28 @@ def load_terrain_tiles(
             f"{manifest}: tiles differ from those the bounds give at zooms {lo}-{hi} "
             f"(extra {extra[:3]}, missing {missing[:3]})"
         )
-    unlisted = sorted(set(present) - set(outputs) - {manifest})
+    unlisted = sorted(set(present) - set(outputs))
     if unlisted:
         raise ExportError(f"terrain_tiles_dir holds unlisted tiles: {unlisted[:3]}")
     aoi = _get(inputs.ingest, ("aoi", "aoi_bbox_4326"), "ingest.json")
-    if not (
-        isinstance(aoi, list)
-        and len(aoi) == 4
-        and all(isinstance(v, int | float) and not isinstance(v, bool) for v in aoi)
-    ):
+    if not (isinstance(aoi, list) and len(aoi) == 4 and all(map(_number, aoi))):
         raise ExportError(f"ingest.json: aoi.aoi_bbox_4326 must be 4 numbers, got {aoi!r}")
     west, south, east, north = aoi
     if not (bounds[0] <= west and bounds[1] <= south and east <= bounds[2] and north <= bounds[3]):
         raise ExportError(f"{manifest}: bounds {list(bounds)} do not contain the case AOI")
-    if terrain is not None:
-        dems = info.get("dem")
-        shas = (
-            {d.get("sha256") for d in dems if isinstance(d, dict)}
-            if isinstance(dems, list)
-            else set()
+    if terrain is not None and (terrain.dem_sha256 is None or terrain.dem_sha256 not in dem_shas):
+        raise ExportError(
+            f"{manifest}: the relief tiles must be built from the DT-05 DEM "
+            "(terrain.json dem.sha256 not found in firetrace.dem)"
         )
-        if terrain.dem_sha256 is None or terrain.dem_sha256 not in shas:
-            raise ExportError(
-                f"{manifest}: the relief tiles must be built from the DT-05 DEM "
-                "(terrain.json dem.sha256 not found in firetrace.dem)"
-            )
     files = {manifest: payload}
     for name in sorted(outputs):
         if name not in present:
             raise ExportError(f"terrain_tiles_dir: tile missing: {name}")
-        try:
-            tile = publishing.read_verified(directory / name, outputs[name], manifest)
-        except PublishError as exc:
-            raise ExportError(f"{name}: {exc}") from exc
-        if not tile.startswith(PNG_SIGNATURE):
-            raise ExportError(f"{name}: not a PNG file")
+        tile = present[name]
+        if _sha_bytes(tile) != outputs[name]:
+            raise ExportError(f"{name}: sha256 differs from {manifest}; re-run that stage")
+        _check_tile_png(name, tile, size)
         files[name] = tile
     return Tiles(files=files, sha=_sha_bytes(payload))
 

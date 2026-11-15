@@ -198,22 +198,70 @@ def foreign_entries(directory: Path, owned: Owned, subdirs: Subdirs = None) -> l
     return sorted(foreign)
 
 
-def owned_files(directory: Path, owned: Owned, subdirs: Subdirs = None) -> list[str]:
-    """Every owned regular file under ``directory`` (relative, ``/``-separated, sorted).
+def _file_identity(path: Path) -> tuple[int, int, int, int]:
+    """``(dev, inode, size, mtime_ns)`` of a regular file, never following links/junctions."""
+    try:
+        st = os.lstat(path)
+    except OSError as exc:
+        raise PublishError(f"cannot inspect {path.name}: {exc}") from exc
+    if not stat.S_ISREG(st.st_mode) or getattr(st, "st_file_attributes", 0) & _REPARSE_POINT:
+        raise PublishError(f"{path.name} is not a regular file")
+    return st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns
 
-    Raises :class:`PublishError` if ``directory`` is missing, not plain or holds anything
-    foreign, so a verified input tree can be compared with its manifest file by file.
+
+def read_owned_tree(
+    directory: Path, owned: Owned, subdirs: Subdirs = None, max_files: int = 10_000
+) -> dict[str, bytes]:
+    """The bytes of every owned file under ``directory``, keyed by relative ``/`` path.
+
+    Raises :class:`PublishError` if ``directory`` is missing or not plain, holds anything
+    foreign (other names or depths, links, junctions) or more than ``max_files`` files, or
+    if any directory on a file's path or the file itself changes identity between the walk
+    and the end of its read. A verified input tree is then checked from these bytes only, so
+    nothing outside it can be read through a link that appears after the listing. As in
+    :func:`remove_owned`, a same-user race inside the final ``open`` is out of scope.
     """
     if not _plain_dir(directory):
         raise PublishError(f"input not found: {directory.name}")
-    found: list[str] = []
+    files: dict[str, bytes] = {}
     foreign: list[str] = []
-    _walk(directory, tree(owned, subdirs), "", found, foreign)
+
+    def walk(current: Path, spec: Tree, chain: list[tuple[Path, tuple[int, int]]], prefix: str):
+        for entry in _listing(current):
+            kind = entry_kind(entry)
+            sub = spec.child(entry.name, kind)
+            rel = prefix + entry.name
+            if sub is not None:
+                walk(entry, sub, [*chain, (entry, _identity(entry))], rel + "/")
+            elif spec.owns_file(entry.name, kind):
+                if len(files) >= max_files:
+                    raise PublishError(f"{directory.name} holds more than {max_files} files")
+                _still_all(chain)
+                before = _file_identity(entry)
+                try:
+                    payload = entry.read_bytes()
+                except OSError as exc:
+                    raise PublishError(f"{rel}: cannot read: {exc}") from exc
+                try:
+                    _still_all(chain)
+                    same = _file_identity(entry) == before and len(payload) == before[2]
+                except PublishError as exc:
+                    raise PublishError(f"{rel} changed during reading ({exc})") from exc
+                if not same:
+                    raise PublishError(f"{rel} changed during reading")
+                files[rel] = payload
+            else:
+                foreign.append(rel)
+
+    try:
+        walk(directory, tree(owned, subdirs), [(directory, _identity(directory))], "")
+    except OSError as exc:
+        raise PublishError(f"cannot read {directory.name}: {exc}") from exc
     if foreign:
         raise PublishError(
             f"{directory.name} holds entries that are not expected: {sorted(foreign)}"
         )
-    return sorted(found)
+    return dict(sorted(files.items()))
 
 
 def check_output_dir(output_dir: Path, owned: Owned, subdirs: Subdirs = None) -> None:

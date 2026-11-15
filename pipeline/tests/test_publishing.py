@@ -463,7 +463,7 @@ def _bundle(directory: Path, tiles: tuple[str, ...] = ("8/41/100.png", "9/83/200
 def test_tree_owns_pattern_files_and_dirs_at_their_depth_only(tmp_path: Path):
     out = _bundle(tmp_path / "out")
     assert foreign_entries(out, OWNED, BUNDLE) == []
-    assert publishing.owned_files(out / "terrain", PYRAMID) == [
+    assert list(publishing.read_owned_tree(out / "terrain", PYRAMID)) == [
         "8/41/100.png",
         "9/83/200.png",
         "tiles.json",
@@ -505,7 +505,7 @@ def test_directory_under_a_tile_name_and_file_under_a_dir_name_are_foreign(tmp_p
     (out / "9" / "83" / "200.png").mkdir(parents=True)
     assert foreign_entries(out, PYRAMID) == ["8", "9/83/200.png"]
     with pytest.raises(PublishError, match="not expected"):
-        publishing.owned_files(out, PYRAMID)
+        publishing.read_owned_tree(out, PYRAMID)
 
 
 def test_junction_inside_the_tree_is_foreign_and_never_followed(tmp_path: Path):
@@ -569,7 +569,10 @@ def test_publish_replaces_a_bundle_with_a_different_tile_set(tmp_path: Path):
     staging, previous = staging_dirs(out)
     _bundle(staging, ("10/166/401.png",))
     assert publish(staging, out, OWNED, BUNDLE) is None
-    assert publishing.owned_files(out / "terrain", PYRAMID) == ["10/166/401.png", "tiles.json"]
+    assert list(publishing.read_owned_tree(out / "terrain", PYRAMID)) == [
+        "10/166/401.png",
+        "tiles.json",
+    ]
     assert not previous.exists() and not staging.exists()
 
 
@@ -593,7 +596,10 @@ def test_interrupted_nested_swap_restores_the_last_complete_tree(
             publish(staging, out, OWNED, BUNDLE)
     assert (out / "terrain" / "8" / "41" / "100.png").is_file(), "nothing lost"
     assert publish(staging, out, OWNED, BUNDLE) is None
-    assert publishing.owned_files(out / "terrain", PYRAMID) == ["9/83/200.png", "tiles.json"]
+    assert list(publishing.read_owned_tree(out / "terrain", PYRAMID)) == [
+        "9/83/200.png",
+        "tiles.json",
+    ]
 
 
 def test_tree_rejects_ambiguous_specs():
@@ -605,6 +611,64 @@ def test_tree_rejects_ambiguous_specs():
         publishing.tree("a.json")
 
 
-def test_owned_files_requires_a_plain_existing_directory(tmp_path: Path):
+def test_read_owned_tree_requires_a_plain_existing_directory(tmp_path: Path):
     with pytest.raises(PublishError, match="not found"):
-        publishing.owned_files(tmp_path / "missing", PYRAMID)
+        publishing.read_owned_tree(tmp_path / "missing", PYRAMID)
+
+
+# --------------------------------------------------------------------------- review round 1 (DT-09)
+
+
+def test_read_owned_tree_returns_the_bytes_it_walked(tmp_path: Path):
+    out = _pyramid(tmp_path / "t")
+    assert publishing.read_owned_tree(out, PYRAMID) == {
+        "8/41/100.png": b"8/41/100.png",
+        "9/83/200.png": b"9/83/200.png",
+        "tiles.json": b"{}",
+    }
+
+
+def test_read_owned_tree_caps_the_number_of_files(tmp_path: Path):
+    out = _pyramid(tmp_path / "t")
+    with pytest.raises(PublishError, match="more than 2 files"):
+        publishing.read_owned_tree(out, PYRAMID, max_files=2)
+
+
+def test_directory_swapped_for_a_junction_during_reading_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    winapi = pytest.importorskip("_winapi")
+    out = _pyramid(tmp_path / "t", ("8/41/100.png", "8/41/101.png"))
+    elsewhere = _pyramid(tmp_path / "elsewhere", ("8/41/100.png", "8/41/101.png"))
+    (elsewhere / "8" / "41" / "101.png").write_bytes(b"secret")
+    real = Path.read_bytes
+    swapped: list[Path] = []
+
+    def swap_after_first(self: Path) -> bytes:
+        payload = real(self)
+        if not swapped:  # after the first tile, replace "t/8" by a junction elsewhere
+            swapped.append(self)
+            (out / "8").rename(tmp_path / "moved")
+            winapi.CreateJunction(str(elsewhere / "8"), str(out / "8"))
+        return payload
+
+    monkeypatch.setattr(Path, "read_bytes", swap_after_first)
+    with pytest.raises(PublishError, match="changed during"):
+        publishing.read_owned_tree(out, PYRAMID)
+    assert swapped
+
+
+def test_file_replaced_during_its_read_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    out = _pyramid(tmp_path / "t", ("8/41/100.png",))
+    real = Path.read_bytes
+
+    def replace_file(self: Path) -> bytes:
+        payload = real(self)
+        if self.name == "100.png":
+            self.unlink()
+            self.write_bytes(b"a different, longer file")
+        return payload
+
+    monkeypatch.setattr(Path, "read_bytes", replace_file)
+    with pytest.raises(PublishError, match="changed during reading"):
+        publishing.read_owned_tree(out, PYRAMID)
