@@ -1,0 +1,39 @@
+# AP-07 Terrarium elevation tiles for the 3D story view (Plaskett Fire).
+# Run from the repository root:
+#   uv run python -m pipeline.terrain_tiles --config pipeline/configs/terrain_tiles_plaskett.toml
+#
+# The pipeline never downloads. To (re)fetch a DEM tile on purpose:
+#   curl -fL -o <dem.raw> <dem.url>
+#   sha256sum <dem.raw>
+# then review the change and update dem.sha256.
+# N35 is the same pinned tile as DT-05 (terrain_plaskett.toml). N36 adds the northern
+# margin: the case AOI reaches 35.992 N, so the tile pyramid's bounds cross 36 N.
+
+case_id = "plaskett-2026"
+output_dir = "data/interim/terrain_tiles"
+
+[[dem]]
+raw = "data/raw/dem/Copernicus_DSM_COG_10_N35_00_W122_00_DEM.tif"
+sha256 = "197d09cd0cbc0b1647a0f98e642edc7def03095e3d6f3d8df9f9aa75a987f197"
+product_id = "Copernicus_DSM_COG_10_N35_00_W122_00_DEM"
+url = "https://copernicus-dem-30m.s3.amazonaws.com/Copernicus_DSM_COG_10_N35_00_W122_00_DEM/Copernicus_DSM_COG_10_N35_00_W122_00_DEM.tif"
+
+[[dem]]
+raw = "data/raw/dem/Copernicus_DSM_COG_10_N36_00_W122_00_DEM.tif"
+sha256 = "cd834ec6668b806843905a6898559c1cf95aeda6bc3111979b3918d61b3e4ce9"
+product_id = "Copernicus_DSM_COG_10_N36_00_W122_00_DEM"
+url = "https://copernicus-dem-30m.s3.amazonaws.com/Copernicus_DSM_COG_10_N36_00_W122_00_DEM/Copernicus_DSM_COG_10_N36_00_W122_00_DEM.tif"
+
+[source]
+label = "Copernicus DEM GLO-30. Produced using Copernicus WorldDEM-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved"
+url = "https://doi.org/10.5270/ESA-c5d3d65"
+vertical_datum = "EGM2008"
+
+[tiles]
+# Case AOI bbox [-121.495, 35.84, -121.278, 35.992] plus about 8 km on each side.
+bounds = [-121.585, 35.77, -121.19, 36.06]
+minzoom = 8
+maxzoom = 12
+tile_size = 256
+# 1 m is well below the DEM's vertical error and halves the tile size.
+precision_m = 1.0
