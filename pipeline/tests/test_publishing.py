@@ -428,3 +428,183 @@ def test_permission_error_on_an_input_is_a_publish_error(
     monkeypatch.setattr(Path, "is_file", denied)
     with pytest.raises(PublishError, match="access denied"):
         read_verified(path, _sha(path), "m.json")
+
+
+# --------------------------------------------------------------------------- nested trees (DT-09)
+
+NUM = r"0|[1-9][0-9]*"
+PYRAMID = publishing.Tree(
+    files=frozenset({"tiles.json"}),
+    dir_pattern=NUM,
+    pattern_child=publishing.Tree(
+        dir_pattern=NUM, pattern_child=publishing.Tree(file_pattern=rf"(?:{NUM})\.png")
+    ),
+)
+BUNDLE = {"layers": {"p.png"}, "terrain": PYRAMID}
+
+
+def _pyramid(directory: Path, tiles: tuple[str, ...] = ("8/41/100.png", "9/83/200.png")) -> Path:
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "tiles.json").write_text("{}", encoding="utf-8")
+    for name in tiles:
+        (directory / name).parent.mkdir(parents=True, exist_ok=True)
+        (directory / name).write_bytes(name.encode())
+    return directory
+
+
+def _bundle(directory: Path, tiles: tuple[str, ...] = ("8/41/100.png", "9/83/200.png")) -> Path:
+    _set(directory, "x")
+    (directory / "layers").mkdir()
+    (directory / "layers" / "p.png").write_bytes(b"p")
+    _pyramid(directory / "terrain", tiles)
+    return directory
+
+
+def test_tree_owns_pattern_files_and_dirs_at_their_depth_only(tmp_path: Path):
+    out = _bundle(tmp_path / "out")
+    assert foreign_entries(out, OWNED, BUNDLE) == []
+    assert publishing.owned_files(out / "terrain", PYRAMID) == [
+        "8/41/100.png",
+        "9/83/200.png",
+        "tiles.json",
+    ]
+    for name in (
+        "terrain/8/41/x.png",  # not a number
+        "terrain/8/41/007.png",  # not canonical
+        "terrain/8/100.png",  # too shallow
+        "terrain/8/41/1/100.png",  # too deep
+        "terrain/x/41/100.png",
+        "terrain/notes.txt",
+        "terrain/8/tiles.json",
+    ):
+        path = out / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"?")
+    assert foreign_entries(out, OWNED, BUNDLE) == sorted(
+        [
+            "terrain/8/41/x.png",
+            "terrain/8/41/007.png",
+            "terrain/8/100.png",
+            "terrain/8/41/1",
+            "terrain/x",
+            "terrain/notes.txt",
+            "terrain/8/tiles.json",
+        ]
+    )
+
+
+def test_unicode_digits_are_not_owned(tmp_path: Path):
+    out = _pyramid(tmp_path / "t")
+    (out / "١").mkdir()  # ARABIC-INDIC DIGIT ONE
+    assert foreign_entries(out, PYRAMID) == ["١"]
+
+
+def test_directory_under_a_tile_name_and_file_under_a_dir_name_are_foreign(tmp_path: Path):
+    out = _pyramid(tmp_path / "t", ())
+    (out / "8").write_bytes(b"not a dir")
+    (out / "9" / "83" / "200.png").mkdir(parents=True)
+    assert foreign_entries(out, PYRAMID) == ["8", "9/83/200.png"]
+    with pytest.raises(PublishError, match="not expected"):
+        publishing.owned_files(out, PYRAMID)
+
+
+def test_junction_inside_the_tree_is_foreign_and_never_followed(tmp_path: Path):
+    elsewhere = _pyramid(tmp_path / "elsewhere", ("8/41/100.png",))
+    out = _pyramid(tmp_path / "out" / "terrain", ("9/83/200.png",))
+    _junction(elsewhere / "8", out / "8")
+    assert foreign_entries(out, PYRAMID) == ["8"]
+    with pytest.raises(PublishError, match="does not own"):
+        remove_owned(out, PYRAMID)
+    assert (elsewhere / "8" / "41" / "100.png").read_bytes() == b"8/41/100.png"
+
+
+def test_symlinked_tile_is_foreign(tmp_path: Path):
+    out = _pyramid(tmp_path / "t", ())
+    (out / "8" / "41").mkdir(parents=True)
+    target = tmp_path / "secret.png"
+    target.write_bytes(b"secret")
+    _symlink(target, out / "8" / "41" / "100.png")
+    assert foreign_entries(out, PYRAMID) == ["8/41/100.png"]
+
+
+def test_remove_owned_empties_a_nested_tree_bottom_up(tmp_path: Path):
+    out = _bundle(tmp_path / "out")
+    remove_owned(out, OWNED, BUNDLE)
+    assert not out.exists()
+
+
+def test_late_foreign_file_deep_in_the_tree_stops_removal(tmp_path: Path):
+    out = _bundle(tmp_path / "out")
+    (out / "terrain" / "9" / "83" / "keep.txt").write_text("mine", encoding="utf-8")
+    with pytest.raises(PublishError, match=r"\['terrain/9/83/keep.txt'\]"):
+        remove_owned(out, OWNED, BUNDLE)
+    assert (out / "terrain" / "9" / "83" / "keep.txt").read_text(encoding="utf-8") == "mine"
+
+
+def test_ancestor_swapped_for_a_junction_mid_removal_stops_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    winapi = pytest.importorskip("_winapi")
+    out = _pyramid(tmp_path / "out", ("8/41/100.png", "8/41/101.png"))
+    elsewhere = _pyramid(tmp_path / "elsewhere", ("8/41/100.png", "8/41/101.png"))
+    real = Path.unlink
+    swapped: list[Path] = []
+
+    def swap_level_one(self: Path, *args: Any, **kwargs: Any) -> None:
+        real(self, *args, **kwargs)
+        if not swapped:  # after the first tile, replace "out/8" (an ancestor) by a junction
+            swapped.append(self)
+            (out / "8").rename(tmp_path / "moved")
+            winapi.CreateJunction(str(elsewhere / "8"), str(out / "8"))
+
+    monkeypatch.setattr(Path, "unlink", swap_level_one)
+    with pytest.raises(PublishError, match="changed during removal"):
+        remove_owned(out, PYRAMID)
+    assert swapped
+    assert sorted(p.name for p in (elsewhere / "8" / "41").iterdir()) == ["100.png", "101.png"]
+
+
+def test_publish_replaces_a_bundle_with_a_different_tile_set(tmp_path: Path):
+    out = _bundle(tmp_path / "out", ("8/41/100.png", "9/83/200.png"))
+    staging, previous = staging_dirs(out)
+    _bundle(staging, ("10/166/401.png",))
+    assert publish(staging, out, OWNED, BUNDLE) is None
+    assert publishing.owned_files(out / "terrain", PYRAMID) == ["10/166/401.png", "tiles.json"]
+    assert not previous.exists() and not staging.exists()
+
+
+def test_interrupted_nested_swap_restores_the_last_complete_tree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    out = tmp_path / "out"
+    staging, previous = staging_dirs(out)
+    _bundle(previous, ("8/41/100.png",))  # an interrupted swap left only the backup
+    _bundle(staging, ("9/83/200.png",))
+    real = Path.rename
+
+    def blocked(self: Path, target: Any) -> Any:
+        if self.name == staging.name:
+            raise OSError("rename blocked")
+        return real(self, target)
+
+    with monkeypatch.context() as mp:
+        mp.setattr(Path, "rename", blocked)
+        with pytest.raises(PublishError, match="rename blocked"):
+            publish(staging, out, OWNED, BUNDLE)
+    assert (out / "terrain" / "8" / "41" / "100.png").is_file(), "nothing lost"
+    assert publish(staging, out, OWNED, BUNDLE) is None
+    assert publishing.owned_files(out / "terrain", PYRAMID) == ["9/83/200.png", "tiles.json"]
+
+
+def test_tree_rejects_ambiguous_specs():
+    with pytest.raises(ValueError):
+        publishing.Tree(dir_pattern=NUM)
+    with pytest.raises(ValueError):
+        publishing.tree(PYRAMID, {"layers": {"p.png"}})
+    with pytest.raises(TypeError):
+        publishing.tree("a.json")
+
+
+def test_owned_files_requires_a_plain_existing_directory(tmp_path: Path):
+    with pytest.raises(PublishError, match="not found"):
+        publishing.owned_files(tmp_path / "missing", PYRAMID)

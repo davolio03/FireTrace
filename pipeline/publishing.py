@@ -5,11 +5,14 @@ swaps it into ``<name>`` in one rename; the previous set waits in ``.<name>.prev
 until the swap has succeeded. These helpers make that safe:
 
 - :func:`check_output_dir` refuses to run when the output directory or either sibling holds
-  anything the stage does not own. Owned names must be regular files (or a plain owned
-  subdirectory of owned files); directories, symlinks and Windows junctions under owned
-  names are foreign.
+  anything the stage does not own. Ownership is a :class:`Tree` of names: owned regular
+  files, owned plain subdirectories by name, and (for tile pyramids, DT-09) files and
+  subdirectories whose names match a fixed pattern at a fixed depth. It is decided from
+  names and entry kinds only, never from a manifest inside the tree. Directories, symlinks
+  and Windows junctions under owned names are foreign.
 - Nothing is ever deleted recursively. :func:`remove_owned` unlinks owned regular files one
-  by one and then removes the emptied directories with ``rmdir``, so an entry that appears
+  by one and then removes the emptied directories bottom-up with ``rmdir``, re-checking the
+  identity of every directory on the path before each deletion, so an entry that appears
   after the check (a foreign file, directory or link) makes the removal fail instead of
   being deleted. A single publisher per output directory is assumed; concurrent runs are
   refused at the latest by this non-recursive removal.
@@ -35,11 +38,12 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import stat
 import sys
 import warnings
-from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -50,11 +54,56 @@ from rasterio.io import MemoryFile
 
 _REPARSE_POINT = 0x400  # Windows FILE_ATTRIBUTE_REPARSE_POINT (symlinks and junctions)
 
-Subdirs = Mapping[str, Iterable[str]] | None
-
 
 class PublishError(Exception):
     """Raised when an output set cannot be checked, replaced or read faithfully."""
+
+
+@dataclass(frozen=True)
+class Tree:
+    """What a stage owns inside one directory.
+
+    ``files`` are owned regular-file names and ``dirs`` maps an owned plain subdirectory
+    name to what it may hold. ``file_pattern`` owns any regular file, and ``dir_pattern``
+    any plain subdirectory (holding ``pattern_child``), whose whole name matches the
+    pattern (ASCII regular expression). Everything else is foreign.
+    """
+
+    files: frozenset[str] = frozenset()
+    dirs: Mapping[str, Tree] = field(default_factory=dict)
+    file_pattern: str | None = None
+    dir_pattern: str | None = None
+    pattern_child: Tree | None = None
+
+    def __post_init__(self) -> None:
+        if (self.dir_pattern is None) != (self.pattern_child is None):
+            raise ValueError("dir_pattern and pattern_child go together")
+        object.__setattr__(self, "files", frozenset(self.files))
+        object.__setattr__(self, "dirs", dict(self.dirs))
+
+    def child(self, name: str, kind: str) -> Tree | None:
+        """The spec of an owned subdirectory ``name`` of this kind, else None."""
+        if kind != "dir":
+            return None
+        if name in self.dirs:
+            return self.dirs[name]
+        if self.dir_pattern is not None and re.fullmatch(self.dir_pattern, name, re.ASCII):
+            return self.pattern_child
+        return None
+
+    def owns_file(self, name: str, kind: str) -> bool:
+        """Whether ``name`` of this kind is an owned regular file."""
+        if kind != "file" or name in self.dirs:
+            return False
+        if name in self.files:
+            return True
+        return self.file_pattern is not None and bool(
+            re.fullmatch(self.file_pattern, name, re.ASCII)
+        )
+
+
+Owned = Iterable[str] | Tree
+Subdirs = Mapping[str, Iterable[str] | Tree] | None
 
 
 def staging_dirs(output_dir: Path) -> tuple[Path, Path]:
@@ -96,40 +145,82 @@ def _exists(path: Path) -> bool:
     return True
 
 
-def _subdirs(subdirs: Subdirs) -> dict[str, frozenset[str]]:
-    return {k: frozenset(v) for k, v in (subdirs or {}).items()}
+def tree(owned: Owned, subdirs: Subdirs = None) -> Tree:
+    """The ownership :class:`Tree` for ``owned`` names plus fixed-name ``subdirs``.
 
-
-def foreign_entries(directory: Path, owned: Iterable[str], subdirs: Subdirs = None) -> list[str]:
-    """Entries of ``directory`` that the stage does not own (``[]`` if it is missing).
-
-    ``owned`` are regular-file names; ``subdirs`` maps an owned plain subdirectory name to
-    the regular-file names it may hold. Raises if ``directory`` itself is not plain.
+    ``owned`` may already be a :class:`Tree` (then ``subdirs`` must be empty); a ``subdirs``
+    value is either the regular-file names of that subdirectory or a :class:`Tree`.
     """
-    if not _exists(directory):
-        return []
-    if entry_kind(directory) != "dir":
-        raise PublishError(f"{directory.name} is not a plain directory")
-    files, dirs = frozenset(owned), _subdirs(subdirs)
-    foreign: list[str] = []
+    if isinstance(owned, Tree):
+        if subdirs:
+            raise ValueError("pass subdirs inside the Tree")
+        return owned
+    if isinstance(owned, str):
+        raise TypeError("owned must be a collection of names, not one string")
+    dirs = {
+        name: spec if isinstance(spec, Tree) else Tree(files=frozenset(spec))
+        for name, spec in (subdirs or {}).items()
+    }
+    return Tree(files=frozenset(owned), dirs=dirs)
+
+
+def _walk(directory: Path, spec: Tree, prefix: str, owned: list[str], foreign: list[str]) -> None:
     for entry in _listing(directory):
         kind = entry_kind(entry)
-        if entry.name in dirs and kind == "dir":
-            foreign += [
-                f"{entry.name}/{p.name}"
-                for p in _listing(entry)
-                if p.name not in dirs[entry.name] or entry_kind(p) != "file"
-            ]
-        elif entry.name not in files or kind != "file":
-            foreign.append(entry.name)
+        sub = spec.child(entry.name, kind)
+        if sub is not None:
+            _walk(entry, sub, f"{prefix}{entry.name}/", owned, foreign)
+        elif spec.owns_file(entry.name, kind):
+            owned.append(prefix + entry.name)
+        else:
+            foreign.append(prefix + entry.name)
+
+
+def _plain_dir(directory: Path) -> bool:
+    """False if missing; raises if ``directory`` exists but is not a plain directory."""
+    if not _exists(directory):
+        return False
+    if entry_kind(directory) != "dir":
+        raise PublishError(f"{directory.name} is not a plain directory")
+    return True
+
+
+def foreign_entries(directory: Path, owned: Owned, subdirs: Subdirs = None) -> list[str]:
+    """Entries of ``directory`` that the stage does not own (``[]`` if it is missing).
+
+    Paths are relative, with ``/`` separators. Raises if ``directory`` itself is not plain.
+    """
+    if not _plain_dir(directory):
+        return []
+    found: list[str] = []
+    foreign: list[str] = []
+    _walk(directory, tree(owned, subdirs), "", found, foreign)
     return sorted(foreign)
 
 
-def check_output_dir(output_dir: Path, owned: Iterable[str], subdirs: Subdirs = None) -> None:
+def owned_files(directory: Path, owned: Owned, subdirs: Subdirs = None) -> list[str]:
+    """Every owned regular file under ``directory`` (relative, ``/``-separated, sorted).
+
+    Raises :class:`PublishError` if ``directory`` is missing, not plain or holds anything
+    foreign, so a verified input tree can be compared with its manifest file by file.
+    """
+    if not _plain_dir(directory):
+        raise PublishError(f"input not found: {directory.name}")
+    found: list[str] = []
+    foreign: list[str] = []
+    _walk(directory, tree(owned, subdirs), "", found, foreign)
+    if foreign:
+        raise PublishError(
+            f"{directory.name} holds entries that are not expected: {sorted(foreign)}"
+        )
+    return sorted(found)
+
+
+def check_output_dir(output_dir: Path, owned: Owned, subdirs: Subdirs = None) -> None:
     """Refuse unless the output and both siblings are missing or hold only owned files."""
-    owned = frozenset(owned)
+    spec = tree(owned, subdirs)
     for path in (output_dir, *staging_dirs(output_dir)):
-        foreign = foreign_entries(path, owned, subdirs)
+        foreign = foreign_entries(path, spec)
         if foreign:
             raise PublishError(
                 f"output_dir {path.name} holds files this stage does not own: {foreign}"
@@ -151,6 +242,12 @@ def _identity(path: Path) -> tuple[int, int]:
     return st.st_dev, st.st_ino
 
 
+def _still_all(chain: Sequence[tuple[Path, tuple[int, int]]]) -> None:
+    """Re-check every directory from the removal root down to the current one."""
+    for path, identity in chain:
+        _still(path, identity)
+
+
 def _still(path: Path, identity: tuple[int, int]) -> None:
     """Fail closed if ``path`` is no longer the directory first inspected."""
     try:
@@ -163,60 +260,56 @@ def _still(path: Path, identity: tuple[int, int]) -> None:
         raise PublishError(f"{path.name} changed during removal; nothing more was deleted")
 
 
-def remove_owned(directory: Path, owned: Iterable[str], subdirs: Subdirs = None) -> None:
-    """Delete an owned set without recursion: unlink owned files, then ``rmdir``.
+def remove_owned(directory: Path, owned: Owned, subdirs: Subdirs = None) -> None:
+    """Delete an owned set without recursion: unlink owned files, then ``rmdir`` bottom-up.
 
-    Any entry that is not an owned regular file (or owned subdirectory of owned files)
-    stops the removal with :class:`PublishError` and is left untouched. ``unlink`` never
-    deletes a directory tree and removes a link itself, never its target. The identity
-    (device, inode) of each directory is pinned when first inspected and re-checked before
-    every deletion inside it, so a directory replaced by a link or junction mid-removal
-    stops the removal. Windows Python has no ``dir_fd`` deletion, so a hostile process of the
-    same user racing between that re-check and the deletion is outside the threat model
-    (one publisher per output directory, nobody else editing it).
+    Any entry that is not owned (see :class:`Tree`) stops the removal with
+    :class:`PublishError` and is left untouched. ``unlink`` never deletes a directory tree
+    and removes a link itself, never its target. The identity (device, inode) of each
+    directory is pinned when first inspected, and every directory from ``directory`` down to
+    the one being emptied is re-checked before each deletion, so a directory replaced by a
+    link or junction mid-removal stops the removal. Windows Python has no ``dir_fd``
+    deletion, so a hostile process of the same user racing between that re-check and the
+    deletion is outside the threat model (one publisher per output directory, nobody else
+    editing it).
     """
     if not _exists(directory):
         return
-    root = _identity(directory)
-    files, dirs = frozenset(owned), _subdirs(subdirs)
+    spec = tree(owned, subdirs)
     try:
-        for entry in _listing(directory):
-            kind = entry_kind(entry)
-            if entry.name in dirs and kind == "dir":
-                sub = _identity(entry)
-                for p in _listing(entry):
-                    if p.name not in dirs[entry.name] or entry_kind(p) != "file":
-                        raise PublishError(
-                            f"{directory.name} holds files this stage does not own: "
-                            f"['{entry.name}/{p.name}']"
-                        )
-                    _still(directory, root)
-                    _still(entry, sub)
-                    p.unlink()
-                _still(directory, root)
-                _still(entry, sub)
-                entry.rmdir()
-            elif entry.name in files and kind == "file":
-                _still(directory, root)
-                entry.unlink()
-            else:
-                raise PublishError(
-                    f"{directory.name} holds files this stage does not own: ['{entry.name}']"
-                )
-        _still(directory, root)
-        directory.rmdir()
+        _remove(directory, spec, [(directory, _identity(directory))], "")
     except OSError as exc:
         raise PublishError(f"cannot remove {directory.name}: {exc}") from exc
 
 
-def clear_staging(output_dir: Path, owned: Iterable[str], subdirs: Subdirs = None) -> Path:
+def _remove(
+    directory: Path, spec: Tree, chain: list[tuple[Path, tuple[int, int]]], prefix: str
+) -> None:
+    root = chain[0][0]
+    for entry in _listing(directory):
+        kind = entry_kind(entry)
+        sub = spec.child(entry.name, kind)
+        if sub is not None:
+            _remove(entry, sub, [*chain, (entry, _identity(entry))], f"{prefix}{entry.name}/")
+        elif spec.owns_file(entry.name, kind):
+            _still_all(chain)
+            entry.unlink()
+        else:
+            raise PublishError(
+                f"{root.name} holds files this stage does not own: ['{prefix}{entry.name}']"
+            )
+    _still_all(chain)
+    directory.rmdir()
+
+
+def clear_staging(output_dir: Path, owned: Owned, subdirs: Subdirs = None) -> Path:
     """Remove a stale owned staging set and return the staging path."""
     staging, _ = staging_dirs(output_dir)
     remove_owned(staging, owned, subdirs)
     return staging
 
 
-def discard_staging(staging: Path, owned: Iterable[str], subdirs: Subdirs = None) -> None:
+def discard_staging(staging: Path, owned: Owned, subdirs: Subdirs = None) -> None:
     """Best-effort cleanup of an unpublished staging set; never raises, never recurses."""
     try:
         remove_owned(staging, owned, subdirs)
@@ -272,9 +365,7 @@ def overlapping_input(output_dir: Path, inputs: Iterable[Path]) -> Path | None:
     return None
 
 
-def publish(
-    staging: Path, output_dir: Path, owned: Iterable[str], subdirs: Subdirs = None
-) -> str | None:
+def publish(staging: Path, output_dir: Path, owned: Owned, subdirs: Subdirs = None) -> str | None:
     """Swap ``staging`` into ``output_dir``; return a message if only the cleanup failed.
 
     Before the rename of ``staging`` any failure restores the previous set and raises

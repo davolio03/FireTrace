@@ -20,6 +20,9 @@ to real data by changing ``VITE_DATA_BASE_URL`` only:
 - ``review_zones.geojson`` byte for byte when the optional XP-04 stage was run
   (``review_zones_meta.json`` exists) from this bundle's inputs, XP-01 highlight and DT-05
   terrain; it is listed as the P1 ``review_zones`` vector layer, hidden by default.
+- ``terrain/tiles.json`` and ``terrain/{z}/{x}/{y}.png`` byte for byte when the optional
+  AP-07 relief tiles were built (``terrain_tiles_dir`` holds ``tiles.json``): display context
+  for the 3D story, checked tile by tile against the manifest (DT-09).
 - ``export.json``: input/output checksums, resampling and stretch rules (not a contract file).
 
 The PNGs are for viewing only; nothing is ever measured from them. Every input is checked
@@ -50,7 +53,7 @@ from typing import Any
 import numpy as np
 from affine import Affine
 
-from pipeline import publishing
+from pipeline import publishing, terrain_tiles
 from pipeline.publishing import PublishError, decode_raster, staging_dirs
 from pipeline.sar import ANALYSIS_CRS, ANALYSIS_PIXEL_SIZE_M, SarError
 from pipeline.webexport import WebExportError, WebRaster, colorize, warp_to_web, write_png
@@ -96,7 +99,14 @@ TOP_FILES: frozenset[str] = frozenset(
 LAYER_FILES: frozenset[str] = frozenset(
     f"{lid}.png" for lid in (*RASTER_IDS, HIGHLIGHT_ID, *TERRAIN_IDS, *OPTICAL_IDS)
 )
-LAYER_SUBDIRS: dict[str, frozenset[str]] = {"layers": LAYER_FILES}
+TILES_DIR = "terrain"  # the web bundle's relief pyramid (contracts/README.md)
+BUNDLE_SUBDIRS: dict[str, frozenset[str] | publishing.Tree] = {
+    "layers": LAYER_FILES,
+    TILES_DIR: terrain_tiles.TILE_TREE,
+}
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+MAX_ZOOM = 22
+_SHA256 = re.compile(r"[0-9a-f]{64}")
 
 GREY = ("#000000", "#ffffff")
 RDBU = ("#2166ac", "#92c5de", "#f7f7f7", "#f4a582", "#b2182b")  # contract fixture stops
@@ -170,6 +180,9 @@ class ExportConfig:
     optical_dir: Path | None = None  # DT-07; optional, merged only when its manifest exists
     highlight_dir: Path | None = None  # XP-01 (P1); optional, merged only when its manifest exists
     review_zones_dir: Path | None = None  # XP-04 (P1); optional, needs the highlight and terrain
+    terrain_tiles_dir: Path | None = (
+        None  # AP-07 relief tiles; optional, merged if tiles.json exists
+    )
 
     def input_dirs(self) -> list[Path]:
         dirs = [
@@ -181,7 +194,12 @@ class ExportConfig:
             self.terrain_dir,
             self.weather_dir,
         ]
-        optional = (self.optical_dir, self.highlight_dir, self.review_zones_dir)
+        optional = (
+            self.optical_dir,
+            self.highlight_dir,
+            self.review_zones_dir,
+            self.terrain_tiles_dir,
+        )
         return [*dirs, *(d for d in optional if d is not None)]
 
 
@@ -242,6 +260,7 @@ def load_config(path: Path, base_dir: Path | None = None) -> ExportConfig:
         optical_dir=resolve("optical_dir") if "optical_dir" in raw else None,
         highlight_dir=resolve("highlight_dir") if "highlight_dir" in raw else None,
         review_zones_dir=resolve("review_zones_dir") if "review_zones_dir" in raw else None,
+        terrain_tiles_dir=resolve("terrain_tiles_dir") if "terrain_tiles_dir" in raw else None,
     )
 
 
@@ -560,6 +579,7 @@ class Terrain:
     layers: list[dict[str, Any]]
     pngs: dict[str, bytes]
     sha: str
+    dem_sha256: str | None = None  # DT-05 records its DEM; checked against the relief tiles
 
 
 def load_terrain(config: ExportConfig, ingest_sha: str, crop: Mapping[str, Any]) -> Terrain | None:
@@ -587,9 +607,165 @@ def load_terrain(config: ExportConfig, ingest_sha: str, crop: Mapping[str, Any])
             raise ExportError(f"terrain_layers.json: {lid} needs group 'terrain' and a source")
         if layer.get("url") != f"layers/{lid}.png":
             raise ExportError(f"terrain_layers.json: {lid} url must be layers/{lid}.png")
+    dem = doc.get("dem")
+    dem_sha = dem.get("sha256") if isinstance(dem, dict) else None
     return Terrain(
-        layers=layers, pngs={lid: payloads[f"{lid}.png"] for lid in TERRAIN_IDS}, sha=sha
+        layers=layers,
+        pngs={lid: payloads[f"{lid}.png"] for lid in TERRAIN_IDS},
+        sha=sha,
+        dem_sha256=dem_sha if isinstance(dem_sha, str) else None,
     )
+
+
+@dataclass(frozen=True)
+class Tiles:
+    files: dict[str, bytes]  # path relative to terrain/ -> verified bytes, incl. tiles.json
+    sha: str
+
+
+def _int(doc: Mapping[str, Any], key: str, source: str, lo: int, hi: int) -> int:
+    value = doc.get(key)
+    if isinstance(value, bool) or not isinstance(value, int) or not lo <= value <= hi:
+        raise ExportError(f"{source}: '{key}' must be an integer in [{lo}, {hi}], got {value!r}")
+    return value
+
+
+def _tile_bounds(doc: Mapping[str, Any]) -> tuple[float, float, float, float]:
+    bounds = doc.get("bounds")
+    if (
+        not isinstance(bounds, list)
+        or len(bounds) != 4
+        or not all(
+            isinstance(v, int | float) and not isinstance(v, bool) and math.isfinite(v)
+            for v in bounds
+        )
+    ):
+        raise ExportError(f"tiles.json: 'bounds' must be 4 finite numbers, got {bounds!r}")
+    west, south, east, north = (float(v) for v in bounds)
+    lat = terrain_tiles.MAX_LAT
+    if not (-180 <= west < east <= 180 and -lat <= south < north <= lat):
+        raise ExportError(f"tiles.json: 'bounds' must be west < east, south < north, got {bounds}")
+    return west, south, east, north
+
+
+def _expected_tiles(bounds: tuple[float, float, float, float], lo: int, hi: int) -> set[str]:
+    """Every tile name the bounds produce from zoom ``lo`` to ``hi`` (never more than the cap)."""
+    total = sum(terrain_tiles.tile_count(bounds, z) for z in range(lo, hi + 1))
+    if total > terrain_tiles.MAX_TILES:
+        raise ExportError(
+            f"tiles.json: the bounds give {total} tiles, above the {terrain_tiles.MAX_TILES} cap"
+        )
+    return {
+        f"{z}/{x}/{y}.png"
+        for z in range(lo, hi + 1)
+        for x, y in terrain_tiles.tiles_for_bounds(bounds, z)
+    }
+
+
+def load_terrain_tiles(
+    config: ExportConfig, inputs: Inputs, terrain: Terrain | None
+) -> Tiles | None:
+    """AP-07 relief tiles verified tile by tile, or None when the stage has not been run.
+
+    The input directory may hold exactly ``tiles.json`` and the tiles it lists (plain files,
+    no links); the listed set must be exactly what the bounds give at each zoom; each tile
+    is read once, checked against its sha256 and kept as those bytes. When the DT-05 terrain
+    layers are in the bundle too, the tiles must come from the same DEM.
+    """
+    directory = config.terrain_tiles_dir
+    manifest = terrain_tiles.MANIFEST
+    if directory is None or not (directory / manifest).exists():
+        return None  # the stage has not been run (an empty directory is not an error)
+    try:
+        present = publishing.owned_files(directory, terrain_tiles.TILE_TREE)
+    except PublishError as exc:
+        raise ExportError(f"terrain_tiles_dir: {exc}") from exc
+    payload = _read_bytes(directory / manifest)
+    doc = _parse(payload, manifest)
+    if not isinstance(doc, dict):
+        raise ExportError(f"{manifest}: top level must be an object")
+    if doc.get("encoding") != "terrarium":
+        raise ExportError(f"{manifest}: 'encoding' must be 'terrarium'")
+    if doc.get("tiles") != ["{z}/{x}/{y}.png"]:
+        raise ExportError(f"{manifest}: 'tiles' must be ['{{z}}/{{x}}/{{y}}.png']")
+    if doc.get("tileSize") not in (256, 512) or isinstance(doc.get("tileSize"), bool):
+        raise ExportError(f"{manifest}: 'tileSize' must be 256 or 512")
+    attribution = doc.get("attribution")
+    if not isinstance(attribution, str) or not attribution.strip():
+        raise ExportError(f"{manifest}: 'attribution' must be a non-empty string")
+    lo = _int(doc, "minzoom", manifest, 0, MAX_ZOOM)
+    hi = _int(doc, "maxzoom", manifest, 0, MAX_ZOOM)
+    if lo > hi:
+        raise ExportError(f"{manifest}: minzoom {lo} is greater than maxzoom {hi}")
+    bounds = _tile_bounds(doc)
+    info = doc.get("firetrace")
+    if not isinstance(info, dict):
+        raise ExportError(f"{manifest}: missing the 'firetrace' provenance block")
+    if info.get("tiles_format_version") != terrain_tiles.TILES_FORMAT_VERSION:
+        raise ExportError(
+            f"{manifest}: tiles_format_version must be {terrain_tiles.TILES_FORMAT_VERSION}"
+        )
+    if info.get("case_id") != config.case_id:
+        raise ExportError(
+            f"{manifest}: case_id {info.get('case_id')!r} differs from {config.case_id!r}"
+        )
+    if info.get("data_status") != "real":
+        raise ExportError(f"{manifest}: data_status must be 'real'")
+    outputs = info.get("outputs")
+    if not isinstance(outputs, dict) or not outputs:
+        raise ExportError(f"{manifest}: 'firetrace.outputs' must list the tiles")
+    count = info.get("tile_count")
+    if isinstance(count, bool) or count != len(outputs):
+        raise ExportError(f"{manifest}: tile_count {count!r} differs from {len(outputs)} outputs")
+    for name, digest in outputs.items():
+        if not terrain_tiles.TILE_NAME.fullmatch(name):
+            raise ExportError(f"{manifest}: tile name {name!r} is not z/x/y.png")
+        if not isinstance(digest, str) or not _SHA256.fullmatch(digest):
+            raise ExportError(f"{manifest}: {name} needs a lowercase sha256, got {digest!r}")
+    expected = _expected_tiles(bounds, lo, hi)
+    if set(outputs) != expected:
+        extra, missing = sorted(set(outputs) - expected), sorted(expected - set(outputs))
+        raise ExportError(
+            f"{manifest}: tiles differ from those the bounds give at zooms {lo}-{hi} "
+            f"(extra {extra[:3]}, missing {missing[:3]})"
+        )
+    unlisted = sorted(set(present) - set(outputs) - {manifest})
+    if unlisted:
+        raise ExportError(f"terrain_tiles_dir holds unlisted tiles: {unlisted[:3]}")
+    aoi = _get(inputs.ingest, ("aoi", "aoi_bbox_4326"), "ingest.json")
+    if not (
+        isinstance(aoi, list)
+        and len(aoi) == 4
+        and all(isinstance(v, int | float) and not isinstance(v, bool) for v in aoi)
+    ):
+        raise ExportError(f"ingest.json: aoi.aoi_bbox_4326 must be 4 numbers, got {aoi!r}")
+    west, south, east, north = aoi
+    if not (bounds[0] <= west and bounds[1] <= south and east <= bounds[2] and north <= bounds[3]):
+        raise ExportError(f"{manifest}: bounds {list(bounds)} do not contain the case AOI")
+    if terrain is not None:
+        dems = info.get("dem")
+        shas = (
+            {d.get("sha256") for d in dems if isinstance(d, dict)}
+            if isinstance(dems, list)
+            else set()
+        )
+        if terrain.dem_sha256 is None or terrain.dem_sha256 not in shas:
+            raise ExportError(
+                f"{manifest}: the relief tiles must be built from the DT-05 DEM "
+                "(terrain.json dem.sha256 not found in firetrace.dem)"
+            )
+    files = {manifest: payload}
+    for name in sorted(outputs):
+        if name not in present:
+            raise ExportError(f"terrain_tiles_dir: tile missing: {name}")
+        try:
+            tile = publishing.read_verified(directory / name, outputs[name], manifest)
+        except PublishError as exc:
+            raise ExportError(f"{name}: {exc}") from exc
+        if not tile.startswith(PNG_SIGNATURE):
+            raise ExportError(f"{name}: not a PNG file")
+        files[name] = tile
+    return Tiles(files=files, sha=_sha_bytes(payload))
 
 
 def _check_optical_layer(layer: Mapping[str, Any]) -> None:
@@ -1075,7 +1251,7 @@ def check_output_dir(output_dir: Path) -> None:
     other directory, symlink or junction is foreign (``pipeline.publishing``).
     """
     try:
-        publishing.check_output_dir(output_dir, TOP_FILES, LAYER_SUBDIRS)
+        publishing.check_output_dir(output_dir, TOP_FILES, BUNDLE_SUBDIRS)
     except PublishError as exc:
         raise ExportError(str(exc)) from exc
 
@@ -1105,10 +1281,11 @@ def run_export(config: ExportConfig, environ: Mapping[str, str] | None = None) -
     weather = load_weather(config, inputs.shas["ingest.json"])
     highlight = load_highlight(config, inputs)
     zones = load_review_zones(config, inputs, highlight, terrain)
+    tiles = load_terrain_tiles(config, inputs, terrain)
 
     staging, _ = staging_dirs(config.output_dir)
     try:
-        publishing.remove_owned(staging, TOP_FILES, LAYER_SUBDIRS)
+        publishing.remove_owned(staging, TOP_FILES, BUNDLE_SUBDIRS)
         (staging / "layers").mkdir(parents=True)
         layers, grid, domains = _render(staging, inputs)
         if highlight is not None:
@@ -1153,6 +1330,11 @@ def run_export(config: ExportConfig, environ: Mapping[str, str] | None = None) -
         if weather is not None:
             (staging / "weather.json").write_bytes(weather[0])
             input_shas["weather_meta.json"] = weather[1]
+        if tiles is not None:
+            for name, tile in tiles.files.items():
+                (staging / TILES_DIR / name).parent.mkdir(parents=True, exist_ok=True)
+                (staging / TILES_DIR / name).write_bytes(tile)
+            input_shas[terrain_tiles.MANIFEST] = tiles.sha
         outputs = {
             p.relative_to(staging).as_posix(): _sha_bytes(p.read_bytes())
             for p in sorted(staging.rglob("*"))
@@ -1170,6 +1352,7 @@ def run_export(config: ExportConfig, environ: Mapping[str, str] | None = None) -
                 "weather": weather is not None,
                 "highlight": highlight is not None,
                 "review_zones": zones is not None,
+                "terrain_tiles": tiles is not None,
             },
             "display": {
                 "crs": "EPSG:3857",
@@ -1195,13 +1378,13 @@ def run_export(config: ExportConfig, environ: Mapping[str, str] | None = None) -
             "outputs": outputs,
         }
         _write_json(staging / "export.json", document)
-        warning = publishing.publish(staging, config.output_dir, TOP_FILES, LAYER_SUBDIRS)
+        warning = publishing.publish(staging, config.output_dir, TOP_FILES, BUNDLE_SUBDIRS)
     except (SarError, WebExportError, PublishError) as exc:
         raise ExportError(str(exc)) from exc
     except OSError as exc:
         raise ExportError(f"cannot write outputs: {exc}") from exc
     finally:
-        publishing.discard_staging(staging, TOP_FILES, LAYER_SUBDIRS)
+        publishing.discard_staging(staging, TOP_FILES, BUNDLE_SUBDIRS)
     publishing.report(warning, "export")
     return document
 

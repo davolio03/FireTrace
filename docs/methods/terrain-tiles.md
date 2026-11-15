@@ -26,7 +26,7 @@ The stage never downloads: each tile is verified against its pinned sha256 (the 
 | Precision | Rounded to **1 m** | Far below the DEM's vertical error; halves the PNG size (2.1 MB instead of 4.7 MB) |
 | Outside the bounds | 0 m | MapLibre is given the bounds and does not request other tiles |
 
-Every pixel centre inside the bounds must be covered by a DEM tile; otherwise the run stops instead of inventing flat ground. Output is staged and swapped into place; a directory with foreign content is never replaced. Reruns are byte-identical.
+Every pixel centre inside the bounds must be covered by a DEM tile; otherwise the run stops instead of inventing flat ground. Output is published with the shared `pipeline/publishing.py` helpers (DT-09): staged, swapped into place, and the previous pyramid removed file by file, never recursively. The stage owns only `tiles.json` and `<z>/<x>/<y>.png` at that depth (canonical decimal names); anything else in the output or its `.staging`/`.previous` siblings, including links and junctions, stops the run with exit code 2 and is left untouched. An output directory that holds a DEM input is refused. Reruns are byte-identical.
 
 `tiles.json` is a TileJSON 3.0 document (`tiles`, `encoding`, `tileSize`, `minzoom`, `maxzoom`, `bounds`, `attribution`) plus a `firetrace` block with the case id, the DEM tiles and checksums, datum, surface model, precision, the elevation range at the maximum zoom and a sha256 for every tile.
 
@@ -38,4 +38,4 @@ Every pixel centre inside the bounds must be covered by a DEM tile; otherwise th
 
 - The story view exaggerates the relief (×1.6) for readability and says so on screen.
 - A DSM shows canopy height: forest edges can look like small steps. Burned canopy loss after the DEM epoch is not reflected.
-- The tiles are not in the web bundle yet: copying them into `data/processed/web/terrain/` belongs to the export stage (follow-up task).
+- DT-04 copies the tiles into `data/processed/web/terrain/` when `terrain_tiles_dir` is set (DT-09, [web export](web-export.md)); a real release only shows 3D relief once it is rebuilt with them.
