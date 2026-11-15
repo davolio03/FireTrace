@@ -19,6 +19,13 @@ from rasterio.errors import CRSError, TransformError
 from rasterio.transform import rowcol, xy
 from rasterio.warp import transform as transform_coordinates
 
+from api.caveats import (
+    Caveat,
+    PixelContext,
+    WeatherSummary,
+    evaluate_caveats,
+    weather_summary_from_json,
+)
 from pipeline.publishing import PublishError, input_file, read_verified, read_verified_raster
 
 CONTRACT_VERSION = "1.2.0"
@@ -29,6 +36,8 @@ FORMAT_VERSIONS = {
 }
 ANALYSIS_CRS = CRS.from_epsg(32610)
 ANALYSIS_PIXEL_SIZE_M = 10.0
+LAYOVER_SHADOW_CODES = (0, 1, 2, 255)
+HIGHLIGHT_NODATA = 255
 MAX_PROFILE_SAMPLES = 2000
 CROSSING_TOLERANCE_M = 1.0
 
@@ -74,6 +83,7 @@ class FireTraceRasterService:
         self.change_dir = self.data_root / "interim" / "change"
         self.perimeter_dir = self.data_root / "interim" / "perimeter"
         self.terrain_dir = self.data_root / "interim" / "terrain"
+        self.highlight_dir = self.data_root / "interim" / "highlight"
         # (sha256 of each verified manifest, products parsed from exactly those bytes),
         # replaced as one tuple so the key never describes another generation's arrays.
         self._products_cache: tuple[tuple[tuple[str, str], ...], InspectionProducts] | None = None
@@ -293,7 +303,15 @@ class FireTraceRasterService:
         # Read errors (missing, permission denied) surface from _manifest as 503.
         if "terrain.json" in recorded:
             manifest_paths += (terrain_manifest,)
+        # The XP-01 highlight (P1) likewise, only when this bundle merged it.
+        highlight_manifest = self.highlight_dir / "highlight_meta.json"
+        if "highlight_meta.json" in recorded:
+            manifest_paths += (highlight_manifest,)
         verified = [self._manifest(path, recorded) for path in manifest_paths]
+        documents = {
+            path.name: document
+            for path, (document, _) in zip(manifest_paths, verified, strict=True)
+        }
         key = tuple(
             (path.name, checksum)
             for path, (_, checksum) in zip(manifest_paths, verified, strict=True)
@@ -368,8 +386,8 @@ class FireTraceRasterService:
                     status_code=503, detail=f"{name} contains values other than 0 or 1"
                 )
 
-        if len(verified) == 4:
-            terrain = verified[3][0]
+        if "terrain.json" in documents:
+            terrain = documents["terrain.json"]
             if terrain.get("terrain_format_version") != 1:
                 raise HTTPException(status_code=503, detail="Unsupported terrain_format_version")
             terrain_grid = self._grid(terrain, "terrain.json")
@@ -382,6 +400,38 @@ class FireTraceRasterService:
                 layers[name] = self._read_layer(
                     self.terrain_dir, record, "terrain.json", grid, "float32"
                 )
+            record = self._record(terrain, ("outputs", "layover_shadow.tif"), "terrain.json")
+            layers["layover_shadow"] = self._read_layer(
+                self.terrain_dir, record, "terrain.json", grid, "uint8"
+            )
+            if not np.isin(layers["layover_shadow"].data, LAYOVER_SHADOW_CODES).all():
+                raise HTTPException(
+                    status_code=503,
+                    detail="layover_shadow.tif contains values other than 0, 1, 2 or 255",
+                )
+
+        if "highlight_meta.json" in documents:
+            record = self._record(
+                documents["highlight_meta.json"],
+                ("outputs", "highlight_mask.tif"),
+                "highlight_meta.json",
+            )
+            highlight = self._read_layer(
+                self.highlight_dir, record, "highlight_meta.json", grid, "uint8"
+            )
+            if not np.isin(highlight.data, (0, 1, HIGHLIGHT_NODATA)).all():
+                raise HTTPException(
+                    status_code=503,
+                    detail="highlight_mask.tif contains values other than 0, 1 or 255",
+                )
+            if not np.array_equal(
+                highlight.data == HIGHLIGHT_NODATA, layers["valid_mask"].data == 0
+            ):
+                raise HTTPException(
+                    status_code=503,
+                    detail="highlight_mask.tif must be 255 exactly where valid_mask.tif is 0",
+                )
+            layers["highlight_mask"] = highlight
 
         products = InspectionProducts(grid, sar, change, perimeter, layers)
         self._products_cache = (key, products)
@@ -391,32 +441,59 @@ class FireTraceRasterService:
     def _empty_values() -> dict[str, dict[str, float | None]]:
         return {"t1": None, "t2": None, "delta": None}
 
+    def _weather(self, export: Mapping[str, Any]) -> WeatherSummary | None:
+        """DT-06 rain summary from the published weather.json of this export snapshot.
+
+        ``None`` when the bundle does not publish weather.json. A tampered or malformed
+        document is a 503: the soil-moisture caveat must not silently fall back to generic.
+        """
+        outputs = export.get("outputs")
+        if not isinstance(outputs, Mapping) or "weather.json" not in outputs:
+            return None
+        document = self._web_json("weather.json", export)
+        try:
+            summary = weather_summary_from_json(document)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=503, detail=f"Published weather.json is malformed: {exc!r}"
+            ) from exc
+        last_rain = summary.last_rain_before_t2 if summary is not None else None
+        if summary is not None and last_rain is not None and last_rain >= summary.t2_date:
+            raise HTTPException(
+                status_code=503,
+                detail="Published weather.json has last_rain_before_t2 on or after period.end",
+            )
+        return summary
+
     @staticmethod
-    def _generic_caveats() -> list[dict[str, Any]]:
-        return [
-            {
-                "id": "soil_moisture_change",
-                "label": "Soil moisture change",
-                "triggered": False,
-                "reason": (
-                    "Generic caution: soil moisture can change L-band backscatter "
-                    "independently of fire."
-                ),
-            },
-            {
-                "id": "vegetation_structure",
-                "label": "Vegetation structure",
-                "triggered": False,
-                "reason": (
-                    "Generic caution: changes in vegetation structure can alter HH/HV backscatter."
-                ),
-            },
-        ]
+    def _caveats(
+        products: InspectionProducts, row: int, col: int, weather: WeatherSummary | None
+    ) -> list[Caveat]:
+        """EV-02 deterministic caveats for one valid analysis pixel."""
+        slope: float | None = None
+        layover_shadow: int | None = None
+        if "slope" in products.layers:
+            value = float(products.layers["slope"].data[row, col])
+            slope = value if math.isfinite(value) else None
+            layover_shadow = int(products.layers["layover_shadow"].data[row, col])
+        pixel = PixelContext(
+            valid=True,
+            slope_deg=slope,
+            layover_shadow=layover_shadow,
+            near_perimeter_edge=int(products.layers["perimeter_edge.tif"].data[row, col]) == 1,
+        )
+        try:
+            return evaluate_caveats(pixel, weather)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=503, detail=f"Caveat inputs are out of range: {exc}"
+            ) from exc
 
     def inspect_point(self, lon: float, lat: float) -> dict[str, Any]:
         """Sample verified numerical products at the analysis-grid pixel under WGS84."""
         export = self._export()
         case = self._web_json("case.json", export)
+        weather = self._weather(export)
         products = self._load_products(export)
         reference = products.layers["t1_hh"]
         response: dict[str, Any] = {
@@ -516,7 +593,12 @@ class FireTraceRasterService:
                 },
                 "change_index": values["change_index"],
                 "change_index_percentile": percentile,
-                "caveats": self._generic_caveats(),
+                "highlighted": (
+                    int(products.layers["highlight_mask"].data[row, col]) == 1
+                    if "highlight_mask" in products.layers
+                    else None
+                ),
+                "caveats": self._caveats(products, row, col, weather),
             }
         )
         return response
