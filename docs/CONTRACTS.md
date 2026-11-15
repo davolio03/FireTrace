@@ -1,6 +1,6 @@
 # Shared interfaces — executable v1.2.0, real science still to verify
 
-**Authoritative definitions:** [contracts/README.md](../contracts/README.md), [JSON Schemas](../contracts/schemas/) and [OpenAPI 3.1](../contracts/openapi.yaml). This guide explains their semantics; it does not redefine fields or change interfaces. Schemas, fixtures and tooling already exist. The real pipeline/API/web do not.
+**Authoritative definitions:** [contracts/README.md](../contracts/README.md), [JSON Schemas](../contracts/schemas/) and [OpenAPI 3.1](../contracts/openapi.yaml). This guide explains their semantics; it does not redefine fields or change interfaces. The pipeline and web are implemented; integration of the real inspection API remains separate work.
 
 ## Interface registry
 
@@ -39,16 +39,15 @@ The real web output mirrors `contracts/fixtures/web/` under `data/processed/web/
 
 Retain before `G4284560161-ASF` (2026-08-16 02:56:39 UTC) and after `G4340499432-ASF` (2026-10-03 02:56:38 UTC), frequency A HH/HV, track 42/frame 70 descending, orbits 5504/6196. Reference WFIGS 58728 is dated 2026-09-14 20:44 UTC, before the after scene. See [PRODUCT](PRODUCT.md) and the [proposal](propuesta.md) for reported verification boundaries and sources.
 
-## Real-processing agreements still open
+## Documented processing choices and remaining verification
 
-These are not permission to silently alter fields or use fixture numbers as science:
+The implemented Plaskett methods document the following choices. They do not change the schemas or turn observations into scientific validation.
 
-- **Domain:** exact AOI/crop margin, rasterization/pixel inclusion rule, inside/outside boundary policy, coverage denominator and empty/all-invalid behavior. The reported 1,948,374 positive crop pixels do not define all product metrics.
-- **Continuous index:** exact absolute HH/HV combination, robust normalization domain/scaling, zero-MAD handling, clipping and comparison tolerances. `method.params` can carry agreed parameters; the mock median/MAD formula is not validated real processing.
-- **Display/lookup:** chosen resampling, color scale/stretch, coordinate rounding/pixel selection and numerical/display result identity. Do not interpolate scientific values from a rendered PNG.
-- **Physical interpretation:** moisture, slopes/shadow/layover, geometry and vegetation cautions; deterministic rule thresholds versus generic limitations. No invented trigger or confidence.
-- **P1 only:** threshold/smoothing, connected regions, valid IoU intersection/union domain, reference rasterization and sensitivity. IoU must not count unavailable pixels as measured negatives.
-- **Reproducibility:** input integrity identities, exact numerical artifact layout, configuration and environment/revision. Where the existing schema cannot express required shared provenance, propose a contract extension rather than extra undocumented fields.
+- **Continuous index:** signed HH/HV dB changes are combined as `|ΔHH| + |ΔHV|` and normalized over the common-valid crop using the median and `1.4826 × MAD`. The index is not clipped or thresholded; zero MAD or no valid pixels is an error. See [change-index](methods/change-index.md).
+- **Statistics domain:** coverage is valid pixels divided by all crop pixels. Inside/outside use the perimeter pixel-centre mask; the 50 m boundary band is included and the outside group includes open water. Area uses the 10 m analysis grid, not display pixels. See [stats](methods/stats.md).
+- **Display:** radar floats are reprojected to EPSG:3857 with nearest-neighbour resampling before colouring; radar stretches are shared for comparable layers. Terrain context has its own resampling rule. Never derive scientific values from colours. See [web export](methods/web-export.md).
+- **P1:** documented highlight and review-zone rules are exploratory; their thresholds and overlap metrics do not establish burned area or accuracy. See [highlight](methods/highlight.md) and [review zones](methods/review-zones.md).
+- **Remaining verification:** retain moisture, terrain, geometry, vegetation and reference-date cautions. The release's schema and hash checks do not independently prove numerical accuracy, geolocation or scientific interpretation. Real inspection API integration and display/lookup consistency remain separate work; agree any comparison tolerances needed for that work. Preserve input identities, configuration and environment/revision evidence. If additional shared provenance is required, agree a contract extension rather than adding undocumented fields.
 
 ## What validation proves
 
