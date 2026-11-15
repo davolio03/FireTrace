@@ -54,8 +54,12 @@ def _write_raster(path: Path, values: np.ndarray) -> dict[str, str]:
 GENERATION_MANIFESTS = ("sar.json", "change.json", "perimeter.json")
 
 
+MANIFEST_DIRS = {"highlight_meta.json": "highlight"}
+
+
 def _manifest_path(root: Path, name: str) -> Path:
-    return root / "interim" / name.removesuffix(".json") / name
+    directory = MANIFEST_DIRS.get(name, name.removesuffix(".json"))
+    return root / "interim" / directory / name
 
 
 def _record_inputs(root: Path, names: tuple[str, ...] = GENERATION_MANIFESTS) -> None:
@@ -68,14 +72,21 @@ def _record_inputs(root: Path, names: tuple[str, ...] = GENERATION_MANIFESTS) ->
     _write_json(export_path, export)
 
 
-def _write_terrain(root: Path) -> None:
+def _write_terrain(
+    root: Path,
+    slope: np.ndarray | None = None,
+    layover_shadow: np.ndarray | None = None,
+) -> None:
     terrain_dir = root / "interim" / "terrain"
     outputs = {
         f"{name}.tif": _write_raster(terrain_dir / f"{name}.tif", values)
         for name, values in {
             "elevation": np.full((2, 2), 123.5, dtype=np.float32),
-            "slope": np.full((2, 2), 12.0, dtype=np.float32),
+            "slope": np.full((2, 2), 12.0, dtype=np.float32) if slope is None else slope,
             "aspect": np.full((2, 2), np.nan, dtype=np.float32),
+            "layover_shadow": (
+                np.zeros((2, 2), dtype=np.uint8) if layover_shadow is None else layover_shadow
+            ),
         }.items()
     }
     _write_json(
@@ -903,3 +914,347 @@ def test_restored_generation_never_serves_products_cached_from_another(
     assert result["data_status"] == "mock"
     assert result["valid"] is True
     assert "terrain" not in result
+
+
+# ------------------------------------------- EV-01/EV-02 caveats and the XP-01 highlight
+
+
+def _inspect_schema() -> dict[str, Any]:
+    path = (
+        Path(__file__).resolve().parents[2] / "contracts" / "schemas" / "inspect-point.schema.json"
+    )
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _fixture(name: str) -> dict[str, Any]:
+    path = Path(__file__).resolve().parents[2] / "contracts" / "fixtures" / "api" / name
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _inspect(root: Path, row: int, col: int) -> dict[str, Any]:
+    """Inspect the centre of analysis pixel (row, col) and check the response contract."""
+    lon, lat = _wgs84(600005.0 + 10.0 * col, 3974995.0 - 10.0 * row)
+    result = FireTraceRasterService(root).inspect_point(lon, lat)
+    Draft202012Validator(_inspect_schema()).validate(result)
+    assert result["pixel"]["row"] == row
+    assert result["pixel"]["col"] == col
+    return result
+
+
+def _caveats_by_id(result: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    return {item["id"]: item for item in result["caveats"]}
+
+
+def _with_terrain(
+    root: Path,
+    slope: np.ndarray | None = None,
+    layover_shadow: np.ndarray | None = None,
+    extra: tuple[str, ...] = (),
+) -> None:
+    _write_terrain(root, slope, layover_shadow)
+    _record_inputs(root, (*GENERATION_MANIFESTS, "terrain.json", *extra))
+
+
+def _set_perimeter_edge(root: Path, edge: np.ndarray) -> None:
+    perimeter_dir = root / "interim" / "perimeter"
+    record = _write_raster(perimeter_dir / "perimeter_edge.tif", edge)
+    manifest_path = perimeter_dir / "perimeter.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["outputs"]["perimeter_edge.tif"] = record
+    _write_json(manifest_path, manifest)
+
+
+def _weather_document(**overrides: Any) -> dict[str, Any]:
+    document: dict[str, Any] = {
+        "contract_version": "1.2.0",
+        "data_status": "mock",
+        "period": {"start": "2026-08-16", "end": "2026-10-03"},
+        "last_rain_before_t2": "2026-09-30",
+    }
+    document.update(overrides)
+    return document
+
+
+def _publish_weather(root: Path, document: dict[str, Any]) -> Path:
+    """Publish weather.json and record its exact bytes in export.json outputs."""
+    web_dir = root / "processed" / "web"
+    payload = _write_json(web_dir / "weather.json", document)
+    export_path = web_dir / "export.json"
+    export = json.loads(export_path.read_text(encoding="utf-8"))
+    export["outputs"]["weather.json"] = hashlib.sha256(payload).hexdigest()
+    _write_json(export_path, export)
+    return web_dir / "weather.json"
+
+
+HIGHLIGHT_MASK = np.array([[1, 0], [1, 255]], dtype=np.uint8)
+
+
+def _write_highlight(root: Path, mask: np.ndarray = HIGHLIGHT_MASK) -> None:
+    highlight_dir = root / "interim" / "highlight"
+    record = _write_raster(highlight_dir / "highlight_mask.tif", mask)
+    _write_json(
+        highlight_dir / "highlight_meta.json",
+        {
+            "highlight_format_version": 1,
+            "grid": GRID,
+            "outputs": {"highlight_mask.tif": record},
+        },
+    )
+
+
+def _with_highlight(root: Path, mask: np.ndarray = HIGHLIGHT_MASK) -> None:
+    _write_highlight(root, mask)
+    _record_inputs(root, (*GENERATION_MANIFESTS, "highlight_meta.json"))
+
+
+def test_benign_pixel_returns_the_contract_fixture_caveats(tmp_path: Path) -> None:
+    """Slope <= 30, no layover, no edge, no weather: exactly the fixture's generic caveats."""
+    root, _, _ = _case_data(tmp_path)
+    _with_terrain(root)
+
+    result = _inspect(root, 0, 0)
+
+    assert result["caveats"] == _fixture("inspect-point-inside.json")["caveats"]
+    assert result["highlighted"] is None
+
+
+def test_steep_slope_pixel_lists_the_slope_value(tmp_path: Path) -> None:
+    root, _, _ = _case_data(tmp_path)
+    _with_terrain(root, slope=np.array([[34.25, 30.0], [12.0, 12.0]], dtype=np.float32))
+
+    steep = _caveats_by_id(_inspect(root, 0, 0))
+    at_threshold = _caveats_by_id(_inspect(root, 0, 1))
+
+    assert steep["steep_slope"]["triggered"] is True
+    assert "34.2° > 30°" in steep["steep_slope"]["reason"]
+    assert "steep_slope" not in at_threshold
+
+
+def test_nan_slope_is_unknown_and_not_listed(tmp_path: Path) -> None:
+    root, _, _ = _case_data(tmp_path)
+    _with_terrain(root, slope=np.full((2, 2), np.nan, dtype=np.float32))
+
+    assert "steep_slope" not in _caveats_by_id(_inspect(root, 0, 0))
+
+
+def test_layover_and_unknown_geometry_caveats(tmp_path: Path) -> None:
+    root, _, _ = _case_data(tmp_path)
+    _with_terrain(root, layover_shadow=np.array([[1, 255], [2, 0]], dtype=np.uint8))
+
+    layover = _caveats_by_id(_inspect(root, 0, 0))["radar_shadow_layover"]
+    unknown = _caveats_by_id(_inspect(root, 0, 1))["radar_shadow_layover"]
+    shadow = _caveats_by_id(_inspect(root, 1, 0))["radar_shadow_layover"]
+
+    assert layover["triggered"] is True
+    assert "layover" in layover["reason"]
+    assert shadow["triggered"] is True
+    assert "shadow" in shadow["reason"]
+    assert unknown["triggered"] is False
+    assert "unknown" in unknown["reason"]
+
+
+def test_layover_shadow_with_an_unknown_code_is_unavailable(tmp_path: Path) -> None:
+    root, lon, lat = _case_data(tmp_path)
+    _with_terrain(root, layover_shadow=np.array([[3, 0], [0, 0]], dtype=np.uint8))
+
+    _assert_503(FireTraceRasterService(root).inspect_point, lon, lat, match="layover_shadow")
+
+
+def test_edge_band_pixel_lists_near_perimeter_edge(tmp_path: Path) -> None:
+    root, _, _ = _case_data(tmp_path)
+    _set_perimeter_edge(root, np.array([[1, 0], [0, 0]], dtype=np.uint8))
+    _record_inputs(root)
+
+    edge = _caveats_by_id(_inspect(root, 0, 0))
+    away = _caveats_by_id(_inspect(root, 0, 1))
+
+    assert edge["near_perimeter_edge"]["triggered"] is True
+    assert "near_perimeter_edge" not in away
+
+
+def test_without_terrain_slope_is_absent_and_geometry_unknown(tmp_path: Path) -> None:
+    root, _, _ = _case_data(tmp_path)
+
+    caveats = _caveats_by_id(_inspect(root, 0, 0))
+
+    assert "steep_slope" not in caveats
+    assert caveats["radar_shadow_layover"]["triggered"] is False
+    assert "unknown" in caveats["radar_shadow_layover"]["reason"]
+
+
+def test_recent_rain_before_t2_triggers_soil_moisture(tmp_path: Path) -> None:
+    root, _, _ = _case_data(tmp_path)
+    _with_terrain(root)
+    _publish_weather(root, _weather_document())
+
+    soil = _caveats_by_id(_inspect(root, 0, 0))["soil_moisture_change"]
+
+    assert soil["triggered"] is True
+    assert "2026-09-30" in soil["reason"]
+    assert "3 day(s)" in soil["reason"]
+    assert "MOCK weather data." in soil["reason"]
+
+
+def test_unpublished_weather_keeps_the_generic_soil_moisture_caution(tmp_path: Path) -> None:
+    root, _, _ = _case_data(tmp_path)
+    _with_terrain(root)
+    # On disk but not listed in export.json outputs: not part of this bundle.
+    (root / "processed" / "web" / "weather.json").write_bytes(
+        json.dumps(_weather_document()).encode("utf-8")
+    )
+
+    result = _inspect(root, 0, 0)
+
+    assert result["caveats"] == _fixture("inspect-point-inside.json")["caveats"]
+
+
+def test_tampered_weather_is_unavailable(tmp_path: Path) -> None:
+    root, lon, lat = _case_data(tmp_path)
+    path = _publish_weather(root, _weather_document())
+    path.write_bytes(path.read_bytes() + b" ")
+
+    _assert_503(FireTraceRasterService(root).inspect_point, lon, lat, match="weather.json")
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"period": {"start": "2026-08-16"}},
+        {"period": {"start": "2026-08-16", "end": "not-a-date"}},
+        {"last_rain_before_t2": "yesterday"},
+        {"last_rain_before_t2": 5},
+        {"data_status": "synthetic"},
+        {"period": None},
+        {"last_rain_before_t2": "2026-10-03"},  # rain on t2 breaks the rule's precondition
+    ],
+)
+def test_malformed_weather_is_unavailable(tmp_path: Path, overrides: dict[str, Any]) -> None:
+    root, lon, lat = _case_data(tmp_path)
+    _publish_weather(root, _weather_document(**overrides))
+
+    _assert_503(FireTraceRasterService(root).inspect_point, lon, lat, match="weather.json")
+
+
+def test_out_of_range_slope_is_unavailable(tmp_path: Path) -> None:
+    root, lon, lat = _case_data(tmp_path)
+    _with_terrain(root, slope=np.full((2, 2), 95.0, dtype=np.float32))
+
+    _assert_503(FireTraceRasterService(root).inspect_point, lon, lat)
+
+
+def test_invalid_pixel_has_no_caveats_even_with_triggers(tmp_path: Path) -> None:
+    root, _, _ = _case_data(tmp_path)
+    _set_perimeter_edge(root, np.ones((2, 2), dtype=np.uint8))
+    _with_terrain(
+        root,
+        slope=np.full((2, 2), 45.0, dtype=np.float32),
+        layover_shadow=np.ones((2, 2), dtype=np.uint8),
+    )
+    _publish_weather(root, _weather_document())
+
+    result = _inspect(root, 1, 1)
+
+    assert result["valid"] is False
+    assert result["caveats"] == []
+    assert result["highlighted"] is None
+
+
+def test_recorded_highlight_is_sampled_for_valid_pixels(tmp_path: Path) -> None:
+    root, _, _ = _case_data(tmp_path)
+    _with_highlight(root)
+
+    assert _inspect(root, 0, 0)["highlighted"] is True
+    assert _inspect(root, 0, 1)["highlighted"] is False
+    assert _inspect(root, 1, 0)["highlighted"] is True
+    assert _inspect(root, 1, 1)["highlighted"] is None
+
+
+def test_highlight_outside_the_grid_is_null(tmp_path: Path) -> None:
+    root, _, _ = _case_data(tmp_path)
+    _with_highlight(root)
+
+    result = FireTraceRasterService(root).inspect_point(0.0, 0.0)
+
+    assert result["pixel"] is None
+    assert result["highlighted"] is None
+
+
+def test_unrecorded_highlight_is_null(tmp_path: Path) -> None:
+    root, _, _ = _case_data(tmp_path)
+    _write_highlight(root)  # on disk but not recorded by this bundle
+
+    assert _inspect(root, 0, 0)["highlighted"] is None
+
+
+def test_highlight_meta_from_another_run_is_unavailable(tmp_path: Path) -> None:
+    root, lon, lat = _case_data(tmp_path)
+    _with_highlight(root)
+    meta_path = _manifest_path(root, "highlight_meta.json")
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    meta["note"] = "re-run after the export"
+    _write_json(meta_path, meta)
+
+    _assert_503(
+        FireTraceRasterService(root).inspect_point, lon, lat, match="different pipeline runs"
+    )
+
+
+def test_missing_recorded_highlight_meta_is_unavailable(tmp_path: Path) -> None:
+    root, lon, lat = _case_data(tmp_path)
+    _with_highlight(root)
+    _manifest_path(root, "highlight_meta.json").unlink()
+
+    _assert_503(FireTraceRasterService(root).inspect_point, lon, lat, match="highlight_meta.json")
+
+
+@pytest.mark.parametrize(
+    "mask",
+    [
+        np.array([[1, 255], [1, 255]], dtype=np.uint8),  # 255 on a valid pixel
+        np.array([[1, 0], [1, 0]], dtype=np.uint8),  # not 255 on the invalid pixel
+        np.array([[2, 0], [1, 255]], dtype=np.uint8),  # value outside 0/1/255
+    ],
+)
+def test_highlight_mask_must_follow_the_valid_mask(tmp_path: Path, mask: np.ndarray) -> None:
+    root, lon, lat = _case_data(tmp_path)
+    _with_highlight(root, mask)
+
+    _assert_503(FireTraceRasterService(root).inspect_point, lon, lat, match="highlight_mask.tif")
+
+
+def test_corrupt_highlight_mask_is_unavailable(tmp_path: Path) -> None:
+    root, lon, lat = _case_data(tmp_path)
+    _with_highlight(root)
+    path = root / "interim" / "highlight" / "highlight_mask.tif"
+    path.write_bytes(path.read_bytes() + b"corrupted")
+
+    _assert_503(FireTraceRasterService(root).inspect_point, lon, lat)
+
+
+def test_highlight_is_cached_with_the_products_by_content(tmp_path: Path) -> None:
+    root, _, _ = _case_data(tmp_path)
+    _with_highlight(root)
+    service = FireTraceRasterService(root)
+    lon, lat = _wgs84(600015.0, 3974995.0)
+    assert service.inspect_point(lon, lat)["highlighted"] is False
+    assert service._load_products() is service._load_products()
+
+    _with_highlight(root, np.array([[1, 1], [1, 255]], dtype=np.uint8))
+
+    assert service.inspect_point(lon, lat)["highlighted"] is True
+
+
+def test_profile_output_is_unchanged_by_caveat_inputs(tmp_path: Path) -> None:
+    root, _, _ = _case_data(tmp_path)
+    _write_highlight(root)
+    _write_terrain(root, layover_shadow=np.ones((2, 2), dtype=np.uint8))
+    _record_inputs(root, (*GENERATION_MANIFESTS, "terrain.json", "highlight_meta.json"))
+    _publish_weather(root, _weather_document())
+    line = [_wgs84(600000.0, 3974995.0), _wgs84(600020.0, 3974995.0)]
+
+    result = FireTraceRasterService(root).inspect_profile(line, spacing_m=10.0)
+
+    _assert_profile_contract(result)
+    assert all(
+        "caveats" not in sample and "highlighted" not in sample for sample in result["samples"]
+    )
