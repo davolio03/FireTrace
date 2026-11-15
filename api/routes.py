@@ -8,9 +8,26 @@ own manifest validation and numerical raster reads.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Annotated, Any, Protocol
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import BaseModel, Field, FiniteFloat, field_validator
+
+
+class ProfileRequest(BaseModel):
+    """Validated WGS84 transect request body from ``openapi.yaml``."""
+
+    line: list[tuple[FiniteFloat, FiniteFloat]] = Field(min_length=2)
+    spacing_m: FiniteFloat = Field(default=10.0, gt=0)
+
+    @field_validator("line")
+    @classmethod
+    def _coordinates_are_wgs84(cls, line: list[tuple[float, float]]) -> list[tuple[float, float]]:
+        for lon, lat in line:
+            if not -180.0 <= lon <= 180.0 or not -90.0 <= lat <= 90.0:
+                raise ValueError("line coordinates must be WGS84 lon/lat within range")
+        return line
 
 
 class FireTraceService(Protocol):
@@ -25,6 +42,10 @@ class FireTraceService(Protocol):
     def get_layers(self) -> dict[str, Any]: ...
 
     def inspect_point(self, lon: float, lat: float) -> dict[str, Any]: ...
+
+    def inspect_profile(
+        self, line: Sequence[Sequence[float]], spacing_m: float
+    ) -> dict[str, Any]: ...
 
 
 def get_service(request: Request) -> FireTraceService:
@@ -73,3 +94,12 @@ def inspect_point(
 ) -> dict[str, Any]:
     """Return computed radar evidence for the analysis-grid pixel under WGS84 lon/lat."""
     return service.inspect_point(lon=lon, lat=lat)
+
+
+@router.post("/api/inspect/profile", operation_id="inspectProfile")
+def inspect_profile(
+    body: ProfileRequest,
+    service: Annotated[FireTraceService, Depends(get_service)],
+) -> dict[str, Any]:
+    """Sample radar evidence along a WGS84 transect on the analysis grid."""
+    return service.inspect_profile(line=body.line, spacing_m=body.spacing_m)

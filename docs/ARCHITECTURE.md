@@ -44,7 +44,7 @@ The proposed real continuous baseline combines absolute HH/HV log-ratio magnitud
 
 ## Service boundary
 
-[Executable contracts](../contracts/README.md) define `/api/health`, `/api/case`, `/api/stats`, `/api/layers` and `/api/inspect/point`. A point outside the AOI returns 200 with `valid=false`, `pixel=null` and null values; invalid query parameters use 422. No region endpoint or authentication/deployment design is implemented.
+[Executable contracts](../contracts/README.md) define `/api/health`, `/api/case`, `/api/stats`, `/api/layers`, `/api/inspect/point` and `POST /api/inspect/profile`. A point outside the AOI returns 200 with `valid=false`, `pixel=null` and null values; invalid query parameters use 422. The transect samples the same verified grid at a positive `spacing_m`, keeps masked or out-of-grid positions with null values, includes the final endpoint once, caps the response at 2,000 samples and reports perimeter crossings; malformed bodies use 422. No region endpoint or authentication/deployment design is implemented.
 
 COG names in current board proposals are implementation intentions, not a complete internal storage manifest. Record the numerical artifact layout, input integrity identifiers, crop/configuration and code/dependency versions during pipeline implementation. Extend shared metadata only through the contract process.
 
