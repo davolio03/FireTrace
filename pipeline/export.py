@@ -748,56 +748,85 @@ def _expected_tiles(bounds: tuple[float, float, float, float], lo: int, hi: int)
 
 
 def _check_tile_png(name: str, payload: bytes, size: int) -> None:
-    """A complete, CRC-valid PNG of ``size`` x ``size`` 8-bit RGB or RGBA pixels.
+    """A complete, decodable PNG of ``size`` x ``size`` 8-bit RGB or RGBA pixels.
 
-    Parsed strictly in memory: every chunk's CRC, one IHDR first, the IDAT stream fully
-    decompressed to exactly the scanline bytes the header implies, IEND last and nothing
-    after it. GDAL's PNG reader accepts truncated files, so it is not used here.
+    Parsed strictly in memory, following the PNG specification: every chunk's CRC; IHDR
+    first and only once, with compression, filter and interlace methods 0; only the
+    critical chunks IHDR, PLTE (before IDAT), IDAT (consecutive) and an empty IEND, which
+    must be last; ancillary chunks are allowed. The IDAT stream must inflate to exactly the
+    scanline bytes the header implies, and every scanline must start with a filter type
+    0-4. GDAL's PNG reader accepts truncated files, so it is not used here.
     """
+
+    def bad(reason: str) -> ExportError:
+        return ExportError(f"{name}: not a readable PNG: {reason}")
+
     if not payload.startswith(PNG_SIGNATURE):
         raise ExportError(f"{name}: not a PNG file")
     pos, header, idat, ended = len(PNG_SIGNATURE), None, bytearray(), False
+    idat_state = "before"  # before -> inside -> after (IDAT chunks must be consecutive)
     while pos < len(payload) and not ended:
         if pos + 12 > len(payload):
-            raise ExportError(f"{name}: not a readable PNG: truncated chunk")
+            raise bad("truncated chunk")
         length = int.from_bytes(payload[pos : pos + 4], "big")
         kind = payload[pos + 4 : pos + 8]
         data = payload[pos + 8 : pos + 8 + length]
         crc = payload[pos + 8 + length : pos + 12 + length]
-        if len(data) != length or len(crc) != 4:
-            raise ExportError(f"{name}: not a readable PNG: truncated chunk")
+        if length > 2**31 - 1 or len(data) != length or len(crc) != 4:
+            raise bad("truncated chunk")
+        if not kind.isalpha() or not kind.isascii():
+            raise bad(f"invalid chunk type {kind!r}")
         if zlib.crc32(kind + data).to_bytes(4, "big") != crc:
-            raise ExportError(f"{name}: not a readable PNG: bad CRC in {kind!r}")
+            raise bad(f"bad CRC in {kind!r}")
         if header is None and kind != b"IHDR":
-            raise ExportError(f"{name}: not a readable PNG: IHDR is not first")
+            raise bad("IHDR is not first")
         if kind == b"IHDR":
             if header is not None or length != 13:
-                raise ExportError(f"{name}: not a readable PNG: bad IHDR")
+                raise bad("bad IHDR")
             header = data
         elif kind == b"IDAT":
+            if idat_state == "after":
+                raise bad("IDAT chunks are not consecutive")
+            idat_state = "inside"
             idat += data
         elif kind == b"IEND":
+            if length:
+                raise bad("IEND is not empty")
             ended = True
+        elif kind == b"PLTE":
+            if idat_state != "before":
+                raise bad("PLTE after IDAT")
+        elif kind[0] & 0x20 == 0:  # an unknown critical chunk cannot be skipped
+            raise bad(f"unsupported critical chunk {kind!r}")
+        if kind != b"IDAT" and idat_state == "inside":
+            idat_state = "after"
         pos += 12 + length
     if header is None or not ended or pos != len(payload):
-        raise ExportError(f"{name}: not a readable PNG: missing IEND or trailing bytes")
+        raise bad("missing IEND or trailing bytes")
+    if not idat:
+        raise bad("no image data")
     width = int.from_bytes(header[0:4], "big")
     height = int.from_bytes(header[4:8], "big")
-    depth, colour, _, _, interlace = header[8:13]
+    depth, colour, compression, filtering, interlace = header[8:13]
     channels = {2: 3, 6: 4}.get(colour)
     if (width, height) != (size, size) or depth != 8 or channels is None or interlace != 0:
         raise ExportError(
             f"{name}: expected a {size} px 8-bit RGB(A) non-interlaced PNG, got "
             f"{width}x{height}, depth {depth}, colour type {colour}, interlace {interlace}"
         )
-    expected = height * (1 + width * channels)
+    if compression != 0 or filtering != 0:
+        raise bad(f"compression method {compression}, filter method {filtering}")
+    row = 1 + width * channels
+    expected = height * row
     try:
         inflater = zlib.decompressobj()
         pixels = inflater.decompress(bytes(idat), expected + 1)
     except zlib.error as exc:
-        raise ExportError(f"{name}: not a readable PNG: {exc}") from exc
+        raise bad(str(exc)) from exc
     if len(pixels) != expected or not inflater.eof or inflater.unused_data:
-        raise ExportError(f"{name}: not a readable PNG: image data is incomplete")
+        raise bad("image data is incomplete")
+    if max(pixels[::row]) > 4:
+        raise bad("scanline filter type above 4")
 
 
 def load_terrain_tiles(

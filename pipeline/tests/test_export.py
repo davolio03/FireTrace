@@ -10,6 +10,7 @@ import importlib.util
 import json
 import os
 import shutil
+import zlib
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
@@ -1820,3 +1821,60 @@ def test_real_terrain_fixture_tiles_pass_the_png_check():
     terrain = FIXTURES / "terrain"
     for name in _tile_names(terrain):
         export._check_tile_png(name, (terrain / name).read_bytes(), 256)
+
+
+# --------------------------------------------------------------------------- review round 2 (DT-09)
+
+
+def _chunk(kind: bytes, data: bytes) -> bytes:
+    crc = zlib.crc32(kind + data).to_bytes(4, "big")
+    return len(data).to_bytes(4, "big") + kind + data + crc
+
+
+def _crafted_png(
+    *,
+    filter_byte: int = 0,
+    compression: int = 0,
+    filtering: int = 0,
+    extra: tuple[bytes, ...] = (),
+    split_idat: bool = False,
+    iend: bytes = b"",
+) -> bytes:
+    """A CRC-correct 256 x 256 RGBA PNG built by hand, with one property broken."""
+    header = (256).to_bytes(4, "big") * 2 + bytes([8, 6, compression, filtering, 0])
+    raw = (bytes([filter_byte]) + bytes(256 * 4)) * 256
+    data = zlib.compress(raw)
+    idat = (
+        [_chunk(b"IDAT", data[:10]), *extra, _chunk(b"IDAT", data[10:])]
+        if split_idat
+        else [*extra, _chunk(b"IDAT", data)]
+    )
+    return export.PNG_SIGNATURE + _chunk(b"IHDR", header) + b"".join(idat) + _chunk(b"IEND", iend)
+
+
+def test_hand_built_png_passes_the_check():
+    export._check_tile_png("t.png", _crafted_png(), 256)
+    export._check_tile_png("t.png", _crafted_png(extra=(_chunk(b"tEXt", b"k\x00v"),)), 256)
+
+
+@pytest.mark.parametrize(
+    ("payload", "match"),
+    [
+        (_crafted_png(filter_byte=5), "filter type"),
+        (_crafted_png(compression=1), "compression method"),
+        (_crafted_png(filtering=1), "filter method"),
+        (_crafted_png(extra=(_chunk(b"ABCD", b""),)), "critical chunk"),
+        (_crafted_png(split_idat=True, extra=(_chunk(b"tEXt", b"k\x00v"),)), "consecutive"),
+        (_crafted_png(iend=b"x"), "IEND"),
+        (_crafted_png(extra=(_chunk(b"AB1D", b""),)), "chunk type"),
+    ],
+)
+def test_crc_correct_but_undecodable_png_is_rejected(payload: bytes, match: str):
+    with pytest.raises(ExportError, match=match):
+        export._check_tile_png("t.png", payload, 256)
+
+
+def test_invalid_filter_tile_is_never_published(tmp_path: Path):
+    config = _with_tiles(tmp_path)
+    _replace_tile(tmp_path, _crafted_png(filter_byte=5))
+    _fails_without_writing(config, "filter type")
