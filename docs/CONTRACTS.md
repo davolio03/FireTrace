@@ -15,6 +15,7 @@
 | Pipeline → web (P1) | `review_zones.geojson`: ranked change-outside / little-change-inside / agreement zones | [review-zones schema](../contracts/schemas/review-zones.schema.json) |
 | Context data → web | `weather.json` (precipitation between acquisitions); `optical_*`, `hillshade`, `slope` layers with mandatory `source` | [weather schema](../contracts/schemas/weather.schema.json) / [layers schema](../contracts/schemas/layers.schema.json) |
 | Storytelling → web | Guided story steps (`web/src/story/story.json`) | [story schema](../contracts/schemas/story.schema.json) |
+| Context data → web (optional) | `terrain/tiles.json` + Terrarium `terrain/{z}/{x}/{y}.png` 3D relief for the story | [terrain-tiles schema](../contracts/schemas/terrain-tiles.schema.json) |
 | Web → analyst | Annotation export (GeoJSON) for the report | [annotations schema](../contracts/schemas/annotations.schema.json) |
 | Web L4 ↔ L5 | Shared store shape and actions | [web-state](../contracts/web-state.md) |
 
