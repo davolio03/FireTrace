@@ -20,12 +20,14 @@ export function CaseMap({
   dataBaseUrl = '/',
   dates = { before: 'Date unavailable', after: 'Date unavailable' },
   profileSample = null,
+  onCaptureReady,
   overlay = null,
 }: {
   layers?: Layer[]
   dataBaseUrl?: string
   dates?: ComparisonDates
   profileSample?: LonLat | null
+  onCaptureReady?: (capture: (() => string) | null) => void
   /** Content drawn over the map (for example the guided story card). */
   overlay?: ReactNode
 }) {
@@ -35,7 +37,11 @@ export function CaseMap({
   const tool = useMapStore((state) => state.tool)
   const selection = useMapStore((state) => state.selection)
   const [error, setError] = useState(false)
-  const showError = useCallback(() => setError(true), [])
+  const errorRef = useRef(false)
+  const showError = useCallback(() => {
+    errorRef.current = true
+    setError(true)
+  }, [])
 
   useEffect(() => {
     if (!container.current) return
@@ -64,7 +70,12 @@ export function CaseMap({
       zoom,
       bearing: bearing ?? 0,
       pitch: pitch ?? 0,
+      canvasContextAttributes: { preserveDrawingBuffer: true },
       style: createBaseMapStyle(),
+    })
+    onCaptureReady?.(() => {
+      if (!map.loaded() || errorRef.current) throw new Error('Map is not ready')
+      return map.getCanvas().toDataURL('image/png')
     })
     const stopCameraSync = syncCamera(map)
     setPrimary(map)
@@ -111,9 +122,10 @@ export function CaseMap({
     return () => {
       stopCameraSync()
       unsubscribe()
+      onCaptureReady?.(null)
       map.remove()
     }
-  }, [layers, dataBaseUrl, showError])
+  }, [layers, dataBaseUrl, showError, onCaptureReady])
 
   useEffect(() => {
     if (!primary) return

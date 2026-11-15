@@ -18,7 +18,11 @@ const map = vi.hoisted(() => ({
   setLayoutProperty: vi.fn(),
   setPaintProperty: vi.fn(),
   fitBounds: vi.fn(),
-  canvas: { style: { cursor: '' } },
+  loaded: vi.fn(() => true),
+  canvas: {
+    style: { cursor: '' },
+    toDataURL: () => 'data:image/png;base64,AAAA',
+  },
   markerSet: vi.fn(),
   markerAdd: vi.fn(),
   markerRemove: vi.fn(),
@@ -41,6 +45,7 @@ vi.mock('maplibre-gl', () => ({
     setPaintProperty = map.setPaintProperty
     fitBounds = map.fitBounds
     getCanvas = () => map.canvas
+    loaded = map.loaded
     off = map.off
     project = map.project
   },
@@ -95,6 +100,73 @@ describe('case map', () => {
     )
     unmount()
     expect(map.remove).toHaveBeenCalledOnce()
+  })
+  it('refuses map capture after a layer or map error', () => {
+    let capture: (() => string) | null = null
+    render(
+      <CaseMap
+        onCaptureReady={(value) => {
+          capture = value
+        }}
+      />,
+    )
+    expect(capture!()).toBe('data:image/png;base64,AAAA')
+    const fail = map.on.mock.calls.find(([event]) => event === 'error')?.[1]
+    act(() => fail())
+    expect(() => capture!()).toThrow()
+  })
+  it('rejects unloaded maps and synchronous errors and unregisters capture', () => {
+    let capture: (() => string) | null = null
+    const { unmount } = render(
+      <CaseMap
+        onCaptureReady={(value) => {
+          capture = value
+        }}
+      />,
+    )
+    map.loaded.mockReturnValueOnce(false)
+    expect(() => capture!()).toThrow('Map is not ready')
+    expect(capture!()).toBe('data:image/png;base64,AAAA')
+    const fail = map.on.mock.calls.find(([event]) => event === 'error')?.[1]
+    act(() => {
+      fail()
+      expect(() => capture!()).toThrow('Map is not ready')
+    })
+    unmount()
+    expect(capture).toBeNull()
+  })
+  it('captures with a story overlay and shared camera and cleans up', () => {
+    mapStore.setState({
+      camera: { center: [-121.38, 35.95], zoom: 12, bearing: 10, pitch: 20 },
+      cameraDurationMs: 0,
+      visible: [],
+      opacity: {},
+      selection: { type: 'none' },
+      tool: 'pan',
+    })
+    let capture: (() => string) | null = null
+    const { unmount } = render(
+      <CaseMap
+        overlay={<p>Story overlay</p>}
+        onCaptureReady={(value) => {
+          capture = value
+        }}
+      />,
+    )
+    expect(screen.getByText('Story overlay')).toBeTruthy()
+    expect(map.create).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        center: [-121.38, 35.95],
+        zoom: 12,
+        bearing: 10,
+        pitch: 20,
+        canvasContextAttributes: { preserveDrawingBuffer: true },
+      }),
+    )
+    expect(capture!()).toBe('data:image/png;base64,AAAA')
+    unmount()
+    expect(capture).toBeNull()
+    expect(map.off).toHaveBeenCalledWith('moveend', expect.any(Function))
   })
 
   it('selects map points only in inspect mode', () => {

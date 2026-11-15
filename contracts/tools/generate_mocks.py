@@ -21,6 +21,7 @@ Outputs (all under contracts/fixtures/):
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 from datetime import datetime, timezone
@@ -696,6 +697,15 @@ def main() -> None:
 
     for name, obj in (("case", case), ("stats", stats), ("layers", {"contract_version": CONTRACT_VERSION, "data_status": "mock", "layers": layers})):
         (WEB / f"{name}.json").write_text(json.dumps(obj, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    export = {
+        "export_format_version": 1,
+        "case_id": case["case_id"],
+        "outputs": {
+            name: hashlib.sha256((WEB / name).read_bytes()).hexdigest()
+            for name in ("case.json", "review_zones.geojson")
+        },
+    }
+    (WEB / "export.json").write_text(json.dumps(export, indent=2) + "\n", encoding="utf-8")
     (API / "stats-with-highlight.json").write_text(json.dumps(stats_hl, indent=2) + "\n", encoding="utf-8")
     write_context_fixtures(f, h, w, zones_fc)
     print(f"Mock fixtures written to {FIX.relative_to(ROOT)} ({w}x{h} px)")
