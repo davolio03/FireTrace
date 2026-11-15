@@ -6,6 +6,8 @@ import { LocationMap } from './features/map/LocationMap'
 import { Inspector } from './features/inspector/Inspector'
 import { MetricsPanel } from './features/metrics/MetricsPanel'
 import { WeatherPanel } from './features/weather/WeatherPanel'
+import { ProfilePanel } from './features/profile/ProfilePanel'
+import type { LonLat } from './state/mapStore'
 import type { ComparisonDates } from './features/map/ComparisonControls'
 import { layersAreRenderable, type Layer } from './features/map/layers'
 
@@ -48,6 +50,7 @@ function AppContent() {
   const [manifestError, setManifestError] = useState(false)
   const [caseData, setCaseData] = useState<CaseData | null>(null)
   const [view, setView] = useState<'overview' | 'analysis'>('overview')
+  const [profileSample, setProfileSample] = useState<LonLat | null>(null)
 
   useEffect(() => {
     let active = true
@@ -196,9 +199,11 @@ function AppContent() {
               layers={layers}
               dates={dates}
               dataBaseUrl={import.meta.env.VITE_DATA_BASE_URL || '/'}
+              profileSample={profileSample}
             />
           </div>
           <Inspector caseData={caseData} />
+          <ProfilePanel onSample={setProfileSample} />
           <MetricsPanel />
           <WeatherPanel dates={dates} />
         </>

@@ -36,6 +36,12 @@ chosen radar observation. Rainfall context reads `weather.json`; missing values
 are not shown as zero. These contextual products do not confirm the cause of
 radar changes or establish burned area.
 
+To inspect a transect, choose **Draw transect**, click at least two map
+vertices, then choose **Finish transect**. The profile chart and sample table
+show the returned observations; selecting a sample marks it on the map.
+Invalid samples remain gaps. Mock distances, spacing and perimeter crossings
+are illustrative, not measurements or scientific validation.
+
 The Results panel reads `stats.json` from `VITE_DATA_BASE_URL` and displays
 valid coverage and descriptive change-index statistics inside and outside the
 official perimeter. These are not measurements of burned area. P1 highlight

@@ -9,6 +9,8 @@ import { LayerControls } from './LayerControls'
 import { type Layer, visibleMapLayers } from './layers'
 import { addMapLayers, syncMapLayers } from './mapLayers'
 import { createBaseMapStyle } from './mapStyle'
+import { ProfileOverlay } from './ProfileOverlay'
+import type { LonLat } from '../../state/mapStore'
 
 const noLayers: Layer[] = []
 
@@ -16,10 +18,12 @@ export function CaseMap({
   layers = noLayers,
   dataBaseUrl = '/',
   dates = { before: 'Date unavailable', after: 'Date unavailable' },
+  profileSample = null,
 }: {
   layers?: Layer[]
   dataBaseUrl?: string
   dates?: ComparisonDates
+  profileSample?: LonLat | null
 }) {
   const container = useRef<HTMLDivElement>(null)
   const [primary, setPrimary] = useState<maplibregl.Map | null>(null)
@@ -62,6 +66,14 @@ export function CaseMap({
           point: [event.lngLat.lng, event.lngLat.lat],
         })
       }
+      if (mapStore.getState().tool === 'draw-profile') {
+        const current = mapStore.getState().selection
+        const line = current.type === 'profile' ? current.line : []
+        mapStore.getState().select({
+          type: 'profile',
+          line: [...line, [event.lngLat.lng, event.lngLat.lat]],
+        })
+      }
     })
     map.on('error', showError)
     const syncLayers = () =>
@@ -94,7 +106,8 @@ export function CaseMap({
   useEffect(() => {
     if (!primary) return
     const canvas = primary.getCanvas()
-    canvas.style.cursor = tool === 'inspect' ? 'crosshair' : ''
+    canvas.style.cursor =
+      tool === 'inspect' || tool === 'draw-profile' ? 'crosshair' : ''
     return () => {
       canvas.style.cursor = ''
     }
@@ -152,6 +165,13 @@ export function CaseMap({
                 {comparisonLabel(compare.right, layers, dates)}
               </span>
             </>
+          )}
+          {primary && selection.type === 'profile' && (
+            <ProfileOverlay
+              map={primary}
+              line={selection.line}
+              sample={profileSample}
+            />
           )}
         </div>
         {layers.length > 0 && (
