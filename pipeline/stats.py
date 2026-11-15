@@ -124,7 +124,7 @@ def zone(values: np.ndarray, edges: np.ndarray) -> dict[str, Any]:
 def _load(path: Path) -> dict[str, Any]:
     try:
         doc = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise StatsError(f"cannot read {path.name}: {exc}") from exc
     if not isinstance(doc, dict):
         raise StatsError(f"{path.name}: top level must be an object")

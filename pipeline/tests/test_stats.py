@@ -381,3 +381,15 @@ def test_sha_mismatch_names_the_manifest_that_recorded_it(tmp_path: Path) -> Non
     (d["perimeter"] / "perimeter_mask.tif").write_bytes(b"changed")
     with pytest.raises(StatsError, match="perimeter_mask.tif: sha256 .* perimeter.json"):
         run_stats(d["change"], d["sar"], d["perimeter"], tmp_path / "stats")
+
+
+def test_manifest_with_invalid_utf8_is_a_clean_cli_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    d = write_inputs(tmp_path)
+    (d["sar"] / "sar.json").write_bytes(b'{"sar_format_version": 1, "x": "\xff"}')
+    args = ["--change-dir", str(d["change"]), "--sar-dir", str(d["sar"])]
+    args += ["--perimeter-dir", str(d["perimeter"]), "--output-dir", str(tmp_path / "stats")]
+    assert main(args) == 2
+    assert "cannot read sar.json" in capsys.readouterr().err
+    assert not (tmp_path / "stats").exists()
