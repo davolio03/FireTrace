@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import * as maplibregl from 'maplibre-gl'
 import mapWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url'
 import { mapStore, type LonLat } from '../../state/mapStore'
-import { syncCamera } from './cameraSync'
+import { readCamera, sameCamera, syncCamera } from './cameraSync'
 import { storyMapLayers, syncCinematicLayers } from './cinematicLayers'
 import type { Layer } from './layers'
 import { addMapLayers } from './mapLayers'
@@ -190,6 +190,13 @@ export function CinematicMap({
     track.current = groundTrack(ringCentre(frame), 60, 160)
 
     instance.on('load', () => {
+      // Keep the attribution folded into its (i) button: open, it covers the
+      // story's chapter bar. It still opens on demand.
+      const attribution = instance
+        .getContainer()
+        .querySelector('.maplibregl-ctrl-attrib')
+      attribution?.classList.remove('maplibregl-compact-show')
+      attribution?.removeAttribute('open')
       addOrbitLayers(instance, frame, track.current)
       addMapLayers(instance, drawn, dataBaseUrl, () => undefined)
       stylePerimeter(instance)
@@ -209,16 +216,21 @@ export function CinematicMap({
           ).href
             .replace(/%7B/g, '{')
             .replace(/%7D/g, '}')
-          instance.addSource('terrain-dem', {
-            type: 'raster-dem',
+          const dem = {
+            type: 'raster-dem' as const,
             tiles: [template],
-            encoding: 'terrarium',
+            encoding: 'terrarium' as const,
             tileSize: tiles.tileSize,
             minzoom: tiles.minzoom,
             maxzoom: tiles.maxzoom,
             bounds: tiles.bounds,
+          }
+          // Separate sources for relief and shading, as MapLibre recommends.
+          instance.addSource('terrain-dem', {
+            ...dem,
             attribution: tiles.attribution,
           })
+          instance.addSource('terrain-shade', dem)
           const firstData = drawn
             .map((layer) => `firetrace-${layer.id}`)
             .find((id) => instance.getLayer(id))
@@ -226,7 +238,7 @@ export function CinematicMap({
             {
               id: 'terrain-hillshade',
               type: 'hillshade',
-              source: 'terrain-dem',
+              source: 'terrain-shade',
               paint: {
                 'hillshade-exaggeration': 0.35,
                 'hillshade-shadow-color': '#0f172a',
@@ -238,6 +250,18 @@ export function CinematicMap({
             source: 'terrain-dem',
             exaggeration: TERRAIN_EXAGGERATION,
           })
+          // Switching terrain on stops a running flight; finish it.
+          const { camera, cameraDurationMs } = mapStore.getState()
+          if (!sameCamera(readCamera(instance), camera)) {
+            const { center, zoom, bearing, pitch } = camera
+            instance.flyTo({
+              center,
+              zoom,
+              bearing,
+              pitch,
+              duration: Math.max(1500, cameraDurationMs / 2),
+            })
+          }
           reportTerrain.current?.(true)
         })
         .catch(() => {
@@ -303,7 +327,10 @@ export function CinematicMap({
       ref={container}
       role="region"
       aria-label="3D story map of Big Sur"
-      className="absolute inset-0"
+      // Not `absolute`: maplibre-gl.css sets `.maplibregl-map { position:
+      // relative }`, which beats Tailwind's layered utilities and collapses
+      // the map to 0 px. The parent positions it; the map just fills it.
+      className="h-full w-full"
     />
   )
 }

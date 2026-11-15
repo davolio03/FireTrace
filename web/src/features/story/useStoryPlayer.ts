@@ -107,6 +107,8 @@ export function useStoryPlayer(
   story: Story | null,
   layers: Layer[],
   reducedMotion: boolean,
+  /** Called when the user leaves the story (Esc or `exit`). */
+  onExit?: () => void,
 ) {
   const count = story?.steps.length ?? 0
   const [state, dispatch] = useReducer(reducer(count), {
@@ -123,6 +125,15 @@ export function useStoryPlayer(
           : step,
       )
     : 0
+
+  const exitHandler = useRef(onExit)
+  useEffect(() => {
+    exitHandler.current = onExit
+  }, [onExit])
+  const leave = useCallback(() => {
+    dispatch({ type: 'exit' })
+    exitHandler.current?.()
+  }, [])
 
   // Latest context without re-applying a step when unrelated props change.
   // Effects run in order, so this refresh lands before the step is applied.
@@ -170,8 +181,7 @@ export function useStoryPlayer(
       if (document.hidden) dispatch({ type: 'pause' })
     }
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !isTyping(event.target))
-        dispatch({ type: 'exit' })
+      if (event.key === 'Escape' && !isTyping(event.target)) leave()
     }
     document.addEventListener('visibilitychange', onVisibility)
     document.addEventListener('keydown', onKeyDown)
@@ -179,7 +189,7 @@ export function useStoryPlayer(
       document.removeEventListener('visibilitychange', onVisibility)
       document.removeEventListener('keydown', onKeyDown)
     }
-  }, [active])
+  }, [active, leave])
 
   return {
     available: count > 0,
@@ -197,7 +207,7 @@ export function useStoryPlayer(
     next: useCallback(() => dispatch({ type: 'next' }), []),
     prev: useCallback(() => dispatch({ type: 'prev' }), []),
     goTo: useCallback((index: number) => dispatch({ type: 'goTo', index }), []),
-    exit: useCallback(() => dispatch({ type: 'exit' }), []),
+    exit: leave,
     resume: useCallback(() => dispatch({ type: 'resume' }), []),
   }
 }

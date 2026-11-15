@@ -28,6 +28,7 @@ const mock = vi.hoisted(() => {
     setLayoutProperty: vi.fn(),
     setPaintProperty: vi.fn(),
     moving: false,
+    flyTo: vi.fn(),
   }
 })
 
@@ -57,10 +58,11 @@ vi.mock('maplibre-gl', () => ({
     remove = mock.remove
     isMoving = () => mock.moving
     getBearing = () => 10
+    getContainer = () => document.createElement('div')
     getCenter = () => ({ lng: -121.47, lat: 35.92 })
     getZoom = () => 9
     getPitch = () => 0
-    flyTo = vi.fn()
+    flyTo = mock.flyTo
     jumpTo = vi.fn()
   },
   setWorkerUrl: vi.fn(),
@@ -136,6 +138,10 @@ describe('cinematic map', () => {
       source: 'terrain-dem',
       exaggeration: 1.6,
     })
+    // Terrain stops a running flight, so the map resumes towards the store.
+    expect(mock.flyTo).toHaveBeenCalledWith(
+      expect.objectContaining({ center: initialCamera.center, zoom: 9 }),
+    )
     // The hillshade goes under the radar layers.
     const hillshade = mock.addLayer.mock.calls.find(
       ([layer]) => layer.id === 'terrain-hillshade',

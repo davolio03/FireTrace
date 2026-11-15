@@ -11,7 +11,6 @@ import {
 import type { LonLat } from '../../state/mapStore'
 import { CinematicMap } from '../map/CinematicMap'
 import { TERRAIN_EXAGGERATION } from '../map/terrainTiles'
-import { mapStore } from '../../state/mapStore'
 import type { Layer } from '../map/layers'
 import frameFeature from '../../story/nisar-frame.json'
 import { renderMarkdown } from './markdown'
@@ -19,7 +18,6 @@ import type { StoryPlayerApi } from './useStoryPlayer'
 
 const FRAME_RING = frameFeature.geometry.coordinates[0] as LonLat[]
 const CONTROLS_HIDE_MS = 2500
-const CASE_CENTRE: LonLat = [-121.3865, 35.916]
 
 const glass =
   'rounded-xl border border-white/10 bg-slate-950/70 text-white shadow-2xl backdrop-blur-md'
@@ -94,17 +92,6 @@ export function StoryView({
   }, [playing])
   useEffect(() => {
     caption.current?.focus()
-    // Leaving the story keeps its layers and selection, but levels the camera
-    // for the 2D analysis map and keeps it on the case.
-    return () => {
-      const { camera, flyTo } = mapStore.getState()
-      flyTo({
-        center: camera.zoom < 8 ? CASE_CENTRE : camera.center,
-        zoom: Math.max(camera.zoom, 10),
-        bearing: 0,
-        pitch: 0,
-      })
-    }
   }, [])
 
   if (!step) return null
@@ -299,7 +286,7 @@ export function StoryView({
 
       <nav
         aria-label="Story chapters"
-        className="absolute inset-x-0 bottom-0 flex gap-1.5 px-4 pb-5 sm:px-6"
+        className="absolute inset-x-0 bottom-0 flex gap-1.5 pb-5 pl-4 pr-14 sm:pl-6"
       >
         {Array.from({ length: count }, (_, chapter) => (
           <button

@@ -15,11 +15,25 @@ import { Inspector } from './features/inspector/Inspector'
 import { MetricsPanel } from './features/metrics/MetricsPanel'
 import { WeatherPanel } from './features/weather/WeatherPanel'
 import { ProfilePanel } from './features/profile/ProfilePanel'
-import type { LonLat } from './state/mapStore'
+import { mapStore, type LonLat } from './state/mapStore'
 import type { ComparisonDates } from './features/map/ComparisonControls'
 import { layersAreRenderable, type Layer } from './features/map/layers'
 
 type CaseData = Awaited<ReturnType<typeof loadCaseData>>['case']
+
+/**
+ * Leaving the story keeps its layers and selection, but levels the camera for
+ * the 2D analysis map and keeps it on the case (the story may end on a globe).
+ */
+function levelCamera() {
+  const { camera, flyTo } = mapStore.getState()
+  flyTo({
+    center: camera.zoom < 8 ? [-121.3865, 35.916] : camera.center,
+    zoom: Math.max(camera.zoom, 10),
+    bearing: 0,
+    pitch: 0,
+  })
+}
 
 const productionStory = parseStory(storyJson)
 const storyMinutes = productionStory
@@ -72,7 +86,7 @@ function AppContent() {
     productionStory && caseData?.case_id === productionStory.case_id
       ? productionStory
       : null
-  const player = useStoryPlayer(story, layers, reducedMotion)
+  const player = useStoryPlayer(story, layers, reducedMotion, levelCamera)
   const { start, resume } = player
   const watchStory = () => {
     setView('story')
