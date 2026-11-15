@@ -21,7 +21,8 @@ The scenes were chosen by looking at the images. The catalogue cloud percentage 
 
 ## Rendering (decision L1)
 
-- Reflectance = `DN × 0.0001 − 0.1` (L2A processing baseline ≥ 04.00; scale and offset are read from the STAC metadata). `DN = 0` is nodata and becomes transparent, as does any pixel missing in one of the three bands.
+- Reflectance = `DN × scale + offset_applied`. Earth Search STAC declares `scale = 0.0001`, `offset = −0.1` (the L2A convention since processing baseline 04.00, where DNs carry +1000). **For these two scenes the data contradict that offset**: 90–99 % of the valid land DNs in the 2026-10-15 crop (31 % in the smoky 2026-08-30 crop) are below 1000, which would mean negative reflectance. The Plaskett configuration therefore sets `dn_offset_policy = "none"`, so **reflectance = `DN × 0.0001`**. `optical.json` records the declared and the applied offset. `DN = 0` is nodata and becomes transparent, as does any pixel missing in one of the three bands.
+- Two build-time checks bound this choice, and neither proves it in every case. With an applied offset, more than 1 % of valid pixels with negative reflectance stops the build (an offset applied wrongly). With `"none"`, at most 1 % of valid DNs below the declared offset (`1000`) in all three bands also stops the build (an offset present in the data but ignored). A scene whose surface is genuinely brighter than 0.1 everywhere could not be told apart; review the DN distribution when choosing a new scene.
 - True colour (B04, B03, B02) uses **one fixed stretch for both scenes**: `clip(reflectance / 0.3, 0, 1) ^ (1 / 2.2)`. A per-scene automatic stretch would make the two images incomparable and could tone smoke down.
 - Display PNGs are warped to EPSG:3857 with bilinear resampling per channel through the shared `pipeline/webexport.py`, and share their corners and size with the SAR layers.
 - The crop COGs (`optical_*.tif`) keep the original L2A digital numbers (three bands, uint16).

@@ -546,10 +546,42 @@ def load_terrain(config: ExportConfig, ingest_sha: str, crop: Mapping[str, Any])
     )
 
 
+def _check_optical_layer(layer: Mapping[str, Any]) -> None:
+    """Contract rules for one optical layer (layers.schema.json), checked before publishing."""
+    lid = layer.get("id")
+    source = layer.get("source")
+    if not (
+        isinstance(source, Mapping)
+        and set(source) <= {"label", "url", "product_id"}
+        and isinstance(source.get("label"), str)
+        and source["label"].strip()
+        and isinstance(source.get("url"), str)
+        and source["url"].startswith(("https://", "http://"))
+        and isinstance(source.get("product_id", ""), str)
+    ):
+        raise ExportError(f"optical_layers.json: {lid} source needs a label and an http(s) url")
+    acquired = layer.get("acquired")
+    try:
+        if not isinstance(acquired, str) or not acquired.endswith("Z"):
+            raise ValueError
+        datetime.fromisoformat(acquired.replace("Z", "+00:00"))
+    except ValueError:
+        raise ExportError(
+            f"optical_layers.json: {lid} acquired must be an ISO UTC date-time, got {acquired!r}"
+        ) from None
+    legend = layer.get("legend")
+    if not (
+        isinstance(legend, Mapping)
+        and legend.get("type") == "rgb"
+        and isinstance(legend.get("note"), str)
+    ):
+        raise ExportError(f"optical_layers.json: {lid} legend must be type 'rgb' with a note")
+
+
 def load_optical(config: ExportConfig, ingest_sha: str, crop: Mapping[str, Any]) -> Terrain | None:
     """DT-07 optical context layers, or None when the optical stage has not been run."""
-    if config.optical_dir is None or not config.optical_dir.exists():
-        return None
+    if config.optical_dir is None or not (config.optical_dir / "optical.json").exists():
+        return None  # the stage has not been run (an empty directory is not an error)
     doc, sha = _manifest(config.optical_dir / "optical.json")
     _version(doc, "optical_format_version", "optical.json")
     _chain(
@@ -573,8 +605,7 @@ def load_optical(config: ExportConfig, ingest_sha: str, crop: Mapping[str, Any])
             )
         if layer.get("url") != f"layers/{lid}.png":
             raise ExportError(f"optical_layers.json: {lid} url must be layers/{lid}.png")
-        if not isinstance(layer.get("acquired"), str):
-            raise ExportError(f"optical_layers.json: {lid} needs its acquisition time")
+        _check_optical_layer(layer)
     return Terrain(
         layers=layers, pngs={lid: payloads[f"{lid}.png"] for lid in OPTICAL_IDS}, sha=sha
     )

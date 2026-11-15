@@ -9,8 +9,10 @@ reflectance_max = 0.3
 gamma = 2.2
 # Earth Search sentinel-2-l2a COGs for these scenes store reflectance x 10000 WITHOUT the
 # +1000 L2A offset, although STAC raster:bands declares offset -0.1: 90-99% of valid land DNs
-# in the 2026-10-15 crop are < 1000. "none" ignores that offset; build fails if > 1% of valid
-# pixels would become negative, so a wrong policy cannot pass silently.
+# in the 2026-10-15 crop (31% in the 2026-08-30 crop) are < 1000. "none" therefore computes
+# reflectance = DN * 0.0001. Build stops if, under "none", no band has > 1% of valid DNs below
+# 1000 (the data look offset), or, under "stac", > 1% of reflectance is negative. These are
+# bounds, not proof: see docs/methods/optical.md.
 dn_offset_policy = "none"
 ingest_dir = "data/interim/nisar"
 raw_dir = "data/raw/sentinel2"

@@ -222,11 +222,26 @@ def load_crop(ingest_dir: Path) -> tuple[Affine, int, int]:
 # --------------------------------------------------------------------------- fetch
 
 
+class HttpsOnlyRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Refuses any redirect to a non-HTTPS URL before following it."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
+        if urllib.parse.urlsplit(newurl).scheme != "https":
+            raise OpticalError("refusing a redirect to a non-HTTPS URL")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _open(url: str, timeout: int):  # type: ignore[no-untyped-def]
+    if not url.startswith("https://"):
+        raise OpticalError("requests must use HTTPS")
+    return urllib.request.build_opener(HttpsOnlyRedirectHandler).open(url, timeout=timeout)
+
+
 def get_json(url: str) -> dict[str, Any]:
     if not url.startswith("https://"):
         raise OpticalError("STAC requests must use HTTPS")
     try:
-        with urllib.request.urlopen(url, timeout=60) as response:
+        with _open(url, 60) as response:
             return json.load(response)
     except (urllib.error.URLError, json.JSONDecodeError) as exc:
         raise OpticalError(f"STAC request failed: {exc}") from exc
@@ -237,7 +252,7 @@ def download_file(url: str, dest: Path) -> None:
     if not url.startswith("https://"):
         raise OpticalError("downloads must use HTTPS")
     try:
-        with urllib.request.urlopen(url, timeout=300) as response, dest.open("wb") as out:
+        with _open(url, 300) as response, dest.open("wb") as out:
             shutil.copyfileobj(response, out, length=1 << 20)
     except urllib.error.URLError as exc:
         raise OpticalError(f"download failed: {exc}") from exc
@@ -299,6 +314,22 @@ def _write_crop(src: Path, window: Window, dest: Path) -> None:
         raise OpticalError(f"{src.name}: cannot crop: {exc}") from exc
 
 
+def _crop_matches(path: Path, asset: Mapping[str, Any], window: Window) -> bool:
+    """True if an existing crop is exactly ``window`` of this asset's grid."""
+    a, _, c, _, e, f = (float(v) for v in asset["proj:transform"][:6])
+    expected = Affine(a, 0.0, c + int(window.col_off) * a, 0.0, e, f + int(window.row_off) * e)
+    try:
+        with rasterio.open(path) as ds:
+            return (
+                ds.crs is not None
+                and ds.crs.to_epsg() == 32610
+                and ds.transform == expected
+                and (ds.width, ds.height) == (int(window.width), int(window.height))
+            )
+    except RasterioError:
+        return False
+
+
 def _iso_seconds(value: str) -> str:
     try:
         moment = datetime.fromisoformat(value.replace("Z", "+00:00"))
@@ -351,7 +382,12 @@ def fetch(
                 window = _exact_window(asset, crop, width, height)
             name = f"{sid}_{band}.tif"
             dest = raw / name
-            if not (dest.is_file() and previous.get(name) == _sha256(dest)):
+            reusable = (
+                dest.is_file()
+                and previous.get(name) == _sha256(dest)
+                and _crop_matches(dest, asset, window)
+            )
+            if not reusable:
                 part = raw / (name + ".part")
                 try:
                     download(asset["href"], part)
@@ -464,6 +500,7 @@ def run_build(config: OpticalConfig) -> dict[str, Any]:
         if not isinstance(record, dict) or record.get("scene_id") != config.scenes[lid]:
             raise OpticalError(f"optical_manifest.json: {lid} is not {config.scenes[lid]}")
         dns, refls = [], []
+        below: list[float] = []
         nodata = None
         for band in RGB_BANDS:
             b = record["bands"][band]
@@ -484,6 +521,17 @@ def run_build(config: OpticalConfig) -> dict[str, Any]:
                     f"{config.dn_offset_policy!r})"
                 )
             refls.append(band_refl)
+            if config.dn_offset_policy == "none" and float(offset) < 0:
+                # Evidence that the declared offset is absent: with a real +offset/scale DN
+                # offset, (almost) no valid pixel could fall below that DN.
+                floor_dn = -float(offset) / float(scale)
+                valid_dn = dn[dn != nodata] if nodata is not None else dn.ravel()
+                below.append(float((valid_dn < floor_dn).mean()) if valid_dn.size else 0.0)
+        if config.dn_offset_policy == "none" and below and max(below) <= MAX_NEGATIVE_SHARE:
+            raise OpticalError(
+                f"{lid}: dn_offset_policy 'none' but only {max(below):.2%} of valid DNs lie below "
+                "the declared offset; the data look offset, so ignoring it would brighten them"
+            )
         refl = np.stack(refls)
         valid = np.isfinite(refl).all(axis=0)
         refl[:, ~valid] = np.nan

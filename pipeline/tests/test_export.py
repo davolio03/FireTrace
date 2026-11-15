@@ -1027,3 +1027,40 @@ def test_invalid_optical_fragment_is_rejected(
 def test_optical_dir_is_optional_in_the_config(tmp_path: Path):
     config = load_config(ROOT / "pipeline/configs/case_plaskett.toml", base_dir=tmp_path)
     assert config.optical_dir == tmp_path / "data/interim/optical"
+
+
+def test_empty_optical_dir_is_treated_as_not_run(tmp_path: Path):
+    config = write_inputs(tmp_path)
+    (tmp_path / "optical").mkdir()
+    run_export(replace(config, optical_dir=tmp_path / "optical"))
+    assert _load(config.output_dir / "export.json")["optional"]["optical"] is False
+
+
+@pytest.mark.parametrize(
+    ("override", "message"),
+    [
+        ({"source": {}}, "source"),
+        ({"acquired": "invalid"}, "acquired"),
+        ({"legend": {"type": "continuous"}}, "legend"),
+    ],
+    ids=["empty_source", "bad_acquired", "bad_legend"],
+)
+def test_contract_invalid_optical_metadata_keeps_the_previous_bundle(
+    tmp_path: Path, override: dict[str, Any], message: str
+) -> None:
+    good = _with_optical(tmp_path / "good")
+    run_export(good)
+    before = {
+        p.relative_to(good.output_dir): p.read_bytes()
+        for p in good.output_dir.rglob("*")
+        if p.is_file()
+    }
+    write_optical(good.optical_dir, good.ingest_dir / "ingest.json", **override)
+    with pytest.raises(ExportError, match=message):
+        run_export(good)
+    after = {
+        p.relative_to(good.output_dir): p.read_bytes()
+        for p in good.output_dir.rglob("*")
+        if p.is_file()
+    }
+    assert after == before

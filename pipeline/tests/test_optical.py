@@ -325,3 +325,85 @@ def test_policy_none_reads_dn_as_reflectance_times_10000(tmp_path: Path) -> None
 def test_unknown_offset_policy_is_rejected(tmp_path: Path) -> None:
     with pytest.raises(OpticalError, match="dn_offset_policy"):
         load_config(write_config(tmp_path, "guess"), base_dir=tmp_path)
+
+
+# --------------------------------------------------------------- review regressions
+
+
+def test_policy_none_is_refused_when_the_data_look_offset(tmp_path: Path) -> None:
+    # Every DN >= 1000: the declared +1000 offset is present, so ignoring it would brighten.
+    config, _ = fetched(tmp_path, {"red": 2500, "green": 2000, "blue": 1500}, policy="none")
+    with pytest.raises(OpticalError, match="look offset"):
+        run_build(config)
+
+
+def test_redirect_to_plain_http_is_refused() -> None:
+    req = urllib.request.Request("https://stac.example/item")
+    with pytest.raises(OpticalError, match="non-HTTPS"):
+        optical.HttpsOnlyRedirectHandler().redirect_request(
+            req, None, 302, "Found", {}, "http://stac.example/item"
+        )
+
+
+def test_changed_crop_grid_refetches_instead_of_reusing_stale_crops(tmp_path: Path) -> None:
+    config, remote = fetched(tmp_path)
+    assert remote.downloads == 8
+    ingest = tmp_path / "nisar" / "ingest.json"
+    doc = json.loads(ingest.read_text(encoding="utf-8"))
+    doc["grid"]["crop"]["transform"][2] += 10.0  # crop moves one pixel east
+    ingest.write_text(json.dumps(doc), encoding="utf-8")
+    fetch(config, get_json=remote.get_json, download=remote.download)
+    assert remote.downloads > 8, "crops for the old window must not be reused"
+    manifest = json.loads((tmp_path / "raw" / "optical_manifest.json").read_text(encoding="utf-8"))
+    red = manifest["scenes"]["optical_during"]["bands"]["red"]
+    assert red["window"]["col_off"] == 11
+    with rasterio.open(tmp_path / "raw" / red["file"]) as ds:
+        assert ds.transform.c == CROP_T.c + 10.0
+
+
+def test_scl_window_covers_an_odd_offset_crop(tmp_path: Path) -> None:
+    remote = FakeRemote(tmp_path / "remote", {"red": 2500, "green": 2000, "blue": 1500})
+    config = load_config(write_config(tmp_path), base_dir=tmp_path)
+    ingest = tmp_path / "nisar" / "ingest.json"
+    doc = json.loads(ingest.read_text(encoding="utf-8"))
+    doc["grid"]["crop"]["transform"][2] += 10.0  # x origin at an odd 10 m position (600110)
+    doc["grid"]["crop"]["transform"][5] -= 10.0  # y origin at an odd 10 m position
+    ingest.write_text(json.dumps(doc), encoding="utf-8")
+    manifest = fetch(config, get_json=remote.get_json, download=remote.download)
+    scl = manifest["scenes"]["optical_during"]["scl"]
+    with rasterio.open(tmp_path / "raw" / scl["file"]) as ds:
+        left, top = ds.transform.c, ds.transform.f
+        right, bottom = left + ds.width * 20.0, top - ds.height * 20.0
+    crop_left, crop_top = CROP_T.c + 10.0, CROP_T.f - 10.0
+    assert left <= crop_left and top >= crop_top
+    assert right >= crop_left + CW * 10.0 and bottom <= crop_top - CH * 10.0
+
+
+def test_failed_download_leaves_no_partial_files(tmp_path: Path) -> None:
+    remote = FakeRemote(tmp_path / "remote", {"red": 2500, "green": 2000, "blue": 1500})
+    config = load_config(write_config(tmp_path), base_dir=tmp_path)
+
+    def broken(url: str, dest: Path) -> None:
+        dest.write_bytes(b"half a file")
+        raise OpticalError("download failed: connection reset")
+
+    with pytest.raises(OpticalError, match="connection reset"):
+        fetch(config, get_json=remote.get_json, download=broken)
+    assert not list((tmp_path / "raw").glob("*.part"))
+    assert not list((tmp_path / "raw").glob("*.tif"))
+
+
+def test_failed_publication_keeps_the_previous_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config, _ = fetched(tmp_path)
+    run_build(config)
+    before = {p.name: p.read_bytes() for p in sorted((tmp_path / "out").iterdir())}
+
+    def boom(*_args: Any) -> None:
+        raise optical.SarError("injected publish failure")
+
+    monkeypatch.setattr(optical, "publish", boom)
+    with pytest.raises(OpticalError, match="injected"):
+        run_build(config)
+    assert {p.name: p.read_bytes() for p in sorted((tmp_path / "out").iterdir())} == before
