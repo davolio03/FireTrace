@@ -523,6 +523,7 @@ def test_optional_inputs_are_merged_only_when_present(tmp_path: Path):
         "optical": False,
         "weather": False,
         "highlight": False,
+        "review_zones": False,
     }
 
     full = write_inputs(tmp_path / "full", terrain=True, weather=True)
@@ -537,6 +538,7 @@ def test_optional_inputs_are_merged_only_when_present(tmp_path: Path):
         "optical": False,
         "weather": True,
         "highlight": False,
+        "review_zones": False,
     }
 
 
@@ -1233,3 +1235,128 @@ def test_stats_with_a_highlight_already_set_is_rejected(tmp_path: Path):
 def test_highlight_dir_is_optional_in_the_config(tmp_path: Path):
     config = load_config(ROOT / "pipeline/configs/case_plaskett.toml", base_dir=tmp_path)
     assert config.highlight_dir == tmp_path / "data/interim/highlight"
+
+
+# --------------------------------------------------------------------------- XP-04 review zones
+
+
+def write_review_zones(
+    directory: Path,
+    config: ExportConfig,
+    *,
+    inputs: dict[str, str] | None = None,
+    edit: Callable[[dict[str, Any]], None] | None = None,
+) -> None:
+    """Mimic the XP-04 output directory (the contract fixture relabelled as real data)."""
+    directory.mkdir(parents=True, exist_ok=True)
+    doc = _load(FIXTURES / "review_zones.geojson")
+    doc["data_status"] = "real"
+    doc["method"]["change_threshold"] = HIGHLIGHT_BLOCK["threshold"]
+    if edit is not None:
+        edit(doc)
+    _json(directory / "review_zones.geojson", doc)
+    assert config.highlight_dir is not None
+    meta = {
+        "review_zones_format_version": 1,
+        "inputs": inputs
+        or {
+            "change.json": _sha(config.change_dir / "change.json"),
+            "sar.json": _sha(config.sar_dir / "sar.json"),
+            "perimeter.json": _sha(config.perimeter_dir / "perimeter.json"),
+            "highlight_meta.json": _sha(config.highlight_dir / "highlight_meta.json"),
+            "terrain.json": _sha(config.terrain_dir / "terrain.json"),
+        },
+        "grid": GRID,
+        "outputs": {
+            "review_zones.geojson": {
+                "file": "review_zones.geojson",
+                "sha256": _sha(directory / "review_zones.geojson"),
+            }
+        },
+    }
+    _json(directory / "review_zones_meta.json", meta)
+
+
+def _with_review_zones(tmp_path: Path, **kwargs: Any) -> ExportConfig:
+    config = write_inputs(tmp_path, terrain=True)
+    highlight_dir = tmp_path / "highlight"
+    write_highlight(highlight_dir, config)
+    config = replace(config, highlight_dir=highlight_dir, review_zones_dir=tmp_path / "zones")
+    write_review_zones(tmp_path / "zones", config, **kwargs)
+    return config
+
+
+def test_review_zones_are_copied_and_listed_as_a_p1_vector_layer(tmp_path: Path):
+    config = _with_review_zones(tmp_path)
+    run_export(config)
+    web = config.output_dir
+    assert (web / "review_zones.geojson").read_bytes() == (
+        tmp_path / "zones/review_zones.geojson"
+    ).read_bytes()
+    layer = _layers(web)["review_zones"]
+    assert layer["kind"] == "vector" and layer["url"] == "review_zones.geojson"
+    assert layer["group"] == "highlighted_change" and layer["p1"] is True
+    assert layer["default_visible"] is False
+    assert [i["value"] for i in layer["legend"]["items"]] == [
+        "change_outside_perimeter",
+        "no_change_inside_perimeter",
+        "change_inside_perimeter",
+    ]
+    assert "not errors" in layer["legend"]["note"]
+    manifest = _load(web / "export.json")
+    assert manifest["optional"]["review_zones"] is True
+    assert manifest["inputs"]["review_zones_meta.json"] == _sha(
+        tmp_path / "zones/review_zones_meta.json"
+    )
+    spec = importlib.util.spec_from_file_location("validate", ROOT / "contracts/tools/validate.py")
+    assert spec and spec.loader
+    validate = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(validate)
+    errors: list[str] = []
+    validate.check_web_dir(web, errors)
+    assert errors == []
+
+
+def test_without_review_zones_the_bundle_has_no_zone_layer(tmp_path: Path):
+    config = write_inputs(tmp_path)
+    (tmp_path / "zones").mkdir()
+    run_export(replace(config, review_zones_dir=tmp_path / "zones"))
+    assert not (config.output_dir / "review_zones.geojson").exists()
+    assert "review_zones" not in _layers(config.output_dir)
+    assert _load(config.output_dir / "export.json")["optional"]["review_zones"] is False
+
+
+def test_review_zones_from_another_generation_are_rejected(tmp_path: Path):
+    config = _with_review_zones(tmp_path, inputs={"change.json": "0" * 64})
+    _fails_without_writing(config, "review_zones_meta.json was built from another")
+
+
+def test_review_zones_need_the_highlight_they_were_built_from(tmp_path: Path):
+    config = _with_review_zones(tmp_path)
+    _fails_without_writing(replace(config, highlight_dir=None), "needs the XP-01 highlight")
+
+
+def test_tampered_review_zones_are_rejected(tmp_path: Path):
+    config = _with_review_zones(tmp_path)
+    (tmp_path / "zones/review_zones.geojson").write_text("{}", encoding="utf-8")
+    _fails_without_writing(config, "sha256")
+
+
+@pytest.mark.parametrize(
+    ("edit", "message"),
+    [
+        (lambda d: d.update(data_status="mock"), "data_status"),
+        (lambda d: d["method"].update(change_threshold=3.0), "change_threshold"),
+        (lambda d: d.update(type="Feature"), "FeatureCollection"),
+    ],
+    ids=["mock", "threshold", "type"],
+)
+def test_inconsistent_review_zones_are_rejected(
+    tmp_path: Path, edit: Callable[[dict[str, Any]], None], message: str
+) -> None:
+    _fails_without_writing(_with_review_zones(tmp_path, edit=edit), message)
+
+
+def test_review_zones_dir_is_optional_in_the_config(tmp_path: Path):
+    config = load_config(ROOT / "pipeline/configs/case_plaskett.toml", base_dir=tmp_path)
+    assert config.review_zones_dir == tmp_path / "data/interim/review_zones"

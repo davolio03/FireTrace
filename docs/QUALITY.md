@@ -58,6 +58,8 @@ The optional XP-01 stage (P1) builds the exploratory highlight mask and its peri
 
 The XP-02 sweep (P1) describes how the XP-01 highlight depends on threshold, smoothing and polarization: `uv run python -m pipeline.sensitivity --config pipeline/configs/sensitivity_plaskett.toml`; outputs JSON and CSV only (not part of the web bundle); see [sensitivity](methods/sensitivity.md).
 
+The optional XP-04 stage (P1) ranks the zones to review, after XP-01 and DT-05: `uv run python -m pipeline.review_zones --config pipeline/configs/review_zones_plaskett.toml`. DT-04 copies `review_zones.geojson` and adds the `review_zones` layer when `review_zones_dir` has a `review_zones_meta.json` built from the same inputs, highlight and terrain; see [review zones](methods/review-zones.md).
+
 The DT-07 stage adds optical context from public Sentinel-2 L2A scenes: `uv run python -m pipeline.optical fetch --config pipeline/configs/optical_plaskett.toml` (one-off, no credentials) and `uv run python -m pipeline.optical build --config pipeline/configs/optical_plaskett.toml` (offline). DT-04 merges `optical_layers.json` when `optical_dir` has an `optical.json`; see [optical](methods/optical.md).
 
 The DT-04 stage exports the web bundle: `uv run python -m pipeline.export --config pipeline/configs/case_plaskett.toml`. It verifies every upstream manifest and checksum, merges the DT-05 terrain layers and copies the DT-06 `weather.json` only when those stages have been run, and writes `data/processed/web/`, which must pass `uv run contracts/tools/validate.py data/processed/web`. Set `SOURCE_DATE_EPOCH` for a byte-identical rerun; see [web-export](methods/web-export.md).
