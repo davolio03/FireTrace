@@ -1,6 +1,8 @@
 # Plaskett demo — target 90–120 seconds
 
-**Not yet rehearsed:** no running app, real-processing acceptance or deployed endpoint is established by this foundation. Never present synthetic fixtures as real radar evidence.
+**Not yet rehearsed:** the web runs locally on the real bundle (IN-01 evidence below), but no timed rehearsal or deployed endpoint exists. Never present synthetic fixtures as real radar evidence.
+
+Real data: GitHub releases `data-web-plaskett-f66c4d9` (web bundle) and `data-interim-plaskett-f66c4d9` (analysis rasters for the API), both from commit `f66c4d9`; download commands are in the [README](../README.md#run-it-locally).
 
 ## Planned sequence
 

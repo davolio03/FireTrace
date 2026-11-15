@@ -1,6 +1,6 @@
 # FireTrace architecture — precompute, serve, inspect
 
-**Existing:** executable contracts, mock assets, board tooling, a Python 3.11/uv scaffold with NISAR ingest, and an initial web scaffold. **Planned, not implemented:** the remaining pipeline processing, API endpoints, the web data journey and real processed web artifacts. The [proposal](propuesta.md) governs scientific scope; its illustrative stack is superseded by the upstream choices below.
+**Implemented:** executable contracts and fixtures, the offline pipeline from NISAR ingest to the web bundle, the contract API over the numerical rasters and the React web application. Real Plaskett outputs are published as GitHub releases, not committed ([STATUS](STATUS.md)). **Not done:** deployment and independent validation. The [proposal](propuesta.md) governs scientific scope; its illustrative stack is superseded by the upstream choices below.
 
 ## Fixed stack and boundaries
 
@@ -13,23 +13,23 @@
 | Optional | deck.gl if needed; PyTorch for P1 | Not a P0 dependency |
 | Quality | ruff + pytest; eslint + prettier + vitest | Real tests/lint/build once source exists |
 
-The root `pyproject.toml` is a single uv project shared by `pipeline/` and `api/`; it declares their fixed-stack runtime dependencies and a `dev` group. The web scaffold has a dependency manifest and initial map; it does not yet consume scientific data. Stack changes require an ADR and human Kanvas approval. [TEAM](TEAM.md) records human responsibility; directory names are boundaries, not proof of working modules.
+The root `pyproject.toml` is a single uv project shared by `pipeline/` and `api/`; it declares their fixed-stack runtime dependencies and a `dev` group. The web consumes the real bundle or the contract fixtures. Stack changes require an ADR and human Kanvas approval. [TEAM](TEAM.md) records human responsibility; directory names are boundaries, not proof of working modules.
 
 ## Data flow and current implementation boundary
 
 ```text
 Local NISAR HH/HV t1/t2 powers + dated reference perimeter
-  -> planned offline pipeline: validity, dB, continuous HH/HV change
-  -> planned numerical COGs + data/processed/web/ contract outputs
-       -> planned static web consumption of metadata, stats and display PNGs
-       -> planned FastAPI point lookup from numerical products
+  -> offline pipeline: validity, dB, continuous HH/HV change, context, P1 stages
+  -> numerical COGs (data/interim/) + data/processed/web/ contract outputs
+       -> static web consumption of metadata, stats and display PNGs
+       -> FastAPI point and transect lookup from the numerical products
 
 contracts/fixtures/ -> existing synthetic contract examples for parallel work
 ```
 
 The real web directory mirrors `contracts/fixtures/web/`: `case.json`, `stats.json`, `layers.json`, `perimeter.geojson` and `layers/<id>.png`. It is not a tile-server architecture. Display PNGs use four geographic corners and contract-supplied legends; inspection never reconstructs values from colors.
 
-Planned web configuration is `VITE_DATA_BASE_URL`, `VITE_API_BASE_URL` and `VITE_USE_MOCKS`. Mock mode uses MSW fixtures for `/api/*` and must show MOCK visibly. No web mock harness exists yet. Generated TypeScript types must come from [OpenAPI](../contracts/openapi.yaml), not manually maintained parallel interfaces.
+Web configuration is `VITE_DATA_BASE_URL`, `VITE_API_BASE_URL` and `VITE_USE_MOCKS`. Mock mode (the default unless `VITE_USE_MOCKS=false`) uses MSW fixtures for `/api/*` and shows MOCK visibly. Generated TypeScript types must come from [OpenAPI](../contracts/openapi.yaml), not manually maintained parallel interfaces.
 
 ## Geographic and numerical invariants
 
@@ -40,7 +40,7 @@ Planned web configuration is `VITE_DATA_BASE_URL`, `VITE_API_BASE_URL` and `VITE
 5. Layer corners, bounding boxes, perimeter geometry and `lon`/`lat` queries are **EPSG:4326**. Resolve queries back to actual analysis-grid pixels and return their center/row/column. Never calculate scientific area from Web Mercator PNGs or longitude/latitude degrees.
 6. Tie numerical values, styles, statistics and provenance to the same processing result. A successful schema check does not prove this identity or geographic correctness.
 
-The proposed real continuous baseline combines absolute HH/HV log-ratio magnitudes. The mock fixture's median/MAD description is not a validated pipeline method: normalization domain/scaling, zero-MAD behavior and parameters still require scientific agreement. Physical confounds and the dated reference must remain visible.
+The real continuous baseline combines absolute HH/HV log-ratio magnitudes. Its normalization domain, scaling and zero-MAD behaviour were agreed and are implemented as documented in [change index](methods/change-index.md) and [CONTRACTS](CONTRACTS.md). Agreement is not validation: physical confounds and the dated reference must remain visible ([LIMITATIONS](LIMITATIONS.md)).
 
 ## Service boundary
 
