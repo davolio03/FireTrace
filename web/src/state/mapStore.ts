@@ -35,6 +35,8 @@ export interface StoryStep {
 
 export interface MapStore {
   camera: Camera
+  /** Animation duration requested by the last flyTo; 0 means jump. */
+  cameraDurationMs: number
   visible: LayerId[]
   opacity: Partial<Record<LayerId, number>>
   compare: Compare | null
@@ -62,9 +64,26 @@ const panelForSelection: Record<Selection['type'], Panel> = {
   profile: 'profile',
 }
 
+/** Camera before anyone (map fit, user or story) has moved it. */
+export const initialCamera: Readonly<Camera> = Object.freeze({
+  center: [-121.47, 35.92] as LonLat,
+  zoom: 9,
+})
+
+export function isInitialCamera(camera: Camera) {
+  return (
+    camera.center[0] === initialCamera.center[0] &&
+    camera.center[1] === initialCamera.center[1] &&
+    camera.zoom === initialCamera.zoom &&
+    (camera.bearing ?? 0) === 0 &&
+    (camera.pitch ?? 0) === 0
+  )
+}
+
 export function createMapStore() {
   return createStore<MapStore>()((set, get) => ({
-    camera: { center: [-121.47, 35.92], zoom: 9 },
+    camera: { center: [...initialCamera.center], zoom: initialCamera.zoom },
+    cameraDurationMs: 0,
     visible: [],
     opacity: {},
     compare: null,
@@ -72,8 +91,9 @@ export function createMapStore() {
     panel: 'none',
     tool: 'pan',
     story: { active: false, stepIndex: 0 },
-    // Map animations are intentionally deferred to the map lane.
-    flyTo: (camera) => set({ camera }),
+    // features/map animates the map to `camera` over `cameraDurationMs`.
+    flyTo: (camera, durationMs = 0) =>
+      set({ camera, cameraDurationMs: Math.max(0, durationMs) }),
     setVisible: (ids) => set({ visible: [...new Set(ids)] }),
     toggleLayer: (id) =>
       set((state) => ({
