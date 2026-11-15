@@ -40,7 +40,7 @@ interface MapState {
 
 | Action | Called by | Effect guaranteed by L4 |
 |---|---|---|
-| `flyTo(camera, durationMs?)` | story, zones, user | Animates the map to the camera over `durationMs` (default 0 = jump; skipped under `prefers-reduced-motion`). Finished map movements write the map camera back with `flyTo(camera, 0)`. The map starts from the store camera and fits the data only while the camera is still the initial one |
+| `flyTo(camera, durationMs?)` | story, zones, user | Animates the map to the camera over `durationMs` (default 0 = jump; skipped under `prefers-reduced-motion`). Finished user movements (drag, zoom, rotate) write the map camera back with `flyTo(camera, 0)`; programmatic moves never do. The map starts from the store camera and fits the data only while the camera is still the initial one |
 | `setVisible(ids)` / `toggleLayer(id)` / `setOpacity(id, v)` | layer panel, story | Shows/hides layers, respecting their `group` |
 | `setCompare(cfg \| null)` / `animateCompare(to, ms)` | story, comparator | Swipe between two layers |
 | `select(selection)` | map click, zones, story, annotations | Highlights on the map and opens the matching panel |
