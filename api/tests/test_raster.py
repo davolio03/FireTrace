@@ -697,8 +697,45 @@ def test_recorded_terrain_must_exist(tmp_path: Path) -> None:
     _write_terrain(root)
     _record_inputs(root, (*GENERATION_MANIFESTS, "terrain.json"))
     _manifest_path(root, "terrain.json").unlink()
+    service = FireTraceRasterService(root)
+    line = [_wgs84(600000.0, 3974995.0), _wgs84(600010.0, 3974995.0)]
 
-    _assert_503(FireTraceRasterService(root).inspect_point, lon, lat, match="terrain.json")
+    for call, args in (
+        (service.inspect_point, (lon, lat)),
+        (service.inspect_profile, (line, 10.0)),
+    ):
+        _assert_503(call, *args, match="export.json records it but the interim file is missing")
+
+
+@pytest.mark.parametrize(
+    "methods", [("stat", "read_bytes"), ("is_file", "read_bytes"), ("read_bytes",)]
+)
+def test_unreadable_recorded_terrain_is_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, methods: tuple[str, ...]
+) -> None:
+    """A recorded terrain.json that becomes inaccessible is a 503, not an unhandled 500."""
+    root, lon, lat = _case_data(tmp_path)
+    _write_terrain(root)
+    _record_inputs(root, (*GENERATION_MANIFESTS, "terrain.json"))
+    terrain_path = _manifest_path(root, "terrain.json")
+
+    def denied(method: str) -> Any:
+        original = getattr(Path, method)
+
+        def deny_terrain(self: Path, *args: Any, **kwargs: Any) -> Any:
+            if self == terrain_path:
+                raise PermissionError(13, "Permission denied", str(self))
+            return original(self, *args, **kwargs)
+
+        return deny_terrain
+
+    for method in methods:
+        monkeypatch.setattr(Path, method, denied(method))
+    service = FireTraceRasterService(root)
+    line = [_wgs84(600000.0, 3974995.0), _wgs84(600010.0, 3974995.0)]
+
+    _assert_503(service.inspect_point, lon, lat, match="terrain.json")
+    _assert_503(service.inspect_profile, line, 10.0, match="terrain.json")
 
 
 def test_unrecorded_terrain_is_not_served(tmp_path: Path) -> None:

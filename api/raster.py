@@ -144,9 +144,14 @@ class FireTraceRasterService:
 
         ``recorded`` is ``export.json.inputs``: the sha256 of each upstream manifest the
         published bundle used. The checksum is taken from the same bytes that are parsed and
-        is returned with the document.
+        is returned with the document. A missing or unreadable manifest is a 503, never a 500.
         """
-        document, checksum = FireTraceRasterService._read_json(path, path.name)
+        source = (
+            f"{path.name}: export.json records it but the interim file is missing or unreadable"
+            if path.name in recorded
+            else path.name
+        )
+        document, checksum = FireTraceRasterService._read_json(path, source)
         expected = recorded.get(path.name)
         if not isinstance(expected, str) or len(expected) != 64:
             raise HTTPException(
@@ -285,13 +290,8 @@ class FireTraceRasterService:
         )
         terrain_manifest = self.terrain_dir / "terrain.json"
         # Terrain is optional; serve it only when this bundle was built with it.
+        # Read errors (missing, permission denied) surface from _manifest as 503.
         if "terrain.json" in recorded:
-            if not terrain_manifest.is_file():
-                raise HTTPException(
-                    status_code=503,
-                    detail="export.json records terrain.json but the interim terrain.json "
-                    "is missing",
-                )
             manifest_paths += (terrain_manifest,)
         verified = [self._manifest(path, recorded) for path in manifest_paths]
         key = tuple(
