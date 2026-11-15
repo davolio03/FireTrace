@@ -20,6 +20,9 @@ to real data by changing ``VITE_DATA_BASE_URL`` only:
 - ``review_zones.geojson`` byte for byte when the optional XP-04 stage was run
   (``review_zones_meta.json`` exists) from this bundle's inputs, XP-01 highlight and DT-05
   terrain; it is listed as the P1 ``review_zones`` vector layer, hidden by default.
+- ``terrain/tiles.json`` and ``terrain/{z}/{x}/{y}.png`` byte for byte when the optional
+  AP-07 relief tiles were built (``terrain_tiles_dir`` holds ``tiles.json``): display context
+  for the 3D story, checked tile by tile against the manifest (DT-09).
 - ``export.json``: input/output checksums, resampling and stretch rules (not a contract file).
 
 The PNGs are for viewing only; nothing is ever measured from them. Every input is checked
@@ -41,6 +44,7 @@ import os
 import re
 import sys
 import tomllib
+import zlib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
@@ -50,7 +54,7 @@ from typing import Any
 import numpy as np
 from affine import Affine
 
-from pipeline import publishing
+from pipeline import publishing, terrain_tiles
 from pipeline.publishing import PublishError, decode_raster, staging_dirs
 from pipeline.sar import ANALYSIS_CRS, ANALYSIS_PIXEL_SIZE_M, SarError
 from pipeline.webexport import WebExportError, WebRaster, colorize, warp_to_web, write_png
@@ -96,7 +100,14 @@ TOP_FILES: frozenset[str] = frozenset(
 LAYER_FILES: frozenset[str] = frozenset(
     f"{lid}.png" for lid in (*RASTER_IDS, HIGHLIGHT_ID, *TERRAIN_IDS, *OPTICAL_IDS)
 )
-LAYER_SUBDIRS: dict[str, frozenset[str]] = {"layers": LAYER_FILES}
+TILES_DIR = "terrain"  # the web bundle's relief pyramid (contracts/README.md)
+BUNDLE_SUBDIRS: dict[str, frozenset[str] | publishing.Tree] = {
+    "layers": LAYER_FILES,
+    TILES_DIR: terrain_tiles.TILE_TREE,
+}
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+TILE_MAX_ZOOM = 15  # terrain-tiles.schema.json
+_SHA256 = re.compile(r"[0-9a-f]{64}")
 
 GREY = ("#000000", "#ffffff")
 RDBU = ("#2166ac", "#92c5de", "#f7f7f7", "#f4a582", "#b2182b")  # contract fixture stops
@@ -170,6 +181,9 @@ class ExportConfig:
     optical_dir: Path | None = None  # DT-07; optional, merged only when its manifest exists
     highlight_dir: Path | None = None  # XP-01 (P1); optional, merged only when its manifest exists
     review_zones_dir: Path | None = None  # XP-04 (P1); optional, needs the highlight and terrain
+    terrain_tiles_dir: Path | None = (
+        None  # AP-07 relief tiles; optional, merged if tiles.json exists
+    )
 
     def input_dirs(self) -> list[Path]:
         dirs = [
@@ -181,7 +195,12 @@ class ExportConfig:
             self.terrain_dir,
             self.weather_dir,
         ]
-        optional = (self.optical_dir, self.highlight_dir, self.review_zones_dir)
+        optional = (
+            self.optical_dir,
+            self.highlight_dir,
+            self.review_zones_dir,
+            self.terrain_tiles_dir,
+        )
         return [*dirs, *(d for d in optional if d is not None)]
 
 
@@ -242,6 +261,7 @@ def load_config(path: Path, base_dir: Path | None = None) -> ExportConfig:
         optical_dir=resolve("optical_dir") if "optical_dir" in raw else None,
         highlight_dir=resolve("highlight_dir") if "highlight_dir" in raw else None,
         review_zones_dir=resolve("review_zones_dir") if "review_zones_dir" in raw else None,
+        terrain_tiles_dir=resolve("terrain_tiles_dir") if "terrain_tiles_dir" in raw else None,
     )
 
 
@@ -560,6 +580,7 @@ class Terrain:
     layers: list[dict[str, Any]]
     pngs: dict[str, bytes]
     sha: str
+    dem_sha256: str | None = None  # DT-05 records its DEM; checked against the relief tiles
 
 
 def load_terrain(config: ExportConfig, ingest_sha: str, crop: Mapping[str, Any]) -> Terrain | None:
@@ -587,9 +608,291 @@ def load_terrain(config: ExportConfig, ingest_sha: str, crop: Mapping[str, Any])
             raise ExportError(f"terrain_layers.json: {lid} needs group 'terrain' and a source")
         if layer.get("url") != f"layers/{lid}.png":
             raise ExportError(f"terrain_layers.json: {lid} url must be layers/{lid}.png")
+    dem = doc.get("dem")
+    dem_sha = dem.get("sha256") if isinstance(dem, dict) else None
     return Terrain(
-        layers=layers, pngs={lid: payloads[f"{lid}.png"] for lid in TERRAIN_IDS}, sha=sha
+        layers=layers,
+        pngs={lid: payloads[f"{lid}.png"] for lid in TERRAIN_IDS},
+        sha=sha,
+        dem_sha256=dem_sha if isinstance(dem_sha, str) else None,
     )
+
+
+@dataclass(frozen=True)
+class Tiles:
+    files: dict[str, bytes]  # path relative to terrain/ -> verified bytes, incl. tiles.json
+    sha: str
+
+
+def _int(doc: Mapping[str, Any], key: str, source: str, lo: int, hi: int) -> int:
+    value = doc.get(key)
+    if isinstance(value, bool) or not isinstance(value, int) or not lo <= value <= hi:
+        raise ExportError(f"{source}: '{key}' must be an integer in [{lo}, {hi}], got {value!r}")
+    return value
+
+
+def _number(value: Any) -> bool:
+    return isinstance(value, int | float) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def _optional_str(doc: Mapping[str, Any], keys: Sequence[str], source: str) -> None:
+    for key in keys:
+        if key in doc and not isinstance(doc[key], str):
+            raise ExportError(f"{source}: '{key}' must be a string")
+
+
+def _tile_bounds(doc: Mapping[str, Any]) -> tuple[float, float, float, float]:
+    bounds = doc.get("bounds")
+    if not isinstance(bounds, list) or len(bounds) != 4 or not all(map(_number, bounds)):
+        raise ExportError(f"tiles.json: 'bounds' must be 4 finite numbers, got {bounds!r}")
+    west, south, east, north = (float(v) for v in bounds)
+    lat = terrain_tiles.MAX_LAT
+    if not (-180 <= west < east <= 180 and -lat <= south < north <= lat):
+        raise ExportError(f"tiles.json: 'bounds' must be west < east, south < north, got {bounds}")
+    return west, south, east, north
+
+
+def _dem_shas(info: Mapping[str, Any], source: str) -> set[str]:
+    dems = info.get("dem")
+    if not isinstance(dems, list) or not dems:
+        raise ExportError(f"{source}: 'firetrace.dem' must be a non-empty list")
+    shas: set[str] = set()
+    for i, dem in enumerate(dems):
+        if not isinstance(dem, dict) or not isinstance(dem.get("product_id"), str):
+            raise ExportError(f"{source}: firetrace.dem[{i}] needs a product_id")
+        digest = dem.get("sha256")
+        if not isinstance(digest, str) or not _SHA256.fullmatch(digest):
+            raise ExportError(f"{source}: firetrace.dem[{i}] needs a lowercase sha256")
+        _optional_str(dem, ("file", "url"), f"{source} firetrace.dem[{i}]")
+        shas.add(digest)
+    return shas
+
+
+def _check_tiles_manifest(
+    doc: Any, case_id: str
+) -> tuple[int, int, tuple[float, float, float, float], dict[str, str], set[str], int]:
+    """The terrain-tiles.schema.json rules (checked here, before publishing) plus the
+    stricter export rules; returns zooms, bounds, outputs, DEM digests and tile size."""
+    source = terrain_tiles.MANIFEST
+    if not isinstance(doc, dict):
+        raise ExportError(f"{source}: top level must be an object")
+    if doc.get("tilejson") != "3.0.0":
+        raise ExportError(f"{source}: 'tilejson' must be '3.0.0'")
+    _optional_str(doc, ("name",), source)
+    if doc.get("encoding") != "terrarium":
+        raise ExportError(f"{source}: 'encoding' must be 'terrarium'")
+    if doc.get("tiles") != ["{z}/{x}/{y}.png"]:
+        raise ExportError(f"{source}: 'tiles' must be ['{{z}}/{{x}}/{{y}}.png']")
+    size = doc.get("tileSize")
+    if isinstance(size, bool) or size not in (256, 512):
+        raise ExportError(f"{source}: 'tileSize' must be 256 or 512")
+    attribution = doc.get("attribution")
+    if not isinstance(attribution, str) or not attribution.strip():
+        raise ExportError(f"{source}: 'attribution' must be a non-empty string")
+    lo = _int(doc, "minzoom", source, 0, TILE_MAX_ZOOM)
+    hi = _int(doc, "maxzoom", source, 0, TILE_MAX_ZOOM)
+    if lo > hi:
+        raise ExportError(f"{source}: minzoom {lo} is greater than maxzoom {hi}")
+    bounds = _tile_bounds(doc)
+    info = doc.get("firetrace")
+    if not isinstance(info, dict):
+        raise ExportError(f"{source}: missing the 'firetrace' provenance block")
+    version = info.get("tiles_format_version")
+    if isinstance(version, bool) or version != terrain_tiles.TILES_FORMAT_VERSION:
+        raise ExportError(
+            f"{source}: tiles_format_version must be {terrain_tiles.TILES_FORMAT_VERSION}"
+        )
+    if info.get("case_id") != case_id:
+        raise ExportError(f"{source}: case_id {info.get('case_id')!r} differs from {case_id!r}")
+    if info.get("data_status") != "real":
+        raise ExportError(f"{source}: data_status must be 'real'")
+    if not isinstance(info.get("vertical_datum"), str):
+        raise ExportError(f"{source}: 'firetrace.vertical_datum' must be a string")
+    if info.get("surface_model") not in ("DSM", "DTM"):
+        raise ExportError(f"{source}: 'firetrace.surface_model' must be DSM or DTM")
+    _optional_str(info, ("note", "source_url", "resampling"), f"{source} firetrace")
+    if "precision_m" in info and not (_number(info["precision_m"]) and info["precision_m"] > 0):
+        raise ExportError(f"{source}: 'firetrace.precision_m' must be a positive number")
+    elevation = info.get("elevation_m_at_maxzoom", {})
+    if not isinstance(elevation, dict) or not all(
+        _number(elevation[k]) for k in ("min", "max") if k in elevation
+    ):
+        raise ExportError(f"{source}: 'firetrace.elevation_m_at_maxzoom' must hold numbers")
+    dem_shas = _dem_shas(info, source)
+    outputs = info.get("outputs")
+    if not isinstance(outputs, dict) or not outputs:
+        raise ExportError(f"{source}: 'firetrace.outputs' must list the tiles")
+    count = info.get("tile_count")
+    if isinstance(count, bool) or count != len(outputs):
+        raise ExportError(f"{source}: tile_count {count!r} differs from {len(outputs)} outputs")
+    for name, digest in outputs.items():
+        if not terrain_tiles.TILE_NAME.fullmatch(name):
+            raise ExportError(f"{source}: tile name {name!r} is not z/x/y.png")
+        if not isinstance(digest, str) or not _SHA256.fullmatch(digest):
+            raise ExportError(f"{source}: {name} needs a lowercase sha256, got {digest!r}")
+    return lo, hi, bounds, outputs, dem_shas, size
+
+
+def _expected_tiles(bounds: tuple[float, float, float, float], lo: int, hi: int) -> set[str]:
+    """Every tile name the bounds produce from zoom ``lo`` to ``hi`` (never more than the cap)."""
+    total = sum(terrain_tiles.tile_count(bounds, z) for z in range(lo, hi + 1))
+    if total > terrain_tiles.MAX_TILES:
+        raise ExportError(
+            f"tiles.json: the bounds give {total} tiles, above the {terrain_tiles.MAX_TILES} cap"
+        )
+    return {
+        f"{z}/{x}/{y}.png"
+        for z in range(lo, hi + 1)
+        for x, y in terrain_tiles.tiles_for_bounds(bounds, z)
+    }
+
+
+def _check_tile_png(name: str, payload: bytes, size: int) -> None:
+    """A complete, decodable PNG of ``size`` x ``size`` 8-bit RGB or RGBA pixels.
+
+    Parsed strictly in memory, following the PNG specification: every chunk's CRC; IHDR
+    first and only once, with compression, filter and interlace methods 0; only the
+    critical chunks IHDR, PLTE (at most once, before IDAT, 3-768 bytes in RGB triples),
+    IDAT (consecutive) and an empty IEND, which must be last; ancillary chunks are allowed.
+    The IDAT stream must inflate to exactly the scanline bytes the header implies, and
+    every scanline must start with a filter type 0-4. GDAL's PNG reader accepts truncated
+    files, so it is not used here.
+    """
+
+    def bad(reason: str) -> ExportError:
+        return ExportError(f"{name}: not a readable PNG: {reason}")
+
+    if not payload.startswith(PNG_SIGNATURE):
+        raise ExportError(f"{name}: not a PNG file")
+    pos, header, idat, ended = len(PNG_SIGNATURE), None, bytearray(), False
+    idat_state = "before"  # before -> inside -> after (IDAT chunks must be consecutive)
+    palette = False  # an optional suggested palette: once, before IDAT, 1-256 entries
+    while pos < len(payload) and not ended:
+        if pos + 12 > len(payload):
+            raise bad("truncated chunk")
+        length = int.from_bytes(payload[pos : pos + 4], "big")
+        kind = payload[pos + 4 : pos + 8]
+        data = payload[pos + 8 : pos + 8 + length]
+        crc = payload[pos + 8 + length : pos + 12 + length]
+        if length > 2**31 - 1 or len(data) != length or len(crc) != 4:
+            raise bad("truncated chunk")
+        if not kind.isalpha() or not kind.isascii():
+            raise bad(f"invalid chunk type {kind!r}")
+        if zlib.crc32(kind + data).to_bytes(4, "big") != crc:
+            raise bad(f"bad CRC in {kind!r}")
+        if header is None and kind != b"IHDR":
+            raise bad("IHDR is not first")
+        if kind == b"IHDR":
+            if header is not None or length != 13:
+                raise bad("bad IHDR")
+            header = data
+        elif kind == b"IDAT":
+            if idat_state == "after":
+                raise bad("IDAT chunks are not consecutive")
+            idat_state = "inside"
+            idat += data
+        elif kind == b"IEND":
+            if length:
+                raise bad("IEND is not empty")
+            ended = True
+        elif kind == b"PLTE":
+            if idat_state != "before" or palette:
+                raise bad("PLTE after IDAT or repeated")
+            if not 3 <= length <= 768 or length % 3:
+                raise bad(f"PLTE of {length} bytes")
+            palette = True
+        elif kind[0] & 0x20 == 0:  # an unknown critical chunk cannot be skipped
+            raise bad(f"unsupported critical chunk {kind!r}")
+        if kind != b"IDAT" and idat_state == "inside":
+            idat_state = "after"
+        pos += 12 + length
+    if header is None or not ended or pos != len(payload):
+        raise bad("missing IEND or trailing bytes")
+    if not idat:
+        raise bad("no image data")
+    width = int.from_bytes(header[0:4], "big")
+    height = int.from_bytes(header[4:8], "big")
+    depth, colour, compression, filtering, interlace = header[8:13]
+    channels = {2: 3, 6: 4}.get(colour)
+    if (width, height) != (size, size) or depth != 8 or channels is None or interlace != 0:
+        raise ExportError(
+            f"{name}: expected a {size} px 8-bit RGB(A) non-interlaced PNG, got "
+            f"{width}x{height}, depth {depth}, colour type {colour}, interlace {interlace}"
+        )
+    if compression != 0 or filtering != 0:
+        raise bad(f"compression method {compression}, filter method {filtering}")
+    row = 1 + width * channels
+    expected = height * row
+    try:
+        inflater = zlib.decompressobj()
+        pixels = inflater.decompress(bytes(idat), expected + 1)
+    except zlib.error as exc:
+        raise bad(str(exc)) from exc
+    if len(pixels) != expected or not inflater.eof or inflater.unused_data:
+        raise bad("image data is incomplete")
+    if max(pixels[::row]) > 4:
+        raise bad("scanline filter type above 4")
+
+
+def load_terrain_tiles(
+    config: ExportConfig, inputs: Inputs, terrain: Terrain | None
+) -> Tiles | None:
+    """AP-07 relief tiles verified tile by tile, or None when the stage has not been run.
+
+    The input directory may hold exactly ``tiles.json`` and the tiles it lists (plain files,
+    no links); everything is read once, in one identity-checked walk, and only those bytes
+    are verified and published. The manifest must satisfy terrain-tiles.schema.json, the
+    listed set must be exactly what the bounds give at each zoom and every tile must be a
+    complete PNG of the declared size. When the DT-05 terrain layers are in the bundle too,
+    the tiles must come from the same DEM.
+    """
+    directory = config.terrain_tiles_dir
+    manifest = terrain_tiles.MANIFEST
+    if directory is None or not (directory / manifest).exists():
+        return None  # the stage has not been run (an empty directory is not an error)
+    try:
+        present = publishing.read_owned_tree(
+            directory, terrain_tiles.TILE_TREE, max_files=terrain_tiles.MAX_TILES + 1
+        )
+    except PublishError as exc:
+        raise ExportError(f"terrain_tiles_dir: {exc}") from exc
+    if manifest not in present:
+        raise ExportError(f"terrain_tiles_dir: {manifest} disappeared while reading")
+    payload = present.pop(manifest)
+    lo, hi, bounds, outputs, dem_shas, size = _check_tiles_manifest(
+        _parse(payload, manifest), config.case_id
+    )
+    expected = _expected_tiles(bounds, lo, hi)
+    if set(outputs) != expected:
+        extra, missing = sorted(set(outputs) - expected), sorted(expected - set(outputs))
+        raise ExportError(
+            f"{manifest}: tiles differ from those the bounds give at zooms {lo}-{hi} "
+            f"(extra {extra[:3]}, missing {missing[:3]})"
+        )
+    unlisted = sorted(set(present) - set(outputs))
+    if unlisted:
+        raise ExportError(f"terrain_tiles_dir holds unlisted tiles: {unlisted[:3]}")
+    aoi = _get(inputs.ingest, ("aoi", "aoi_bbox_4326"), "ingest.json")
+    if not (isinstance(aoi, list) and len(aoi) == 4 and all(map(_number, aoi))):
+        raise ExportError(f"ingest.json: aoi.aoi_bbox_4326 must be 4 numbers, got {aoi!r}")
+    west, south, east, north = aoi
+    if not (bounds[0] <= west and bounds[1] <= south and east <= bounds[2] and north <= bounds[3]):
+        raise ExportError(f"{manifest}: bounds {list(bounds)} do not contain the case AOI")
+    if terrain is not None and (terrain.dem_sha256 is None or terrain.dem_sha256 not in dem_shas):
+        raise ExportError(
+            f"{manifest}: the relief tiles must be built from the DT-05 DEM "
+            "(terrain.json dem.sha256 not found in firetrace.dem)"
+        )
+    files = {manifest: payload}
+    for name in sorted(outputs):
+        if name not in present:
+            raise ExportError(f"terrain_tiles_dir: tile missing: {name}")
+        tile = present[name]
+        if _sha_bytes(tile) != outputs[name]:
+            raise ExportError(f"{name}: sha256 differs from {manifest}; re-run that stage")
+        _check_tile_png(name, tile, size)
+        files[name] = tile
+    return Tiles(files=files, sha=_sha_bytes(payload))
 
 
 def _check_optical_layer(layer: Mapping[str, Any]) -> None:
@@ -1075,7 +1378,7 @@ def check_output_dir(output_dir: Path) -> None:
     other directory, symlink or junction is foreign (``pipeline.publishing``).
     """
     try:
-        publishing.check_output_dir(output_dir, TOP_FILES, LAYER_SUBDIRS)
+        publishing.check_output_dir(output_dir, TOP_FILES, BUNDLE_SUBDIRS)
     except PublishError as exc:
         raise ExportError(str(exc)) from exc
 
@@ -1105,10 +1408,11 @@ def run_export(config: ExportConfig, environ: Mapping[str, str] | None = None) -
     weather = load_weather(config, inputs.shas["ingest.json"])
     highlight = load_highlight(config, inputs)
     zones = load_review_zones(config, inputs, highlight, terrain)
+    tiles = load_terrain_tiles(config, inputs, terrain)
 
     staging, _ = staging_dirs(config.output_dir)
     try:
-        publishing.remove_owned(staging, TOP_FILES, LAYER_SUBDIRS)
+        publishing.remove_owned(staging, TOP_FILES, BUNDLE_SUBDIRS)
         (staging / "layers").mkdir(parents=True)
         layers, grid, domains = _render(staging, inputs)
         if highlight is not None:
@@ -1153,6 +1457,11 @@ def run_export(config: ExportConfig, environ: Mapping[str, str] | None = None) -
         if weather is not None:
             (staging / "weather.json").write_bytes(weather[0])
             input_shas["weather_meta.json"] = weather[1]
+        if tiles is not None:
+            for name, tile in tiles.files.items():
+                (staging / TILES_DIR / name).parent.mkdir(parents=True, exist_ok=True)
+                (staging / TILES_DIR / name).write_bytes(tile)
+            input_shas[terrain_tiles.MANIFEST] = tiles.sha
         outputs = {
             p.relative_to(staging).as_posix(): _sha_bytes(p.read_bytes())
             for p in sorted(staging.rglob("*"))
@@ -1170,6 +1479,7 @@ def run_export(config: ExportConfig, environ: Mapping[str, str] | None = None) -
                 "weather": weather is not None,
                 "highlight": highlight is not None,
                 "review_zones": zones is not None,
+                "terrain_tiles": tiles is not None,
             },
             "display": {
                 "crs": "EPSG:3857",
@@ -1195,13 +1505,13 @@ def run_export(config: ExportConfig, environ: Mapping[str, str] | None = None) -
             "outputs": outputs,
         }
         _write_json(staging / "export.json", document)
-        warning = publishing.publish(staging, config.output_dir, TOP_FILES, LAYER_SUBDIRS)
+        warning = publishing.publish(staging, config.output_dir, TOP_FILES, BUNDLE_SUBDIRS)
     except (SarError, WebExportError, PublishError) as exc:
         raise ExportError(str(exc)) from exc
     except OSError as exc:
         raise ExportError(f"cannot write outputs: {exc}") from exc
     finally:
-        publishing.discard_staging(staging, TOP_FILES, LAYER_SUBDIRS)
+        publishing.discard_staging(staging, TOP_FILES, BUNDLE_SUBDIRS)
     publishing.report(warning, "export")
     return document
 

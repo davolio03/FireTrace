@@ -32,7 +32,7 @@ terrain/tiles.json    (optional) 3D relief, TileJSON 3.0     → terrain-tiles.s
 terrain/{z}/{x}/{y}.png  Terrarium elevation tiles (raster-dem), EPSG:3857
 ```
 
-**Terrain tiles (optional, AP-07).** 3D relief for the guided story, produced by `pipeline/terrain_tiles.py` from the pinned Copernicus GLO-30 DEM ([method](../docs/methods/terrain-tiles.md)). Like `perimeter.geojson` and the layer PNGs it is an external format (TileJSON + Terrarium) without a `contract_version` envelope; provenance and a sha256 per tile live in its `firetrace` block, and `validate.py` checks the schema, the zoom range and every tile. It is display context only (non-NISAR) and is never used by statistics. The web treats it as optional: without it the story stays 2D.
+**Terrain tiles (optional, AP-07).** 3D relief for the guided story, produced by `pipeline/terrain_tiles.py` from the pinned Copernicus GLO-30 DEM ([method](../docs/methods/terrain-tiles.md)). Like `perimeter.geojson` and the layer PNGs it is an external format (TileJSON + Terrarium) without a `contract_version` envelope; provenance and a sha256 per tile live in its `firetrace` block, and `validate.py` checks the schema, the zoom range and every tile. It is display context only (non-NISAR) and is never used by statistics. The web treats it as optional: without it the story stays 2D. `pipeline/export.py` copies it into the bundle when `terrain_tiles_dir` is configured (DT-09).
 
 | Other contracts | Where |
 |---|---|

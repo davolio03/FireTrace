@@ -10,6 +10,7 @@ import importlib.util
 import json
 import os
 import shutil
+import zlib
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
@@ -24,6 +25,7 @@ from rasterio.crs import CRS
 from rasterio.warp import transform as warp_transform
 
 from pipeline import export, publishing
+from pipeline import terrain_tiles as tt
 from pipeline.change import METHOD
 from pipeline.export import (
     ExportConfig,
@@ -524,6 +526,7 @@ def test_optional_inputs_are_merged_only_when_present(tmp_path: Path):
         "weather": False,
         "highlight": False,
         "review_zones": False,
+        "terrain_tiles": False,
     }
 
     full = write_inputs(tmp_path / "full", terrain=True, weather=True)
@@ -539,6 +542,7 @@ def test_optional_inputs_are_merged_only_when_present(tmp_path: Path):
         "weather": True,
         "highlight": False,
         "review_zones": False,
+        "terrain_tiles": False,
     }
 
 
@@ -1360,3 +1364,528 @@ def test_inconsistent_review_zones_are_rejected(
 def test_review_zones_dir_is_optional_in_the_config(tmp_path: Path):
     config = load_config(ROOT / "pipeline/configs/case_plaskett.toml", base_dir=tmp_path)
     assert config.review_zones_dir == tmp_path / "data/interim/review_zones"
+
+
+# --------------------------------------------------------------------------- terrain tiles (DT-09)
+
+TILE_BOUNDS = [-121.5, 35.98, -121.48, 36.0]  # contains the ingest AOI
+DEM_SHA = "d" * 64
+
+
+def _validate_module() -> Any:
+    spec = importlib.util.spec_from_file_location("validate", ROOT / "contracts/tools/validate.py")
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def write_tiles(
+    directory: Path,
+    *,
+    bounds: list[float] | None = None,
+    zooms: tuple[int, int] = (8, 10),
+    dem_shas: tuple[str, ...] = (DEM_SHA,),
+) -> dict[str, Any]:
+    """A tiny Terrarium pyramid laid out exactly like pipeline.terrain_tiles writes it."""
+    bounds = TILE_BOUNDS if bounds is None else bounds
+    directory.mkdir(parents=True, exist_ok=True)
+    outputs: dict[str, str] = {}
+    for zoom in range(zooms[0], zooms[1] + 1):
+        for x, y in tt.tiles_for_bounds(tuple(bounds), zoom):
+            name = f"{zoom}/{x}/{y}.png"
+            rgba = np.zeros((256, 256, 4), np.uint8)
+            rgba[..., 0], rgba[..., 1], rgba[..., 3] = 128, zoom, 255
+            (directory / name).parent.mkdir(parents=True, exist_ok=True)
+            write_png(directory / name, rgba)
+            outputs[name] = _sha(directory / name)
+    doc = {
+        "tilejson": "3.0.0",
+        "name": "FireTrace terrain (Copernicus GLO-30)",
+        "tiles": ["{z}/{x}/{y}.png"],
+        "encoding": "terrarium",
+        "tileSize": 256,
+        "minzoom": zooms[0],
+        "maxzoom": zooms[1],
+        "bounds": bounds,
+        "attribution": "Copernicus DEM GLO-30",
+        "firetrace": {
+            "tiles_format_version": 1,
+            "case_id": "plaskett-2026",
+            "data_status": "real",
+            "note": "Display context only.",
+            "source_url": "https://doi.org/10.5270/ESA-c5d3d65",
+            "vertical_datum": "EGM2008",
+            "surface_model": "DSM",
+            "resampling": "bilinear",
+            "precision_m": 1.0,
+            "dem": [
+                {"file": f"{i}.tif", "product_id": f"dem{i}", "url": "https://e.org", "sha256": s}
+                for i, s in enumerate(dem_shas)
+            ],
+            "elevation_m_at_maxzoom": {"min": 0.0, "max": 10.0},
+            "tile_count": len(outputs),
+            "outputs": outputs,
+        },
+    }
+    _json(directory / "tiles.json", doc)
+    return doc
+
+
+def _with_tiles(tmp_path: Path, *, terrain: bool = False, **kwargs: Any) -> ExportConfig:
+    config = write_inputs(tmp_path, terrain=terrain)
+    if terrain:
+        _rewrite_json(
+            config.terrain_dir / "terrain.json", lambda d: d.update(dem={"sha256": DEM_SHA})
+        )
+    write_tiles(tmp_path / "terrain_tiles", **kwargs)
+    return replace(config, terrain_tiles_dir=tmp_path / "terrain_tiles")
+
+
+def _tile_names(directory: Path) -> list[str]:
+    return sorted(_load(directory / "tiles.json")["firetrace"]["outputs"])
+
+
+def _files(directory: Path) -> dict[str, bytes]:
+    return {
+        p.relative_to(directory).as_posix(): p.read_bytes()
+        for p in directory.rglob("*")
+        if p.is_file()
+    }
+
+
+def test_terrain_tiles_are_copied_verified_and_validate(tmp_path: Path):
+    config = _with_tiles(tmp_path, terrain=True)
+    run_export(config)
+    web, source = config.output_dir, tmp_path / "terrain_tiles"
+    names = _tile_names(source)
+    assert len(names) >= 3
+    for name in ["tiles.json", *names]:
+        assert (web / "terrain" / name).read_bytes() == (source / name).read_bytes(), name
+    manifest = _load(web / "export.json")
+    assert manifest["optional"]["terrain_tiles"] is True
+    assert manifest["inputs"]["tiles.json"] == _sha(source / "tiles.json")
+    for name in ["tiles.json", *names]:
+        assert manifest["outputs"][f"terrain/{name}"] == _sha(source / name)
+    problems: list[str] = []
+    _validate_module().check_web_dir(web, problems)
+    assert problems == []
+
+
+@pytest.mark.parametrize("tiles_dir", [None, "missing", "empty"])
+def test_without_terrain_tiles_nothing_is_added(tmp_path: Path, tiles_dir: str | None):
+    config = write_inputs(tmp_path)
+    (tmp_path / "empty").mkdir()
+    run_export(replace(config, terrain_tiles_dir=tiles_dir and tmp_path / tiles_dir))
+    assert not (config.output_dir / "terrain").exists()
+    manifest = _load(config.output_dir / "export.json")
+    assert manifest["optional"]["terrain_tiles"] is False
+    assert "tiles.json" not in manifest["inputs"]
+
+
+def test_terrain_tile_reruns_are_byte_identical_and_replace_the_tile_set(tmp_path: Path):
+    config = _with_tiles(tmp_path)
+    run_export(config)
+    snapshot = _files(config.output_dir)
+    run_export(config)
+    assert _files(config.output_dir) == snapshot
+    # A new pyramid with other zooms replaces the old tree as a whole.
+    tiles_dir = tmp_path / "terrain_tiles"
+    for p in sorted(tiles_dir.rglob("*"), key=lambda q: len(q.parts), reverse=True):
+        p.unlink() if p.is_file() else p.rmdir()
+    write_tiles(tiles_dir, zooms=(11, 11))
+    run_export(config)
+    assert sorted(_files(config.output_dir / "terrain")) == sorted(
+        ["tiles.json", *_tile_names(tiles_dir)]
+    )
+    assert all(n.startswith("11/") for n in _tile_names(tiles_dir))
+
+
+def _edit_tiles(tmp_path: Path, edit: Callable[[dict[str, Any]], None]) -> None:
+    _rewrite_json(tmp_path / "terrain_tiles" / "tiles.json", edit)
+
+
+def _first_tile(tmp_path: Path) -> Path:
+    return tmp_path / "terrain_tiles" / _tile_names(tmp_path / "terrain_tiles")[0]
+
+
+def _ft(**values: Any) -> Callable[[Path], None]:
+    return lambda t: _edit_tiles(t, lambda d: d["firetrace"].update(values))
+
+
+def _top(**values: Any) -> Callable[[Path], None]:
+    return lambda t: _edit_tiles(t, lambda d: d.update(values))
+
+
+SIGNATURE = b"\x89PNG\r\n\x1a\n"
+
+
+@pytest.mark.parametrize(
+    ("break_it", "match"),
+    [
+        (_ft(case_id="other"), "case_id"),
+        (_ft(data_status="mock"), "real"),
+        (_ft(tile_count=1), "tile_count"),
+        (_ft(tile_count=True), "tile_count"),
+        (_ft(tiles_format_version=2), "tiles_format_version"),
+        (_ft(outputs={}), "outputs"),
+        (_top(encoding="mapbox"), "encoding"),
+        (_top(tileSize=True), "tileSize"),
+        (_top(tiles=["../{z}/{x}/{y}.png"]), "tiles"),
+        (_top(maxzoom=30), "maxzoom"),
+        (_top(maxzoom=16), "maxzoom"),
+        (lambda t: _edit_tiles(t, lambda d: d.pop("tilejson")), "tilejson"),
+        (_top(name=3), "name"),
+        (lambda t: _edit_tiles(t, lambda d: d["firetrace"].pop("vertical_datum")), "datum"),
+        (_ft(surface_model="LIDAR"), "surface_model"),
+        (_ft(tiles_format_version=True), "tiles_format_version"),
+        (_ft(precision_m=0), "precision_m"),
+        (_ft(elevation_m_at_maxzoom={"min": "low"}), "elevation"),
+        (_ft(note=1), "note"),
+        (_ft(dem=[]), "dem"),
+        (_ft(dem=[{"sha256": "d" * 64}]), "product_id"),
+        (_ft(dem=[{"product_id": "x", "sha256": []}]), "sha256"),
+        (_ft(dem=[{"product_id": "x", "sha256": {"a": 1}}]), "sha256"),
+        (_top(minzoom=11), "minzoom"),
+        (_top(minzoom=8.0), "minzoom"),
+        (_top(bounds=[-121.5, 35.98, -121.48]), "bounds"),
+        (_top(bounds=[-121.5, 35.98, -121.48, float("nan")]), "bounds"),
+        (_top(bounds=[-121.48, 35.98, -121.5, 36.0]), "bounds"),
+        (_top(bounds=[-121.49, 35.98, -121.48, 36.0]), "AOI"),
+        (_top(attribution=""), "attribution"),
+        (lambda t: _edit_tiles(t, lambda d: d.pop("firetrace")), "firetrace"),
+        (lambda t: _first_tile(t).write_bytes(SIGNATURE + b"edited"), "sha256"),
+        (lambda t: _first_tile(t).unlink(), "missing"),
+        (lambda t: (t / "terrain_tiles" / "notes.txt").write_text("x"), "not expected"),
+        (lambda t: (t / "terrain_tiles" / "tiles.json").write_bytes(b"\xff\xfe"), "JSON"),
+        (lambda t: (t / "terrain_tiles" / "tiles.json").write_text("[]"), "object"),
+    ],
+)
+def test_invalid_terrain_tiles_are_rejected_before_writing(
+    tmp_path: Path, break_it: Callable[[Path], None], match: str
+):
+    config = _with_tiles(tmp_path)
+    break_it(tmp_path)
+    _fails_without_writing(config, match)
+
+
+def _add_tile(tmp_path: Path, name: str, payload: bytes, *, listed: bool) -> None:
+    path = tmp_path / "terrain_tiles" / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(payload)
+    if listed:
+
+        def edit(d: dict[str, Any]) -> None:
+            d["firetrace"]["outputs"][name] = hashlib.sha256(payload).hexdigest()
+            d["firetrace"]["tile_count"] += 1
+
+        _edit_tiles(tmp_path, edit)
+
+
+def test_unlisted_tile_in_the_input_is_rejected(tmp_path: Path):
+    config = _with_tiles(tmp_path)
+    _add_tile(tmp_path, "10/1/1.png", SIGNATURE + b"x", listed=False)
+    _fails_without_writing(config, "unlisted")
+
+
+def test_listed_tile_outside_the_bounds_is_rejected(tmp_path: Path):
+    config = _with_tiles(tmp_path)
+    _add_tile(tmp_path, "10/1/1.png", SIGNATURE + b"x", listed=True)
+    _fails_without_writing(config, "bounds")
+
+
+@pytest.mark.parametrize(
+    "name", ["../1/1.png", "10/1/01.png", "10\\1\\1.png", "/10/1/1.png", "10/1/1.png/"]
+)
+def test_malformed_tile_names_are_rejected(tmp_path: Path, name: str):
+    config = _with_tiles(tmp_path)
+
+    def edit(d: dict[str, Any]) -> None:
+        d["firetrace"]["outputs"][name] = "0" * 64
+        d["firetrace"]["tile_count"] += 1
+
+    _edit_tiles(tmp_path, edit)
+    _fails_without_writing(config, "tile name")
+
+
+def test_bad_tile_checksum_record_is_rejected(tmp_path: Path):
+    config = _with_tiles(tmp_path)
+    name = _tile_names(tmp_path / "terrain_tiles")[0]
+    _edit_tiles(tmp_path, lambda d: d["firetrace"]["outputs"].update({name: "ABC"}))
+    _fails_without_writing(config, "sha256")
+
+
+def test_tile_that_is_not_a_png_is_rejected(tmp_path: Path):
+    config = _with_tiles(tmp_path)
+    name = _tile_names(tmp_path / "terrain_tiles")[0]
+    (tmp_path / "terrain_tiles" / name).write_bytes(b"GIF89a")
+    digest = hashlib.sha256(b"GIF89a").hexdigest()
+    _edit_tiles(tmp_path, lambda d: d["firetrace"]["outputs"].update({name: digest}))
+    _fails_without_writing(config, "PNG")
+
+
+def test_tiles_from_another_dem_than_the_terrain_layers_are_rejected(tmp_path: Path):
+    config = _with_tiles(tmp_path, terrain=True, dem_shas=("e" * 64,))
+    _fails_without_writing(config, "DEM")
+
+
+def test_terrain_without_a_recorded_dem_cannot_vouch_for_the_tiles(tmp_path: Path):
+    config = _with_tiles(tmp_path, terrain=True)
+    _rewrite_json(config.terrain_dir / "terrain.json", lambda d: d.pop("dem"))
+    _fails_without_writing(config, "DEM")
+
+
+def test_tiles_without_terrain_layers_skip_the_dem_link(tmp_path: Path):
+    config = _with_tiles(tmp_path, dem_shas=("e" * 64,))
+    run_export(config)
+    assert (config.output_dir / "terrain" / "tiles.json").is_file()
+
+
+def test_junction_in_the_tile_input_is_rejected(tmp_path: Path):
+    winapi = pytest.importorskip("_winapi")
+    config = _with_tiles(tmp_path)
+    elsewhere = tmp_path / "elsewhere"
+    write_tiles(elsewhere, zooms=(11, 11))
+    winapi.CreateJunction(str(elsewhere / "11"), str(tmp_path / "terrain_tiles" / "11"))
+    _fails_without_writing(config, "not expected")
+
+
+def test_failed_tile_merge_keeps_the_previous_bundle(tmp_path: Path):
+    config = _with_tiles(tmp_path)
+    run_export(config)
+    before = _files(config.output_dir)
+    _first_tile(tmp_path).write_bytes(SIGNATURE + b"edited")
+    with pytest.raises(ExportError, match="sha256"):
+        run_export(config)
+    assert _files(config.output_dir) == before
+
+
+def test_tile_input_inside_the_output_is_refused(tmp_path: Path):
+    config = _with_tiles(tmp_path)
+    run_export(config)
+    with pytest.raises(ExportError, match="separate"):
+        run_export(replace(config, terrain_tiles_dir=config.output_dir / "terrain"))
+
+
+def test_foreign_entry_in_the_published_terrain_tree_is_refused(tmp_path: Path):
+    config = _with_tiles(tmp_path)
+    run_export(config)
+    keep = config.output_dir / "terrain" / "8" / "keep.txt"
+    keep.write_text("mine", encoding="utf-8")
+    with pytest.raises(ExportError, match="does not own"):
+        run_export(config)
+    assert keep.read_text(encoding="utf-8") == "mine"
+
+
+def test_terrain_tiles_dir_is_optional_in_the_config(tmp_path: Path):
+    cfg = tmp_path / "case.toml"
+    text = (ROOT / "pipeline/configs/case_plaskett.toml").read_text(encoding="utf-8")
+    cfg.write_text(text, encoding="utf-8")
+    assert load_config(cfg, base_dir=tmp_path).terrain_tiles_dir == (
+        tmp_path / "data/interim/terrain_tiles"
+    )
+    lines = [ln for ln in text.splitlines() if not ln.startswith("terrain_tiles_dir")]
+    cfg.write_text("\n".join(lines), encoding="utf-8")
+    assert load_config(cfg, base_dir=tmp_path).terrain_tiles_dir is None
+
+
+# --------------------------------------------------------------------------- review round 1 (DT-09)
+
+
+SCHEMA_BREAKS = [
+    lambda d: d.pop("tilejson"),
+    lambda d: d.update(maxzoom=16),
+    lambda d: d.update(name=3),
+    lambda d: d["firetrace"].pop("vertical_datum"),
+    lambda d: d["firetrace"].update(surface_model="LIDAR"),
+    lambda d: d["firetrace"].update(precision_m=0),
+    lambda d: d["firetrace"].update(dem=[]),
+    lambda d: d["firetrace"].update(dem=[{"product_id": "x", "sha256": []}]),
+]
+
+
+@pytest.mark.parametrize("break_it", SCHEMA_BREAKS)
+def test_export_rejects_what_the_contract_schema_rejects(
+    tmp_path: Path, break_it: Callable[[dict[str, Any]], None]
+):
+    config = _with_tiles(tmp_path)
+    doc = _load(tmp_path / "terrain_tiles" / "tiles.json")
+    assert not list(_validator("terrain-tiles").iter_errors(doc)), "fixture is schema-valid"
+    break_it(doc)
+    assert list(_validator("terrain-tiles").iter_errors(doc)), "the schema rejects it"
+    _json(tmp_path / "terrain_tiles" / "tiles.json", doc)
+    with pytest.raises(ExportError):
+        run_export(config)
+    assert not config.output_dir.exists()
+
+
+def _replace_tile(tmp_path: Path, payload: bytes) -> None:
+    name = _tile_names(tmp_path / "terrain_tiles")[0]
+    (tmp_path / "terrain_tiles" / name).write_bytes(payload)
+    digest = hashlib.sha256(payload).hexdigest()
+    _edit_tiles(tmp_path, lambda d: d["firetrace"]["outputs"].update({name: digest}))
+
+
+def _png_bytes(tmp_path: Path, rgba: np.ndarray) -> bytes:
+    path = tmp_path / "probe.png"
+    write_png(path, rgba)
+    payload = path.read_bytes()
+    path.unlink()
+    return payload
+
+
+def test_png_signature_without_an_image_is_rejected(tmp_path: Path):
+    config = _with_tiles(tmp_path)
+    _replace_tile(tmp_path, SIGNATURE + b"not an image")
+    _fails_without_writing(config, "PNG")
+
+
+def test_truncated_png_is_rejected(tmp_path: Path):
+    config = _with_tiles(tmp_path)
+    full = _png_bytes(tmp_path, np.full((256, 256, 4), 200, np.uint8))
+    _replace_tile(tmp_path, full[: len(full) // 2])
+    _fails_without_writing(config, "PNG")
+
+
+def test_tile_with_another_size_than_tilesize_is_rejected(tmp_path: Path):
+    config = _with_tiles(tmp_path)
+    _replace_tile(tmp_path, _png_bytes(tmp_path, np.zeros((2, 2, 4), np.uint8)))
+    _fails_without_writing(config, "256 px")
+
+
+def test_malformed_dem_record_is_an_export_error_with_exit_code_2(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+):
+    config = _with_tiles(tmp_path, terrain=True)
+    _edit_tiles(tmp_path, lambda d: d["firetrace"].update(dem=[{"product_id": "x", "sha256": []}]))
+    lines = [
+        f"{k} = {json.dumps(str(v))}"
+        for k, v in (
+            ("case_id", config.case_id),
+            ("name", config.name),
+            ("location", config.location),
+            ("fire_start", config.fire_start),
+        )
+    ]
+    for key in (
+        "ingest_dir",
+        "sar_dir",
+        "change_dir",
+        "perimeter_dir",
+        "stats_dir",
+        "terrain_dir",
+        "weather_dir",
+        "output_dir",
+        "terrain_tiles_dir",
+    ):
+        lines.append(f"{key} = {json.dumps(str(getattr(config, key)))}")
+    cfg = tmp_path / "case.toml"
+    cfg.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    assert main(["--config", str(cfg)]) == 2
+    assert "firetrace.dem[0] needs a lowercase sha256" in capsys.readouterr().err
+
+
+def test_zoom_directory_swapped_for_a_junction_while_reading_is_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    winapi = pytest.importorskip("_winapi")
+    config = _with_tiles(tmp_path)
+    elsewhere = tmp_path / "elsewhere"
+    write_tiles(elsewhere)
+    tiles_dir = tmp_path / "terrain_tiles"
+    real = Path.read_bytes
+    swapped: list[Path] = []
+
+    def swap_after_first_tile(self: Path) -> bytes:
+        payload = real(self)
+        if not swapped and self.suffix == ".png" and tiles_dir in self.parents:
+            swapped.append(self)
+            (tiles_dir / "10").rename(tmp_path / "moved")
+            winapi.CreateJunction(str(elsewhere / "10"), str(tiles_dir / "10"))
+        return payload
+
+    monkeypatch.setattr(Path, "read_bytes", swap_after_first_tile)
+    _fails_without_writing(config, "changed during")
+    assert swapped
+
+
+def test_png_with_a_corrupted_chunk_or_trailing_bytes_is_rejected(tmp_path: Path):
+    full = _png_bytes(tmp_path, np.full((256, 256, 4), 200, np.uint8))
+    for payload in (full[:40] + bytes([full[40] ^ 1]) + full[41:], full + b"extra"):
+        config = _with_tiles(tmp_path / str(len(payload)))
+        _replace_tile(tmp_path / str(len(payload)), payload)
+        _fails_without_writing(config, "PNG")
+
+
+def test_real_terrain_fixture_tiles_pass_the_png_check():
+    terrain = FIXTURES / "terrain"
+    for name in _tile_names(terrain):
+        export._check_tile_png(name, (terrain / name).read_bytes(), 256)
+
+
+# --------------------------------------------------------------------------- review round 2 (DT-09)
+
+
+def _chunk(kind: bytes, data: bytes) -> bytes:
+    crc = zlib.crc32(kind + data).to_bytes(4, "big")
+    return len(data).to_bytes(4, "big") + kind + data + crc
+
+
+def _crafted_png(
+    *,
+    filter_byte: int = 0,
+    compression: int = 0,
+    filtering: int = 0,
+    extra: tuple[bytes, ...] = (),
+    split_idat: bool = False,
+    iend: bytes = b"",
+) -> bytes:
+    """A CRC-correct 256 x 256 RGBA PNG built by hand, with one property broken."""
+    header = (256).to_bytes(4, "big") * 2 + bytes([8, 6, compression, filtering, 0])
+    raw = (bytes([filter_byte]) + bytes(256 * 4)) * 256
+    data = zlib.compress(raw)
+    idat = (
+        [_chunk(b"IDAT", data[:10]), *extra, _chunk(b"IDAT", data[10:])]
+        if split_idat
+        else [*extra, _chunk(b"IDAT", data)]
+    )
+    return export.PNG_SIGNATURE + _chunk(b"IHDR", header) + b"".join(idat) + _chunk(b"IEND", iend)
+
+
+def test_hand_built_png_passes_the_check():
+    export._check_tile_png("t.png", _crafted_png(), 256)
+    export._check_tile_png("t.png", _crafted_png(extra=(_chunk(b"tEXt", b"k\x00v"),)), 256)
+    export._check_tile_png("t.png", _crafted_png(extra=(_chunk(b"PLTE", bytes(768)),)), 256)
+
+
+@pytest.mark.parametrize(
+    ("payload", "match"),
+    [
+        (_crafted_png(filter_byte=5), "filter type"),
+        (_crafted_png(compression=1), "compression method"),
+        (_crafted_png(filtering=1), "filter method"),
+        (_crafted_png(extra=(_chunk(b"ABCD", b""),)), "critical chunk"),
+        (_crafted_png(split_idat=True, extra=(_chunk(b"tEXt", b"k\x00v"),)), "consecutive"),
+        (_crafted_png(iend=b"x"), "IEND"),
+        (_crafted_png(extra=(_chunk(b"AB1D", b""),)), "chunk type"),
+        (_crafted_png(extra=(_chunk(b"PLTE", b""),)), "PLTE of 0 bytes"),
+        (_crafted_png(extra=(_chunk(b"PLTE", bytes(4)),)), "PLTE of 4 bytes"),
+        (_crafted_png(extra=(_chunk(b"PLTE", bytes(771)),)), "PLTE of 771 bytes"),
+        (_crafted_png(extra=(_chunk(b"PLTE", bytes(3)),) * 2), "repeated"),
+    ],
+)
+def test_crc_correct_but_undecodable_png_is_rejected(payload: bytes, match: str):
+    with pytest.raises(ExportError, match=match):
+        export._check_tile_png("t.png", payload, 256)
+
+
+def test_invalid_filter_tile_is_never_published(tmp_path: Path):
+    config = _with_tiles(tmp_path)
+    _replace_tile(tmp_path, _crafted_png(filter_byte=5))
+    _fails_without_writing(config, "filter type")
+
+
+def test_repeated_palette_tile_is_never_published(tmp_path: Path):
+    config = _with_tiles(tmp_path)
+    _replace_tile(tmp_path, _crafted_png(extra=(_chunk(b"PLTE", bytes(3)),) * 2))
+    _fails_without_writing(config, "repeated")

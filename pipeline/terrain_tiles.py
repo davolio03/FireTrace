@@ -25,7 +25,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
-import shutil
+import re
 import sys
 import tomllib
 from collections.abc import Mapping, Sequence
@@ -40,6 +40,8 @@ from rasterio.errors import RasterioError
 from rasterio.transform import from_bounds
 from rasterio.warp import Resampling, reproject
 
+from pipeline import publishing
+from pipeline.publishing import PublishError
 from pipeline.sar import SarError, sha256_file
 from pipeline.webexport import WebExportError, write_png
 
@@ -52,6 +54,17 @@ ORIGIN_SHIFT_M = math.pi * EARTH_RADIUS_M
 MAX_LAT = 85.0511287798066
 TERRARIUM_OFFSET_M = 32768.0
 MAX_TILES = 2000
+_NUM = r"(?:0|[1-9][0-9]*)"
+# What this stage (and the terrain/ directory of the web bundle) owns: the manifest plus
+# {z}/{x}/{y}.png at exactly that depth, canonical decimal names only (DT-09).
+TILE_TREE = publishing.Tree(
+    files=frozenset({MANIFEST}),
+    dir_pattern=_NUM,
+    pattern_child=publishing.Tree(
+        dir_pattern=_NUM, pattern_child=publishing.Tree(file_pattern=rf"{_NUM}\.png")
+    ),
+)
+TILE_NAME = re.compile(rf"({_NUM})/({_NUM})/({_NUM})\.png", re.ASCII)
 
 
 class TerrainTilesError(Exception):
@@ -172,13 +185,24 @@ def lonlat_to_tile(lon: float, lat: float, zoom: int) -> tuple[float, float]:
 
 def tiles_for_bounds(bounds: tuple[float, float, float, float], zoom: int) -> list[tuple[int, int]]:
     """All (x, y) tiles at ``zoom`` that intersect the WGS84 bounds."""
+    xs, ys = _tile_ranges(bounds, zoom)
+    return [(x, y) for x in xs for y in ys]
+
+
+def tile_count(bounds: tuple[float, float, float, float], zoom: int) -> int:
+    """How many tiles :func:`tiles_for_bounds` gives, without listing them."""
+    xs, ys = _tile_ranges(bounds, zoom)
+    return len(xs) * len(ys)
+
+
+def _tile_ranges(bounds: tuple[float, float, float, float], zoom: int) -> tuple[range, range]:
     west, south, east, north = bounds
     x0, y0 = lonlat_to_tile(west, north, zoom)
     x1, y1 = lonlat_to_tile(east, south, zoom)
     last = 2**zoom - 1
     xs = range(max(0, math.floor(x0)), min(last, math.ceil(x1) - 1) + 1)
     ys = range(max(0, math.floor(y0)), min(last, math.ceil(y1) - 1) + 1)
-    return [(x, y) for x in xs for y in ys]
+    return xs, ys
 
 
 def tile_bounds_mercator(zoom: int, x: int, y: int) -> tuple[float, float, float, float]:
@@ -275,27 +299,6 @@ def _render_tile(
     return np.where(np.isnan(elevation), 0.0, elevation).astype(np.float32)
 
 
-def _publish(staging: Path, output_dir: Path) -> None:
-    """Swap the staged pyramid into place; refuse to clobber foreign content."""
-    if output_dir.exists():
-        foreign = [
-            p.name
-            for p in output_dir.iterdir()
-            if not (p.name == MANIFEST or (p.is_dir() and p.name.isdigit()))
-        ]
-        if foreign:
-            raise TerrainTilesError(
-                f"{output_dir}: refusing to replace a directory with foreign entries: "
-                f"{', '.join(sorted(foreign))}"
-            )
-    previous = output_dir.with_name(f".{output_dir.name}.previous")
-    shutil.rmtree(previous, ignore_errors=True)
-    if output_dir.exists():
-        output_dir.rename(previous)
-    staging.rename(output_dir)
-    shutil.rmtree(previous, ignore_errors=True)
-
-
 def run_tiles(config: TilesConfig) -> dict[str, Any]:
     for dem in config.dems:
         _verify(dem)
@@ -308,9 +311,18 @@ def run_tiles(config: TilesConfig) -> dict[str, Any]:
         raise TerrainTilesError(f"{len(plan)} tiles exceed the {MAX_TILES} tile limit")
 
     output_dir = config.output_dir
-    staging = output_dir.with_name(f".{output_dir.name}.staging")
-    shutil.rmtree(staging, ignore_errors=True)
-    staging.mkdir(parents=True)
+    try:
+        clash = publishing.overlapping_input(output_dir, [dem.raw for dem in config.dems])
+        if clash is not None:
+            raise TerrainTilesError(
+                "output_dir and its staging/backup siblings must be separate from every "
+                f"input ({clash.name})"
+            )
+        publishing.check_output_dir(output_dir, TILE_TREE)
+        staging = publishing.clear_staging(output_dir, TILE_TREE)
+        staging.mkdir(parents=True)
+    except (PublishError, OSError) as exc:
+        raise TerrainTilesError(str(exc)) from exc
     outputs: dict[str, str] = {}
     low, high = math.inf, -math.inf
     try:
@@ -368,13 +380,12 @@ def run_tiles(config: TilesConfig) -> dict[str, Any]:
             json.dumps(document, indent=2, sort_keys=True, ensure_ascii=True) + "\n",
             encoding="utf-8",
         )
-        _publish(staging, output_dir)
-    except (RasterioError, WebExportError, SarError, OSError) as exc:
-        shutil.rmtree(staging, ignore_errors=True)
+        warning = publishing.publish(staging, output_dir, TILE_TREE)
+    except (RasterioError, WebExportError, SarError, PublishError, OSError) as exc:
         raise TerrainTilesError(str(exc)) from exc
-    except TerrainTilesError:
-        shutil.rmtree(staging, ignore_errors=True)
-        raise
+    finally:
+        publishing.discard_staging(staging, TILE_TREE)
+    publishing.report(warning, "terrain_tiles")
     return document
 
 
