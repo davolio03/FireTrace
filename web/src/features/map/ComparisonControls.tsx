@@ -5,6 +5,7 @@ import {
   comparisonPair,
   isSupportedComparison,
   type Polarization,
+  comparisonLabel,
 } from './comparison'
 
 export interface ComparisonDates {
@@ -22,6 +23,52 @@ export function ComparisonControls({
   const compare = useMapStore((state) => state.compare)
   const setCompare = useMapStore((state) => state.setCompare)
   const [error, setError] = useState(false)
+  const opticalMode = compare?.left.startsWith('optical_') ?? false
+
+  function selectOptical(left?: string, right?: string) {
+    const optical =
+      layers.find(
+        (layer) =>
+          layer.id === (left ?? 'optical_during') && layer.kind === 'raster',
+      ) ??
+      layers.find(
+        (layer) =>
+          (layer.id === 'optical_during' || layer.id === 'optical_after') &&
+          layer.kind === 'raster',
+      )
+    const radar =
+      layers.find(
+        (layer) =>
+          layer.id === (right ?? 'sar_t1_hh') && layer.kind === 'raster',
+      ) ??
+      layers.find(
+        (layer) =>
+          ['sar_t1_hh', 'sar_t2_hh', 'sar_t1_hv', 'sar_t2_hv'].includes(
+            layer.id,
+          ) && layer.kind === 'raster',
+      )
+    if (
+      !optical ||
+      !radar ||
+      !isSupportedComparison(
+        {
+          left: optical.id,
+          right: radar.id,
+          position: compare?.position ?? 0.5,
+        },
+        layers,
+      )
+    ) {
+      setError(true)
+      return
+    }
+    setError(false)
+    setCompare({
+      left: optical.id,
+      right: radar.id,
+      position: compare?.position ?? 0.5,
+    })
+  }
 
   function selectPair(polarization: Polarization) {
     const selected = comparisonPair(polarization)
@@ -42,8 +89,26 @@ export function ComparisonControls({
     const hh = { ...comparisonPair('HH'), position: 0.5 }
     if (isSupportedComparison(hh, layers)) {
       selectPair('HH')
-    } else {
+    } else if (
+      isSupportedComparison({ ...comparisonPair('HV'), position: 0.5 }, layers)
+    ) {
       selectPair('HV')
+    } else {
+      selectOptical()
+    }
+  }
+
+  function selectRadarMode() {
+    if (
+      isSupportedComparison({ ...comparisonPair('HH'), position: 0.5 }, layers)
+    ) {
+      selectPair('HH')
+    } else if (
+      isSupportedComparison({ ...comparisonPair('HV'), position: 0.5 }, layers)
+    ) {
+      selectPair('HV')
+    } else {
+      setError(true)
     }
   }
 
@@ -61,7 +126,8 @@ export function ComparisonControls({
       {compare && !isSupportedComparison(compare, layers) ? (
         <>
           <p role="alert" className="mt-2 text-red-700">
-            Only available HH or HV before/after pairs can be compared here.
+            Only available HH or HV before/after pairs or optical and radar
+            pairs can be compared here.
           </p>
           <button
             type="button"
@@ -86,31 +152,98 @@ export function ComparisonControls({
             preserved and return when comparison ends.
           </p>
           <fieldset className="mt-3">
-            <legend>Polarization</legend>
-            {(['HH', 'HV'] as const).map((pol) => (
-              <label key={pol} className="mr-4">
-                <input
-                  type="radio"
-                  name="compare-polarization"
-                  checked={
-                    compare.left === comparisonPair(pol).left &&
-                    compare.right === comparisonPair(pol).right
-                  }
-                  onChange={() => selectPair(pol)}
-                />{' '}
-                {pol}
-              </label>
-            ))}
+            <legend>Comparison mode</legend>
+            <label>
+              <input
+                type="radio"
+                name="comparison-mode"
+                checked={!opticalMode}
+                onChange={selectRadarMode}
+              />{' '}
+              Before and after radar
+            </label>{' '}
+            <label>
+              <input
+                type="radio"
+                name="comparison-mode"
+                checked={opticalMode}
+                onChange={() => selectOptical()}
+              />{' '}
+              Optical and radar
+            </label>
           </fieldset>
+          {opticalMode ? (
+            <>
+              <p className="mt-2 text-sm">
+                Optical imagery is complementary context; it does not validate
+                radar change or confirm burned area.
+              </p>
+              <label className="mt-3 block">
+                Optical image
+                <select
+                  value={compare.left}
+                  onChange={(event) =>
+                    selectOptical(event.target.value, compare.right)
+                  }
+                >
+                  {layers
+                    .filter((layer) =>
+                      ['optical_during', 'optical_after'].includes(layer.id),
+                    )
+                    .map((layer) => (
+                      <option key={layer.id} value={layer.id}>
+                        {layer.title}
+                      </option>
+                    ))}
+                </select>
+              </label>
+              <label className="mt-3 block">
+                Radar observation
+                <select
+                  value={compare.right}
+                  onChange={(event) =>
+                    selectOptical(compare.left, event.target.value)
+                  }
+                >
+                  {layers
+                    .filter((layer) =>
+                      [
+                        'sar_t1_hh',
+                        'sar_t2_hh',
+                        'sar_t1_hv',
+                        'sar_t2_hv',
+                      ].includes(layer.id),
+                    )
+                    .map((layer) => (
+                      <option key={layer.id} value={layer.id}>
+                        {layer.title}
+                      </option>
+                    ))}
+                </select>
+              </label>
+            </>
+          ) : (
+            <fieldset className="mt-3">
+              <legend>Polarization</legend>
+              {(['HH', 'HV'] as const).map((pol) => (
+                <label key={pol} className="mr-4">
+                  <input
+                    type="radio"
+                    name="compare-polarization"
+                    checked={
+                      compare.left === comparisonPair(pol).left &&
+                      compare.right === comparisonPair(pol).right
+                    }
+                    onChange={() => selectPair(pol)}
+                  />{' '}
+                  {pol}
+                </label>
+              ))}
+            </fieldset>
+          )}
           <div className="mt-3 flex justify-between gap-2 text-sm">
-            <span>
-              Before — {dates.before} —{' '}
-              {compare.left.endsWith('_hv') ? 'HV' : 'HH'}
-            </span>
-            <span>
-              After — {dates.after} —{' '}
-              {compare.right.endsWith('_hv') ? 'HV' : 'HH'}
-            </span>
+            <span>{comparisonLabel(compare.left, layers, dates)}</span>
+            <span>{comparisonLabel(compare.right, layers, dates)}</span>
           </div>
           <label className="mt-3 block text-sm">
             Comparison divider

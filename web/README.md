@@ -30,6 +30,12 @@ latitude using the keyboard, to view the point evidence. The inspector uses
 the mock API by default; its synthetic values are not scientific validation.
 Fixture display is not evidence of real-data alignment.
 
+Optical and terrain layers are complementary context, with their source shown
+in the layer controls. The comparison can display an optical image beside a
+chosen radar observation. Rainfall context reads `weather.json`; missing values
+are not shown as zero. These contextual products do not confirm the cause of
+radar changes or establish burned area.
+
 The Results panel reads `stats.json` from `VITE_DATA_BASE_URL` and displays
 valid coverage and descriptive change-index statistics inside and outside the
 official perimeter. These are not measurements of burned area. P1 highlight

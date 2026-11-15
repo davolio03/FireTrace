@@ -163,6 +163,10 @@ describe('case map', () => {
       'firetrace-change_hh',
       'firetrace-change_hv',
       'firetrace-change_index',
+      'firetrace-hillshade',
+      'firetrace-slope',
+      'firetrace-optical_during',
+      'firetrace-optical_after',
       'firetrace-perimeter',
     ])
     act(() => {

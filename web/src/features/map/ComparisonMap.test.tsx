@@ -290,7 +290,7 @@ describe('synchronized map comparison', () => {
 
   it('does not hide normal layers or mislabel an unsupported shared comparison', () => {
     mapStore.setState({
-      compare: { left: 'optical_during', right: 'sar_t2_hv', position: 0.5 },
+      compare: { left: 'hillshade', right: 'sar_t2_hv', position: 0.5 },
     })
     render(
       <CaseMap
