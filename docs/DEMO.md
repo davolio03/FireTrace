@@ -56,6 +56,35 @@ In a second terminal, from `web/`:
 VITE_USE_MOCKS=false VITE_DATA_BASE_URL=http://127.0.0.1:5190 npm run dev -- --host 127.0.0.1 --port 5189 --strictPort
 ```
 
+## IN-03 guided story on real data — 2026-11-15
+
+**Checked:** the 7-step guided story and the context layers play on the real bundle without mock data, and every figure in `web/src/story/story.json` traces to a real product field or a cited source. This is a display and wording check, not scientific validation.
+
+- Bundle: release `data-web-plaskett-f66c4d9` (`sha256sum -c SHA256SUMS.txt`: OK). It has no `terrain/tiles.json`, so the story stays 2D on the published bundle. For this check, a scratch copy outside the repository added the real Copernicus GLO-30 tiles from `contracts/fixtures/web/terrain/` (46 tiles, `data_status: real`); `uv run contracts/tools/validate.py <copy>`: OK. Publishing the tiles in the bundle is proposed as DT-09.
+- Served on loopback as in the IN-01 procedure (`127.0.0.1:5190`, CORS limited to `http://127.0.0.1:5189`); web on `127.0.0.1:5189` with `VITE_USE_MOCKS=false`, Node v26.13.1, vite 8.3.8. The page must be opened at `127.0.0.1`, not `localhost`, or the CORS rule blocks the data.
+- All 7 steps played in order with autoplay paused: no MOCK text on any step; relief shown on every step ("Relief ×1.6 · Copernicus DEM GLO-30"); step 3 crossfaded the Sentinel-2 smoke scene (2026-08-30) into the real HV after layer; steps 5–7 showed the real index legend (−1.28 to 3.81); step 6 showed the real highlight mask inside the perimeter.
+- Requests to the data server: 19 from the page (4 JSON manifests, 12 layer PNGs), all 200; the server log recorded 92 terrain-tile requests, all 200, and no 4xx/5xx. Basemap tiles came from OpenStreetMap.
+- The analysis view's rainfall panel showed the real NASA GPM IMERG Late V07C daily series with no MOCK notice.
+- Screenshots of steps 1–3 and 5–7 are in the gitignored `data/processed/in03-evidence/`.
+- Not checked: the inspector API behind "Explore the evidence" (IN-02) and deployment (DL-01).
+
+### Story figure trace
+
+| Step | Statement | Source → value |
+| --- | --- | --- |
+| orbit | NASA–ISRO mission, about 747 km up | [NASA NISAR mission overview](https://science.nasa.gov/mission/nisar/mission-overview/): "Orbit Altitude 747 km", partnership NASA and ISRO |
+| orbit | 16 August and 3 October 2026, same descending track | `case.json` `epochs.t1/t2.datetime` 2026-08-16 / 2026-10-03, `acquisition.direction` descending, track 42 |
+| context | Started on 26 August, Big Sur | `case.json` `fire_start` 2026-08-26 (CAL FIRE source), `location` Big Sur, Monterey County |
+| context | Perimeter mapped from infrared imagery on 14 September | `perimeter.geojson` `MapMethod` "IR Image Interpretation", `PolygonDateTime` 2026-09-14T20:44Z |
+| context | About 12,100 ha | `stats.json` `inside_perimeter.area_ha` 12,134.98 (WFIGS 29,992.9 acres = 12,137.7 ha) |
+| context | Steep terrain | DT-05 [terrain](methods/terrain.md): median slope 20.4°, 14.4 % of the crop > 30° |
+| smoke | Sentinel-2 smoke plume during the fire | [optical](methods/optical.md): `S2A_10SFE_20260830_0_L2A`, large smoke plume over the Plaskett area |
+| smoke | L-band wavelength about 24 cm | NASA NISAR mission overview: "L-band: 24 cm" |
+| change-index | Higher inside, distributions overlap | `stats.json` median 0.50 inside vs −0.22 outside; inside p25 −0.29 < outside p95 1.60 |
+| highlight | About 1,050 ha, almost all inside, 9 % of the perimeter | `stats.json` `highlight.area_ha` 1,049.66, `inside_ha` 1,049.2; 1,049.2 / 12,134.98 = 8.6 % |
+
+Removed: "many patches follow slopes and drainages". Across the ten `change_inside_perimeter` zones in `review_zones.geojson`, the share of pixels above 30° (`steep_slope` fraction) ranges from 1 % to 25 % and averages 7.8 % by area, below the 14.4 % crop share; drainages are not measured. `docs/methods/highlight.md` (XP-01) still contains the same sentence; its owner should review it. A rain sentence was not added: the story test deliberately excludes rain and soil-moisture claims, and the rainfall series is shown in its own panel.
+
 ## Human delivery checklist
 
 - [ ] Independent toggles/legends and before/after alignment verified with real outputs
