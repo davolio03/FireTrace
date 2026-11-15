@@ -22,6 +22,8 @@ const map = vi.hoisted(() => ({
   markerSet: vi.fn(),
   markerAdd: vi.fn(),
   markerRemove: vi.fn(),
+  off: vi.fn(),
+  project: vi.fn(() => ({ x: 10, y: 20 })),
 }))
 
 vi.mock('maplibre-gl', () => ({
@@ -39,6 +41,8 @@ vi.mock('maplibre-gl', () => ({
     setPaintProperty = map.setPaintProperty
     fitBounds = map.fitBounds
     getCanvas = () => map.canvas
+    off = map.off
+    project = map.project
   },
   Marker: class {
     setLngLat(point: unknown) {
@@ -106,6 +110,27 @@ describe('case map', () => {
       point: [-121.4, 35.9],
     })
     expect(mapStore.getState().panel).toBe('inspector')
+  })
+
+  it('adds clicked vertices to the shared profile while drawing', () => {
+    mapStore.setState({
+      tool: 'draw-profile',
+      selection: { type: 'profile', line: [] },
+    })
+    render(<CaseMap />)
+    const click = map.on.mock.calls.find(([event]) => event === 'click')?.[1]
+    act(() => {
+      click({ lngLat: { lng: -121.4, lat: 35.9 } })
+      click({ lngLat: { lng: -121.3, lat: 35.8 } })
+    })
+    expect(mapStore.getState().selection).toEqual({
+      type: 'profile',
+      line: [
+        [-121.4, 35.9],
+        [-121.3, 35.8],
+      ],
+    })
+    expect(mapStore.getState().panel).toBe('profile')
   })
 
   it('shows an inspect cursor and marks the selected point', () => {
