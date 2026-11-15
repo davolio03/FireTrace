@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { loadCaseData } from './data/caseData'
 import { CaseMap } from './features/map/CaseMap'
 import { LocationMap } from './features/map/LocationMap'
+import { Inspector } from './features/inspector/Inspector'
 import type { ComparisonDates } from './features/map/ComparisonControls'
 import { layersAreRenderable, type Layer } from './features/map/layers'
 
@@ -22,7 +24,17 @@ function isValidSource(
   )
 }
 
+const queryClient = new QueryClient()
+
 export default function App() {
+  return (
+    <QueryClientProvider client={queryClient}>
+      <AppContent />
+    </QueryClientProvider>
+  )
+}
+
+function AppContent() {
   const [status, setStatus] = useState<'loading' | 'mock' | 'real' | 'error'>(
     'loading',
   )
@@ -184,6 +196,7 @@ export default function App() {
               dataBaseUrl={import.meta.env.VITE_DATA_BASE_URL || '/'}
             />
           </div>
+          <Inspector caseData={caseData} />
         </>
       )}
     </main>

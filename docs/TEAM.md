@@ -1,6 +1,6 @@
 # FireTrace team operating agreement
 
-**Known assignment:** David is the upstream NISAR data/models orchestrator. Other roles and all backups remain unassigned; this document does not invent owners or approve board proposals.
+**Known assignments:** David is the upstream NISAR data/models orchestrator, and Gabriel owns application / frontend. Other roles and all backups remain unassigned; this document does not invent owners or approve board proposals.
 
 ## Ownership boundaries
 
@@ -10,7 +10,7 @@
 | Geospatial processing | Grid/CRS, validity, reprojection and reference alignment | Unassigned / unassigned | DT, EV |
 | CV / ML | Continuous baseline first; optional CV/DL with evaluation later | Unassigned / unassigned | CH, XP |
 | Scientific evaluation | Metric domains, sensitivity and attribution limits | Unassigned / unassigned | EV |
-| Application / frontend | Independent layers, comparison, coverage and point inspector | Unassigned / unassigned | AP |
+| Application / frontend | Independent layers, comparison, coverage and point inspector | Gabriel / unassigned | AP |
 | Integration / storytelling | Boundary coordination, documentation, release and demo fallback | Unassigned / unassigned | BS, IN, DL |
 
 Roles may overlap, but every task and shared boundary needs one accountable human. DL cannot block P0. Maintainers must select actual GitHub reviewers/handles before enabling CODEOWNERS; no placeholder assignment grants review authority.

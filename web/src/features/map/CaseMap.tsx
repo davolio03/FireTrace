@@ -24,6 +24,8 @@ export function CaseMap({
   const container = useRef<HTMLDivElement>(null)
   const [primary, setPrimary] = useState<maplibregl.Map | null>(null)
   const compare = useMapStore((state) => state.compare)
+  const tool = useMapStore((state) => state.tool)
+  const selection = useMapStore((state) => state.selection)
   const [error, setError] = useState(false)
   const showError = useCallback(() => setError(true), [])
 
@@ -53,6 +55,14 @@ export function CaseMap({
     })
     setPrimary(map)
     map.addControl(new maplibregl.NavigationControl())
+    map.on('click', (event) => {
+      if (mapStore.getState().tool === 'inspect') {
+        mapStore.getState().select({
+          type: 'point',
+          point: [event.lngLat.lng, event.lngLat.lat],
+        })
+      }
+    })
     map.on('error', showError)
     const syncLayers = () =>
       syncMapLayers(map, displayed, mapStore.getState(), 'left')
@@ -80,6 +90,25 @@ export function CaseMap({
       map.remove()
     }
   }, [layers, dataBaseUrl, showError])
+
+  useEffect(() => {
+    if (!primary) return
+    const canvas = primary.getCanvas()
+    canvas.style.cursor = tool === 'inspect' ? 'crosshair' : ''
+    return () => {
+      canvas.style.cursor = ''
+    }
+  }, [primary, tool])
+
+  useEffect(() => {
+    if (!primary || selection.type !== 'point') return
+    const marker = new maplibregl.Marker()
+      .setLngLat(selection.point)
+      .addTo(primary)
+    return () => {
+      marker.remove()
+    }
+  }, [primary, selection])
 
   return (
     <div>
