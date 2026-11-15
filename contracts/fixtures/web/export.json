@@ -1,0 +1,8 @@
+{
+  "export_format_version": 1,
+  "case_id": "plaskett-2026",
+  "outputs": {
+    "case.json": "f70290dd25ab6c7887e633489f78301deebcffa179b6dde417adfe48d9d3fac6",
+    "review_zones.geojson": "1c9070f8f28af29e54b1edced9ca7978f8543f0abf126b284996e5ce59d584be"
+  }
+}

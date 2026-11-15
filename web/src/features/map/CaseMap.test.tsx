@@ -18,7 +18,11 @@ const map = vi.hoisted(() => ({
   setLayoutProperty: vi.fn(),
   setPaintProperty: vi.fn(),
   fitBounds: vi.fn(),
-  canvas: { style: { cursor: '' } },
+  loaded: vi.fn(() => true),
+  canvas: {
+    style: { cursor: '' },
+    toDataURL: () => 'data:image/png;base64,AAAA',
+  },
   markerSet: vi.fn(),
   markerAdd: vi.fn(),
   markerRemove: vi.fn(),
@@ -41,6 +45,7 @@ vi.mock('maplibre-gl', () => ({
     setPaintProperty = map.setPaintProperty
     fitBounds = map.fitBounds
     getCanvas = () => map.canvas
+    loaded = map.loaded
     off = map.off
     project = map.project
   },
@@ -93,6 +98,40 @@ describe('case map', () => {
     )
     unmount()
     expect(map.remove).toHaveBeenCalledOnce()
+  })
+  it('refuses map capture after a layer or map error', () => {
+    let capture: (() => string) | null = null
+    render(
+      <CaseMap
+        onCaptureReady={(value) => {
+          capture = value
+        }}
+      />,
+    )
+    expect(capture!()).toBe('data:image/png;base64,AAAA')
+    const fail = map.on.mock.calls.find(([event]) => event === 'error')?.[1]
+    act(() => fail())
+    expect(() => capture!()).toThrow()
+  })
+  it('rejects unloaded maps and synchronous errors and unregisters capture', () => {
+    let capture: (() => string) | null = null
+    const { unmount } = render(
+      <CaseMap
+        onCaptureReady={(value) => {
+          capture = value
+        }}
+      />,
+    )
+    map.loaded.mockReturnValueOnce(false)
+    expect(() => capture!()).toThrow('Map is not ready')
+    expect(capture!()).toBe('data:image/png;base64,AAAA')
+    const fail = map.on.mock.calls.find(([event]) => event === 'error')?.[1]
+    act(() => {
+      fail()
+      expect(() => capture!()).toThrow('Map is not ready')
+    })
+    unmount()
+    expect(capture).toBeNull()
   })
 
   it('selects map points only in inspect mode', () => {

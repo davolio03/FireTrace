@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { loadCaseData } from './data/caseData'
 import { CaseMap } from './features/map/CaseMap'
@@ -7,6 +7,7 @@ import { Inspector } from './features/inspector/Inspector'
 import { MetricsPanel } from './features/metrics/MetricsPanel'
 import { WeatherPanel } from './features/weather/WeatherPanel'
 import { ProfilePanel } from './features/profile/ProfilePanel'
+import { AnnotationPanel } from './features/annotations/AnnotationPanel'
 import type { LonLat } from './state/mapStore'
 import type { ComparisonDates } from './features/map/ComparisonControls'
 import { layersAreRenderable, type Layer } from './features/map/layers'
@@ -51,6 +52,10 @@ function AppContent() {
   const [caseData, setCaseData] = useState<CaseData | null>(null)
   const [view, setView] = useState<'overview' | 'analysis'>('overview')
   const [profileSample, setProfileSample] = useState<LonLat | null>(null)
+  const mapCapture = useRef<(() => string) | null>(null)
+  const setCapture = useCallback((capture: (() => string) | null) => {
+    mapCapture.current = capture
+  }, [])
 
   useEffect(() => {
     let active = true
@@ -200,10 +205,19 @@ function AppContent() {
               dates={dates}
               dataBaseUrl={import.meta.env.VITE_DATA_BASE_URL || '/'}
               profileSample={profileSample}
+              onCaptureReady={setCapture}
             />
           </div>
           <Inspector caseData={caseData} />
           <ProfilePanel onSample={setProfileSample} />
+          <AnnotationPanel
+            caseData={caseData}
+            displayStatus={status}
+            captureMap={() => {
+              if (!mapCapture.current) throw new Error('Map is unavailable')
+              return mapCapture.current()
+            }}
+          />
           <MetricsPanel />
           <WeatherPanel dates={dates} />
         </>

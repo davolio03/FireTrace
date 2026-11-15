@@ -19,11 +19,13 @@ export function CaseMap({
   dataBaseUrl = '/',
   dates = { before: 'Date unavailable', after: 'Date unavailable' },
   profileSample = null,
+  onCaptureReady,
 }: {
   layers?: Layer[]
   dataBaseUrl?: string
   dates?: ComparisonDates
   profileSample?: LonLat | null
+  onCaptureReady?: (capture: (() => string) | null) => void
 }) {
   const container = useRef<HTMLDivElement>(null)
   const [primary, setPrimary] = useState<maplibregl.Map | null>(null)
@@ -31,7 +33,11 @@ export function CaseMap({
   const tool = useMapStore((state) => state.tool)
   const selection = useMapStore((state) => state.selection)
   const [error, setError] = useState(false)
-  const showError = useCallback(() => setError(true), [])
+  const errorRef = useRef(false)
+  const showError = useCallback(() => {
+    errorRef.current = true
+    setError(true)
+  }, [])
 
   useEffect(() => {
     if (!container.current) return
@@ -55,7 +61,12 @@ export function CaseMap({
       container: container.current,
       center: [-121.47, 35.92],
       zoom: 9,
+      canvasContextAttributes: { preserveDrawingBuffer: true },
       style: createBaseMapStyle(),
+    })
+    onCaptureReady?.(() => {
+      if (!map.loaded() || errorRef.current) throw new Error('Map is not ready')
+      return map.getCanvas().toDataURL('image/png')
     })
     setPrimary(map)
     map.addControl(new maplibregl.NavigationControl())
@@ -99,9 +110,10 @@ export function CaseMap({
     })
     return () => {
       unsubscribe()
+      onCaptureReady?.(null)
       map.remove()
     }
-  }, [layers, dataBaseUrl, showError])
+  }, [layers, dataBaseUrl, showError, onCaptureReady])
 
   useEffect(() => {
     if (!primary) return
