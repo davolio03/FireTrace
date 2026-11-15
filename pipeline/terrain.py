@@ -148,7 +148,7 @@ def load_config(path: Path, base_dir: Path | None = None) -> TerrainConfig:
     base = Path.cwd() if base_dir is None else base_dir
     try:
         raw = tomllib.loads(path.read_text(encoding="utf-8"))
-    except (OSError, tomllib.TOMLDecodeError) as exc:
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
         raise TerrainError(f"config: cannot read {path.name}: {exc}") from exc
 
     def resolve(value: str) -> Path:
@@ -519,7 +519,11 @@ def load_ingest(ingest_dir: Path) -> tuple[dict[str, Any], Affine, int, int]:
         transform, width, height = load_crop_grid(ingest_dir)
     except PerimeterError as exc:
         raise TerrainError(str(exc)) from exc
-    doc = json.loads((ingest_dir / "ingest.json").read_text(encoding="utf-8"))
+    path = ingest_dir / "ingest.json"
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise TerrainError(f"cannot read {path.name}: {exc}") from exc
     return doc, transform, width, height
 
 

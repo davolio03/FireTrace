@@ -153,7 +153,7 @@ def load_config(path: Path, base_dir: Path | None = None) -> ExportConfig:
     base = Path.cwd() if base_dir is None else base_dir
     try:
         raw = tomllib.loads(path.read_text(encoding="utf-8"))
-    except (OSError, tomllib.TOMLDecodeError) as exc:
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
         raise ExportError(f"config: cannot read {path.name}: {exc}") from exc
 
     def resolve(key: str) -> Path:
@@ -218,7 +218,7 @@ def pipeline_version() -> str:
     try:
         project = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))["project"]
         return f"{project['name']} {project['version']}"
-    except (OSError, tomllib.TOMLDecodeError, KeyError, TypeError) as exc:
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError, KeyError, TypeError) as exc:
         raise ExportError(f"cannot read the pipeline version from pyproject.toml: {exc}") from exc
 
 

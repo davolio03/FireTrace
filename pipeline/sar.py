@@ -133,7 +133,7 @@ def load_ingest(ingest_dir: Path) -> dict[str, Any]:
     path = ingest_dir / "ingest.json"
     try:
         doc = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise SarError(f"cannot read {path.name}: {exc}") from exc
     validate_ingest(doc)
     return doc
