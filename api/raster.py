@@ -78,14 +78,20 @@ class FireTraceRasterService:
         self._products_manifest_key: tuple[tuple[int, int], ...] | None = None
 
     @staticmethod
-    def _json_bytes(path: Path, source: str) -> dict[str, Any]:
+    def _read_json(path: Path, source: str) -> tuple[dict[str, Any], str]:
+        """Read a JSON object once; return it with the sha256 of the exact bytes parsed."""
         try:
-            document = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
+            payload = path.read_bytes()
+            document = json.loads(payload.decode("utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise HTTPException(status_code=503, detail=f"Cannot read {source}: {exc}") from exc
         if not isinstance(document, dict):
             raise HTTPException(status_code=503, detail=f"{source} must contain a JSON object")
-        return document
+        return document, hashlib.sha256(payload).hexdigest()
+
+    @staticmethod
+    def _json_bytes(path: Path, source: str) -> dict[str, Any]:
+        return FireTraceRasterService._read_json(path, source)[0]
 
     def _web_json(self, name: str) -> dict[str, Any]:
         """Read a published web document only when export.json records its exact bytes."""
@@ -128,13 +134,30 @@ class FireTraceRasterService:
         return {"status": "ok", "data_status": data_status}
 
     @staticmethod
-    def _manifest(path: Path) -> dict[str, Any]:
-        try:
-            document = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            raise HTTPException(status_code=503, detail=f"Cannot read {path.name}: {exc}") from exc
-        if not isinstance(document, dict):
-            raise HTTPException(status_code=503, detail=f"{path.name} must contain a JSON object")
+    def _manifest(path: Path, recorded: Mapping[str, Any]) -> dict[str, Any]:
+        """Read a pipeline manifest and require the exact bytes the web bundle was built from.
+
+        ``recorded`` is ``export.json.inputs``: the sha256 of each upstream manifest the
+        published bundle used. The checksum is taken from the same bytes that are parsed.
+        """
+        document, checksum = FireTraceRasterService._read_json(path, path.name)
+        expected = recorded.get(path.name)
+        if not isinstance(expected, str) or len(expected) != 64:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    f"export.json does not record the {path.name} the web bundle was built "
+                    "from; cannot confirm the bundle and the interim products share one run"
+                ),
+            )
+        if checksum != expected:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    f"The web bundle and the interim products come from different pipeline "
+                    f"runs: {path.name} differs from the one recorded in export.json"
+                ),
+            )
         return document
 
     @staticmethod
@@ -236,7 +259,9 @@ class FireTraceRasterService:
         )
 
     def _load_products(self) -> InspectionProducts:
+        export_path = self.web_dir / "export.json"
         manifest_paths = (
+            export_path,
             self.sar_dir / "sar.json",
             self.change_dir / "change.json",
             self.perimeter_dir / "perimeter.json",
@@ -260,7 +285,13 @@ class FireTraceRasterService:
         if self._products is not None and self._products_manifest_key == key:
             return self._products
 
-        sar, change, perimeter = (self._manifest(path) for path in manifest_paths)
+        export = self._json_bytes(export_path, "export.json")
+        recorded = export.get("inputs")
+        if not isinstance(recorded, Mapping):
+            raise HTTPException(
+                status_code=503, detail="export.json does not record its pipeline inputs"
+            )
+        sar, change, perimeter = (self._manifest(path, recorded) for path in manifest_paths[1:])
         expected_versions = (
             "sar_format_version",
             "change_format_version",
@@ -272,12 +303,8 @@ class FireTraceRasterService:
                     status_code=503, detail=f"Unsupported {key_name} in pipeline manifest"
                 )
 
-        sar_bytes = manifest_paths[0].read_bytes()
         source_sar = change.get("source_sar")
-        if (
-            not isinstance(source_sar, Mapping)
-            or source_sar.get("sha256") != hashlib.sha256(sar_bytes).hexdigest()
-        ):
+        if not isinstance(source_sar, Mapping) or source_sar.get("sha256") != recorded["sar.json"]:
             raise HTTPException(
                 status_code=503, detail="change.json was built from a different sar.json"
             )
@@ -330,8 +357,15 @@ class FireTraceRasterService:
                     status_code=503, detail=f"{name} contains values other than 0 or 1"
                 )
 
-        if terrain_key != (-1, -1):
-            terrain = self._manifest(terrain_manifest)
+        # Terrain is optional; serve it only when this bundle was built with it.
+        if "terrain.json" in recorded:
+            if terrain_key == (-1, -1):
+                raise HTTPException(
+                    status_code=503,
+                    detail="export.json records terrain.json but the interim terrain.json "
+                    "is missing",
+                )
+            terrain = self._manifest(terrain_manifest, recorded)
             if terrain.get("terrain_format_version") != 1:
                 raise HTTPException(status_code=503, detail="Unsupported terrain_format_version")
             terrain_grid = self._grid(terrain, "terrain.json")

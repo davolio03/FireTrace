@@ -50,6 +50,39 @@ def _write_raster(path: Path, values: np.ndarray) -> dict[str, str]:
     return {"file": path.name, "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
 
 
+GENERATION_MANIFESTS = ("sar.json", "change.json", "perimeter.json")
+
+
+def _manifest_path(root: Path, name: str) -> Path:
+    return root / "interim" / name.removesuffix(".json") / name
+
+
+def _record_inputs(root: Path, names: tuple[str, ...] = GENERATION_MANIFESTS) -> None:
+    """Record in export.json the manifests the bundle was built from, as DT-04 does."""
+    export_path = root / "processed" / "web" / "export.json"
+    export = json.loads(export_path.read_text(encoding="utf-8"))
+    export["inputs"] = {
+        name: hashlib.sha256(_manifest_path(root, name).read_bytes()).hexdigest() for name in names
+    }
+    _write_json(export_path, export)
+
+
+def _write_terrain(root: Path) -> None:
+    terrain_dir = root / "interim" / "terrain"
+    outputs = {
+        f"{name}.tif": _write_raster(terrain_dir / f"{name}.tif", values)
+        for name, values in {
+            "elevation": np.full((2, 2), 123.5, dtype=np.float32),
+            "slope": np.full((2, 2), 12.0, dtype=np.float32),
+            "aspect": np.full((2, 2), np.nan, dtype=np.float32),
+        }.items()
+    }
+    _write_json(
+        terrain_dir / "terrain.json",
+        {"terrain_format_version": 1, "grid": GRID, "outputs": outputs},
+    )
+
+
 def _case_data(tmp_path: Path) -> tuple[Path, float, float]:
     root = tmp_path / "data"
     sar_dir = root / "interim" / "sar"
@@ -124,6 +157,7 @@ def _case_data(tmp_path: Path) -> tuple[Path, float, float]:
         for name, document in web_documents.items()
     }
     _write_json(web_dir / "export.json", {"outputs": output_hashes})
+    _record_inputs(root)
 
     pixel_x, pixel_y = 600005.0, 3974995.0
     lon, lat = transform_coordinates("EPSG:32610", "EPSG:4326", [pixel_x], [pixel_y])
@@ -200,6 +234,7 @@ def test_inspection_rejects_malformed_source_sar_manifest(tmp_path: Path) -> Non
     change_doc = json.loads(change_path.read_text(encoding="utf-8"))
     change_doc["source_sar"] = None
     _write_json(change_path, change_doc)
+    _record_inputs(root)
 
     with pytest.raises(HTTPException) as error:
         FireTraceRasterService(root).inspect_point(lon, lat)
@@ -222,6 +257,7 @@ def test_inspection_rejects_invalid_analysis_crs(tmp_path: Path) -> None:
     perimeter_doc = json.loads(perimeter_path.read_text(encoding="utf-8"))
     perimeter_doc["grid"]["crs"] = "not-a-crs"
     _write_json(perimeter_path, perimeter_doc)
+    _record_inputs(root)
 
     with pytest.raises(HTTPException) as error:
         FireTraceRasterService(root).inspect_point(lon, lat)
@@ -238,6 +274,7 @@ def test_inspection_rejects_non_binary_perimeter_layer(tmp_path: Path, layer_nam
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     manifest["outputs"][layer_name] = record
     _write_json(manifest_path, manifest)
+    _record_inputs(root)
 
     with pytest.raises(HTTPException) as error:
         FireTraceRasterService(root).inspect_point(lon, lat)
@@ -247,19 +284,8 @@ def test_inspection_rejects_non_binary_perimeter_layer(tmp_path: Path, layer_nam
 
 def test_inspection_includes_verified_terrain_when_available(tmp_path: Path) -> None:
     root, lon, lat = _case_data(tmp_path)
-    terrain_dir = root / "interim" / "terrain"
-    outputs = {
-        f"{name}.tif": _write_raster(terrain_dir / f"{name}.tif", values)
-        for name, values in {
-            "elevation": np.full((2, 2), 123.5, dtype=np.float32),
-            "slope": np.full((2, 2), 12.0, dtype=np.float32),
-            "aspect": np.full((2, 2), np.nan, dtype=np.float32),
-        }.items()
-    }
-    _write_json(
-        terrain_dir / "terrain.json",
-        {"terrain_format_version": 1, "grid": GRID, "outputs": outputs},
-    )
+    _write_terrain(root)
+    _record_inputs(root, (*GENERATION_MANIFESTS, "terrain.json"))
 
     result = FireTraceRasterService(root).inspect_point(lon, lat)
 
@@ -445,19 +471,8 @@ def test_profile_keeps_positions_outside_the_analysis_grid(tmp_path: Path) -> No
 
 def test_profile_includes_verified_terrain_elevation(tmp_path: Path) -> None:
     root, _, _ = _case_data(tmp_path)
-    terrain_dir = root / "interim" / "terrain"
-    outputs = {
-        f"{name}.tif": _write_raster(terrain_dir / f"{name}.tif", values)
-        for name, values in {
-            "elevation": np.full((2, 2), 123.5, dtype=np.float32),
-            "slope": np.full((2, 2), 12.0, dtype=np.float32),
-            "aspect": np.full((2, 2), np.nan, dtype=np.float32),
-        }.items()
-    }
-    _write_json(
-        terrain_dir / "terrain.json",
-        {"terrain_format_version": 1, "grid": GRID, "outputs": outputs},
-    )
+    _write_terrain(root)
+    _record_inputs(root, (*GENERATION_MANIFESTS, "terrain.json"))
     line = [_wgs84(600000.0, 3974995.0), _wgs84(600020.0, 3974995.0)]
 
     result = FireTraceRasterService(root).inspect_profile(line, spacing_m=10.0)
@@ -530,6 +545,7 @@ def test_profile_rejects_incompatible_products(tmp_path: Path, failure: str) -> 
             (interim / "sar" / "sar.json").read_bytes()
         ).hexdigest()
         _write_json(change_path, change_doc)
+    _record_inputs(root)
     line = [_wgs84(600000.0, 3974995.0), _wgs84(600010.0, 3974995.0)]
 
     with pytest.raises(HTTPException) as error:
@@ -560,3 +576,153 @@ def test_profile_rejects_invalid_spacing(spacing_m: float, tmp_path: Path) -> No
         FireTraceRasterService(root).inspect_profile(line, spacing_m=spacing_m)
 
     assert error.value.status_code == 422
+
+
+# --------------------------------------------------------------------------- EV-01 hardening
+
+NON_UTF8_JSON = b'{"name": "\xff\xfe"}'
+
+
+def _assert_503(call: Any, *args: Any, match: str | None = None) -> None:
+    with pytest.raises(HTTPException) as error:
+        call(*args)
+    assert error.value.status_code == 503
+    if match is not None:
+        assert match in str(error.value.detail)
+
+
+def test_non_utf8_export_json_is_unavailable(tmp_path: Path) -> None:
+    root, lon, lat = _case_data(tmp_path)
+    (root / "processed" / "web" / "export.json").write_bytes(NON_UTF8_JSON)
+    service = FireTraceRasterService(root)
+
+    _assert_503(service.get_case)
+    _assert_503(service.inspect_point, lon, lat)
+
+
+def test_non_utf8_case_json_is_unavailable(tmp_path: Path) -> None:
+    root, lon, lat = _case_data(tmp_path)
+    web_dir = root / "processed" / "web"
+    (web_dir / "case.json").write_bytes(NON_UTF8_JSON)
+    export_path = web_dir / "export.json"
+    export = json.loads(export_path.read_text(encoding="utf-8"))
+    export["outputs"]["case.json"] = hashlib.sha256(NON_UTF8_JSON).hexdigest()
+    _write_json(export_path, export)
+    service = FireTraceRasterService(root)
+
+    _assert_503(service.get_case)
+    _assert_503(service.inspect_point, lon, lat)
+
+
+@pytest.mark.parametrize("name", GENERATION_MANIFESTS)
+def test_non_utf8_interim_manifest_is_unavailable(tmp_path: Path, name: str) -> None:
+    root, lon, lat = _case_data(tmp_path)
+    _manifest_path(root, name).write_bytes(NON_UTF8_JSON)
+    _record_inputs(root)
+
+    _assert_503(FireTraceRasterService(root).inspect_point, lon, lat)
+
+
+def test_non_utf8_recorded_terrain_manifest_is_unavailable(tmp_path: Path) -> None:
+    root, lon, lat = _case_data(tmp_path)
+    _write_terrain(root)
+    _manifest_path(root, "terrain.json").write_bytes(NON_UTF8_JSON)
+    _record_inputs(root, (*GENERATION_MANIFESTS, "terrain.json"))
+
+    _assert_503(FireTraceRasterService(root).inspect_point, lon, lat)
+
+
+def test_matching_generation_serves_inspection_and_caches_products(tmp_path: Path) -> None:
+    root, lon, lat = _case_data(tmp_path)
+    service = FireTraceRasterService(root)
+
+    result = service.inspect_point(lon, lat)
+
+    assert result["valid"] is True
+    assert "terrain" not in result
+    assert service._load_products() is service._load_products()
+
+
+@pytest.mark.parametrize("name", GENERATION_MANIFESTS)
+def test_bundle_from_a_different_run_is_unavailable(tmp_path: Path, name: str) -> None:
+    root, lon, lat = _case_data(tmp_path)
+    export_path = root / "processed" / "web" / "export.json"
+    export = json.loads(export_path.read_text(encoding="utf-8"))
+    export["inputs"][name] = "0" * 64
+    _write_json(export_path, export)
+    service = FireTraceRasterService(root)
+
+    _assert_503(service.inspect_point, lon, lat, match="different pipeline runs")
+    line = [_wgs84(600000.0, 3974995.0), _wgs84(600010.0, 3974995.0)]
+    with pytest.raises(HTTPException) as error:
+        service.inspect_profile(line, spacing_m=10.0)
+    assert error.value.status_code == 503
+
+
+@pytest.mark.parametrize("name", GENERATION_MANIFESTS)
+def test_bundle_without_input_record_is_unavailable(tmp_path: Path, name: str) -> None:
+    root, lon, lat = _case_data(tmp_path)
+    _record_inputs(root, tuple(other for other in GENERATION_MANIFESTS if other != name))
+
+    _assert_503(FireTraceRasterService(root).inspect_point, lon, lat, match=name)
+
+
+def test_bundle_without_inputs_object_is_unavailable(tmp_path: Path) -> None:
+    root, lon, lat = _case_data(tmp_path)
+    export_path = root / "processed" / "web" / "export.json"
+    export = json.loads(export_path.read_text(encoding="utf-8"))
+    del export["inputs"]
+    _write_json(export_path, export)
+
+    _assert_503(FireTraceRasterService(root).inspect_point, lon, lat)
+
+
+def test_recorded_terrain_must_match_the_interim_manifest(tmp_path: Path) -> None:
+    root, lon, lat = _case_data(tmp_path)
+    _write_terrain(root)
+    _record_inputs(root, (*GENERATION_MANIFESTS, "terrain.json"))
+    terrain_path = _manifest_path(root, "terrain.json")
+    terrain = json.loads(terrain_path.read_text(encoding="utf-8"))
+    terrain["note"] = "re-run after the export"
+    _write_json(terrain_path, terrain)
+
+    _assert_503(
+        FireTraceRasterService(root).inspect_point, lon, lat, match="different pipeline runs"
+    )
+
+
+def test_recorded_terrain_must_exist(tmp_path: Path) -> None:
+    root, lon, lat = _case_data(tmp_path)
+    _write_terrain(root)
+    _record_inputs(root, (*GENERATION_MANIFESTS, "terrain.json"))
+    _manifest_path(root, "terrain.json").unlink()
+
+    _assert_503(FireTraceRasterService(root).inspect_point, lon, lat, match="terrain.json")
+
+
+def test_unrecorded_terrain_is_not_served(tmp_path: Path) -> None:
+    root, lon, lat = _case_data(tmp_path)
+    _write_terrain(root)
+    service = FireTraceRasterService(root)
+
+    result = service.inspect_point(lon, lat)
+    line = [_wgs84(600000.0, 3974995.0), _wgs84(600020.0, 3974995.0)]
+    profile = service.inspect_profile(line, spacing_m=10.0)
+
+    assert result["valid"] is True
+    assert "terrain" not in result
+    assert [sample["elevation_m"] for sample in profile["samples"]] == [None, None, None]
+
+
+def test_replacing_export_json_invalidates_cached_products(tmp_path: Path) -> None:
+    root, lon, lat = _case_data(tmp_path)
+    service = FireTraceRasterService(root)
+    assert service.inspect_point(lon, lat)["valid"] is True
+
+    export_path = root / "processed" / "web" / "export.json"
+    export = json.loads(export_path.read_text(encoding="utf-8"))
+    export["inputs"]["sar.json"] = "0" * 64
+    export["generated_at"] = "2026-11-15T00:00:00Z"
+    _write_json(export_path, export)
+
+    _assert_503(service.inspect_point, lon, lat, match="different pipeline runs")
