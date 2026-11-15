@@ -14,6 +14,7 @@ Exit code 1 on any violation. Run it in CI for fixtures and in pipeline tests fo
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -63,6 +64,31 @@ def check_web_dir(web: Path, errors: list[str]) -> None:
         zones = check(web / "review_zones.geojson", "review-zones", errors)
         if zones and case and zones.get("data_status") != case.get("data_status"):
             errors.append("review_zones.geojson: data_status differs from case.json")
+    if (web / "terrain" / "tiles.json").exists():
+        check_terrain(web / "terrain", case, errors)
+
+
+def check_terrain(terrain: Path, case: dict | None, errors: list[str]) -> None:
+    """Terrain tiles: manifest schema, zoom range and every tile's checksum."""
+    doc = check(terrain / "tiles.json", "terrain-tiles", errors)
+    if not doc:
+        return
+    if doc.get("minzoom", 0) > doc.get("maxzoom", 0):
+        errors.append("terrain/tiles.json: minzoom is greater than maxzoom")
+    info = doc.get("firetrace", {})
+    if case and info.get("case_id") != case.get("case_id"):
+        errors.append("terrain/tiles.json: case_id differs from case.json")
+    zooms = set()
+    for name, digest in info.get("outputs", {}).items():
+        zooms.add(int(name.split("/")[0]))
+        tile = terrain / name
+        if not tile.exists():
+            errors.append(f"terrain/tiles.json: tile not found: {name}")
+        elif hashlib.sha256(tile.read_bytes()).hexdigest() != digest:
+            errors.append(f"terrain/tiles.json: checksum mismatch: {name}")
+    expected = set(range(doc.get("minzoom", 0), doc.get("maxzoom", 0) + 1))
+    if zooms != expected:
+        errors.append(f"terrain/tiles.json: tiles cover zooms {sorted(zooms)}, expected {sorted(expected)}")
 
 
 def main() -> int:

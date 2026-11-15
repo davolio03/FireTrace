@@ -28,7 +28,11 @@ layers/<id>.png       one RGBA PNG per raster layer, already in EPSG:3857 (trans
 review_zones.geojson  (P1, optional) zones to review         → review-zones.schema.json
 weather.json          daily rain between acquisitions        → weather.schema.json
 story.json            FIXTURES ONLY: example guided story    → story.schema.json
+terrain/tiles.json    (optional) 3D relief, TileJSON 3.0     → terrain-tiles.schema.json
+terrain/{z}/{x}/{y}.png  Terrarium elevation tiles (raster-dem), EPSG:3857
 ```
+
+**Terrain tiles (optional, AP-07).** 3D relief for the guided story, produced by `pipeline/terrain_tiles.py` from the pinned Copernicus GLO-30 DEM ([method](../docs/methods/terrain-tiles.md)). Like `perimeter.geojson` and the layer PNGs it is an external format (TileJSON + Terrarium) without a `contract_version` envelope; provenance and a sha256 per tile live in its `firetrace` block, and `validate.py` checks the schema, the zoom range and every tile. It is display context only (non-NISAR) and is never used by statistics. The web treats it as optional: without it the story stays 2D.
 
 | Other contracts | Where |
 |---|---|
@@ -78,7 +82,9 @@ Designed for 4–5 people. Each lane delivers against the contract and tests wit
 
 With four people, one person owns L2 and L3.
 
-## Fixtures (all synthetic except the perimeter geometry)
+## Fixtures (all synthetic except the perimeter geometry and the terrain tiles)
+
+`fixtures/web/terrain/` holds the **real** terrain tiles (2.1 MB, public Copernicus GLO-30), copied from `data/interim/terrain_tiles/`. Synthetic relief would put mountains where the real basemap has none, so the 3D story could not be checked against the map. They carry `data_status: "real"` and their source attribution.
 
 | File | Use |
 |---|---|
@@ -89,6 +95,7 @@ With four people, one person owns L2 and L3.
 | `fixtures/api/profile-example.json` | Transect crossing the perimeter: HV drops when entering |
 | `fixtures/web/story.json` | Starting 5-step story (draft copy) |
 | `fixtures/web/weather.json` | Mock rain with an event on 24–26 September |
+| `fixtures/web/terrain/` | **Real** Terrarium relief tiles (zoom 8–12) for the 3D story; regenerate with `uv run python -m pipeline.terrain_tiles --config pipeline/configs/terrain_tiles_plaskett.toml` and copy `data/interim/terrain_tiles/` |
 | `fixtures/exports/annotations.geojson` | Example annotation export |
 
 Regenerate the mocks (deterministic, fixed seed):
