@@ -1,21 +1,31 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import * as maplibregl from 'maplibre-gl'
 import mapWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url'
-import { mapStore } from '../../state/mapStore'
+import { mapStore, useMapStore } from '../../state/mapStore'
+import { ComparisonControls, type ComparisonDates } from './ComparisonControls'
+import { ComparisonOverlay } from './ComparisonOverlay'
+import { isSupportedComparison } from './comparison'
 import { LayerControls } from './LayerControls'
 import { type Layer, visibleMapLayers } from './layers'
+import { addMapLayers, syncMapLayers } from './mapLayers'
+import { createBaseMapStyle } from './mapStyle'
 
 const noLayers: Layer[] = []
 
 export function CaseMap({
   layers = noLayers,
   dataBaseUrl = '/',
+  dates = { before: 'Date unavailable', after: 'Date unavailable' },
 }: {
   layers?: Layer[]
   dataBaseUrl?: string
+  dates?: ComparisonDates
 }) {
   const container = useRef<HTMLDivElement>(null)
+  const [primary, setPrimary] = useState<maplibregl.Map | null>(null)
+  const compare = useMapStore((state) => state.compare)
   const [error, setError] = useState(false)
+  const showError = useCallback(() => setError(true), [])
 
   useEffect(() => {
     if (!container.current) return
@@ -39,47 +49,13 @@ export function CaseMap({
       container: container.current,
       center: [-121.47, 35.92],
       zoom: 9,
-      style: {
-        version: 8,
-        sources: {
-          osm: {
-            type: 'raster',
-            tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
-            tileSize: 256,
-            maxzoom: 19,
-            attribution:
-              '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-          },
-        },
-        layers: [
-          {
-            id: 'background',
-            type: 'background',
-            paint: { 'background-color': '#dbeafe' },
-          },
-          { id: 'basemap', type: 'raster', source: 'osm' },
-        ],
-      },
+      style: createBaseMapStyle(),
     })
+    setPrimary(map)
     map.addControl(new maplibregl.NavigationControl())
-    map.on('error', () => setError(true))
-    const syncLayers = () => {
-      const { visible, opacity } = mapStore.getState()
-      for (const layer of displayed) {
-        const id = `firetrace-${layer.id}`
-        if (!map.getLayer(id)) continue
-        map.setLayoutProperty(
-          id,
-          'visibility',
-          visible.includes(layer.id) ? 'visible' : 'none',
-        )
-        map.setPaintProperty(
-          id,
-          layer.kind === 'raster' ? 'raster-opacity' : 'line-opacity',
-          opacity[layer.id] ?? layer.default_opacity,
-        )
-      }
-    }
+    map.on('error', showError)
+    const syncLayers = () =>
+      syncMapLayers(map, displayed, mapStore.getState(), 'left')
     const unsubscribe = mapStore.subscribe(syncLayers)
     map.on('load', () => {
       const footprint = displayed.find(
@@ -96,45 +72,14 @@ export function CaseMap({
           { padding: 32, duration: 0 },
         )
       }
-      for (const layer of displayed) {
-        try {
-          if (!layer.url) throw new Error('Layer URL missing')
-          const id = `firetrace-${layer.id}`
-          const url = `${dataBaseUrl.replace(/\/+$/, '')}/${layer.url.replace(/^\/+/, '')}`
-          if (layer.kind === 'raster') {
-            const corners = layer.coordinates
-            if (!corners || corners.length !== 4)
-              throw new Error('Layer corners missing')
-            map.addSource(id, {
-              type: 'image',
-              url,
-              coordinates: [corners[0], corners[1], corners[2], corners[3]],
-            })
-            map.addLayer({ id, type: 'raster', source: id })
-          } else {
-            map.addSource(id, { type: 'geojson', data: url })
-            const color =
-              layer.legend.type === 'categorical'
-                ? layer.legend.items[0]?.color
-                : undefined
-            map.addLayer({
-              id,
-              type: 'line',
-              source: id,
-              paint: { 'line-color': color ?? '#000000', 'line-width': 2 },
-            })
-          }
-        } catch {
-          setError(true)
-        }
-      }
+      addMapLayers(map, displayed, dataBaseUrl, showError)
       syncLayers()
     })
     return () => {
       unsubscribe()
       map.remove()
     }
-  }, [layers, dataBaseUrl])
+  }, [layers, dataBaseUrl, showError])
 
   return (
     <div>
@@ -144,13 +89,50 @@ export function CaseMap({
         </p>
       )}
       <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_20rem]">
-        <div
-          ref={container}
-          role="region"
-          aria-label="Map of Big Sur"
-          className="h-[32rem] w-full"
-        />
-        {layers.length > 0 && <LayerControls layers={layers} />}
+        <div className="relative h-[32rem] w-full">
+          <div
+            ref={container}
+            role="region"
+            aria-label="Map of Big Sur"
+            className="h-full w-full"
+          />
+          {compare && primary && isSupportedComparison(compare, layers) && (
+            <>
+              <ComparisonOverlay
+                primary={primary}
+                layers={layers}
+                dataBaseUrl={dataBaseUrl}
+                position={compare.position}
+                onError={showError}
+              />
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-y-0 w-0.5 bg-white shadow"
+                style={{ left: `${compare.position * 100}%` }}
+              />
+              <span
+                aria-hidden="true"
+                className="pointer-events-none absolute left-2 top-2 rounded bg-white px-2 py-1 text-xs text-slate-900"
+              >
+                Before — {dates.before} —{' '}
+                {compare.left.endsWith('_hv') ? 'HV' : 'HH'}
+              </span>
+              <span
+                aria-hidden="true"
+                className="pointer-events-none absolute right-2 top-2 rounded bg-white px-2 py-1 text-xs text-slate-900"
+              >
+                After — {dates.after} —{' '}
+                {compare.right.endsWith('_hv') ? 'HV' : 'HH'}
+              </span>
+            </>
+          )}
+        </div>
+        {layers.length > 0 && (
+          <div className="space-y-4">
+            <ComparisonControls layers={layers} dates={dates} />
+            <LayerControls layers={layers} />
+          </div>
+        )}
       </div>
     </div>
   )

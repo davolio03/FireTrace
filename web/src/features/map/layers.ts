@@ -82,6 +82,7 @@ export function visibleMapLayers(layers: Layer[]) {
     (layer) =>
       layer.group === 'sar' ||
       layer.group === 'observed_change' ||
-      layer.id === 'perimeter',
+      layer.id === 'perimeter' ||
+      ['sar_t1_hh', 'sar_t2_hh', 'sar_t1_hv', 'sar_t2_hv'].includes(layer.id),
   )
 }

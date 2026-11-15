@@ -21,9 +21,12 @@ The map loads OpenStreetMap tiles in the browser; this requires a connection and
 shares the visitor's IP address with the tile service. When offline, geographic
 details are unavailable. The viewer displays fixture SAR and observed-change
 layers and the reference perimeter with independent visibility and opacity
-controls. Its legends come from the layer manifest. The Evidence Inspector and
-before/after comparison belong to later tasks. Fixture display is not evidence
-of real-data alignment or scientific validation.
+controls. Its legends come from the layer manifest. The before/after comparison
+uses synchronized maps and a keyboard- and touch-accessible divider for HH and
+HV. During comparison, other raster selections are preserved but temporarily
+hidden; the perimeter remains independently controllable. The Evidence
+Inspector belongs to a later task. Fixture display is not evidence of
+real-data alignment or scientific validation.
 
 ## Shared map state
 
