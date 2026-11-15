@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useState, type FormEvent } from 'react'
 import type { operations } from '../../generated/api'
 import { useMapStore } from '../../state/mapStore'
+import { AnimatedValue } from './AnimatedValue'
 
 type PointEvidence =
   operations['inspectPoint']['responses'][200]['content']['application/json']
@@ -56,8 +57,6 @@ export function Inspector({ caseData }: { caseData: CaseData | null }) {
     select({ type: 'point', point: [x, y] })
   }
 
-  const value = (n: number | null | undefined) =>
-    n == null ? 'Not available' : String(n)
   const data = query.data
   return (
     <div className="mt-6 space-y-3 rounded-lg border border-slate-300 p-4">
@@ -153,22 +152,36 @@ export function Inspector({ caseData }: { caseData: CaseData | null }) {
                     <tbody>
                       <tr>
                         <th>HH</th>
-                        <td>{value(data.hh_db.t1)}</td>
-                        <td>{value(data.hh_db.t2)}</td>
-                        <td>{value(data.hh_db.delta)}</td>
+                        <td>
+                          <AnimatedValue value={data.hh_db.t1} />
+                        </td>
+                        <td>
+                          <AnimatedValue value={data.hh_db.t2} />
+                        </td>
+                        <td>
+                          <AnimatedValue value={data.hh_db.delta} />
+                        </td>
                       </tr>
                       <tr>
                         <th>HV</th>
-                        <td>{value(data.hv_db.t1)}</td>
-                        <td>{value(data.hv_db.t2)}</td>
-                        <td>{value(data.hv_db.delta)}</td>
+                        <td>
+                          <AnimatedValue value={data.hv_db.t1} />
+                        </td>
+                        <td>
+                          <AnimatedValue value={data.hv_db.t2} />
+                        </td>
+                        <td>
+                          <AnimatedValue value={data.hv_db.delta} />
+                        </td>
                       </tr>
                     </tbody>
                   </table>
-                  <p>Change index: {value(data.change_index)}</p>
+                  <p>
+                    Change index: <AnimatedValue value={data.change_index} />
+                  </p>
                   <p>
                     Percentile among valid pixels:{' '}
-                    <span>{value(data.change_index_percentile)}</span>
+                    <AnimatedValue value={data.change_index_percentile} />
                   </p>
                 </>
               )}

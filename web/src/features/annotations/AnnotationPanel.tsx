@@ -60,6 +60,7 @@ export function AnnotationPanel({
   const [note, setNote] = useState('')
   const [verdict, setVerdict] = useState<Verdict>('needs_field_check')
   const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
   const [storageCase, setStorageCase] = useState<string | null>(null)
   const zoneId = selection.type === 'zone' ? selection.zoneId : null
   const zoneQuery = useQuery({
@@ -105,6 +106,7 @@ export function AnnotationPanel({
   }, [caseData?.case_id])
 
   function addAnnotation() {
+    setNotice('')
     try {
       if (!caseData || storageCase !== caseData.case_id)
         throw new Error('Case data or storage is unavailable.')
@@ -212,6 +214,7 @@ export function AnnotationPanel({
       setDocument(next)
       setNote('')
       setError('')
+      setNotice('Annotation saved locally.')
     } catch (reason) {
       setError(
         reason instanceof Error ? reason.message : 'Unable to save annotation.',
@@ -220,6 +223,7 @@ export function AnnotationPanel({
   }
 
   async function prepareImport(event: ChangeEvent<HTMLInputElement>) {
+    setNotice('')
     const file = event.target.files?.[0]
     event.target.value = ''
     if (!file || !caseData) return
@@ -243,6 +247,7 @@ export function AnnotationPanel({
   }
 
   function confirmImport() {
+    setNotice('')
     if (
       !pending ||
       !caseData ||
@@ -257,12 +262,14 @@ export function AnnotationPanel({
       setDocument(pending)
       setPending(null)
       setError('')
+      setNotice('Annotations imported locally.')
     } catch {
       setError('Unable to import annotations. Existing data was not changed.')
     }
   }
 
   function exportReport() {
+    setNotice('')
     if (!document || !caseData || !captureMap || compare) {
       setError(
         'A map and saved annotations are required; exit comparison before exporting the report.',
@@ -286,6 +293,7 @@ export function AnnotationPanel({
       const report = `# Analyst report — ${safeText(caseData.name)}\n\n${document.data_status === 'mock' || displayStatus === 'mock' ? '**MOCK — synthetic data; not scientific validation.**\n\n' : ''}Radar changes do not confirm burned area. Verdicts are analyst judgement, not validated classifications.\n\n## Map\n\nPrimary map canvas; selection markers and overlays are not included.\n\n![Primary map](${image})\n\n## Annotations\n\n| Target | Analyst judgement | Author | Note | Evidence |\n| --- | --- | --- | --- | --- |\n${entries}\n\n## Method\n\n${safeText(caseData.method.name)} — ${safeText(caseData.method.description)}\n\n## Sources\n\n${sources}\n\n## Official fire perimeter\n\n${safeText(reference.source)} — ${safeText(reference.datetime)}\n\n${safeText(reference.note)}\n`
       download('firetrace-report.md', report, 'text/markdown;charset=utf-8')
       setError('')
+      setNotice('Report download requested.')
     } catch {
       setError(
         'Unable to capture the map or export the report. Existing data was not changed.',
@@ -309,6 +317,11 @@ export function AnnotationPanel({
         <p>MOCK — synthetic evidence, not scientific validation.</p>
       )}
       {error && <p role="alert">{error}</p>}
+      {notice && (
+        <p role="status" className="action-notice">
+          {notice}
+        </p>
+      )}
       {zoneId && zoneQuery.isPending && (
         <p role="status">Loading zone geometry…</p>
       )}
@@ -421,6 +434,7 @@ export function AnnotationPanel({
         disabled={!document}
         onClick={() => {
           if (!document) return
+          setNotice('')
           try {
             download(
               'firetrace-annotations.geojson',
@@ -432,6 +446,7 @@ export function AnnotationPanel({
               'application/geo+json',
             )
             setError('')
+            setNotice('GeoJSON download requested.')
           } catch {
             setError('Unable to export annotations.')
           }

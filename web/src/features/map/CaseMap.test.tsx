@@ -26,6 +26,7 @@ const map = vi.hoisted(() => ({
   markerSet: vi.fn(),
   markerAdd: vi.fn(),
   markerRemove: vi.fn(),
+  markerOptions: vi.fn(),
   off: vi.fn(),
   project: vi.fn(() => ({ x: 10, y: 20 })),
 }))
@@ -50,6 +51,9 @@ vi.mock('maplibre-gl', () => ({
     project = map.project
   },
   Marker: class {
+    constructor(options?: unknown) {
+      map.markerOptions(options)
+    }
     setLngLat(point: unknown) {
       map.markerSet(point)
       return this
@@ -61,6 +65,8 @@ vi.mock('maplibre-gl', () => ({
     remove = map.markerRemove
   },
   NavigationControl: class {},
+  ScaleControl: class {},
+  getBearing: () => 0,
   setWorkerUrl: map.setWorkerUrl,
 }))
 
@@ -266,6 +272,7 @@ describe('case map', () => {
       'firetrace-slope',
       'firetrace-optical_during',
       'firetrace-optical_after',
+      'firetrace-perimeter-casing',
       'firetrace-perimeter',
     ])
     act(() => {
@@ -327,6 +334,9 @@ describe('case map', () => {
     const onError = map.on.mock.calls.find(([event]) => event === 'error')?.[1]
     act(() => onError({ error: new Error('missing image') }))
     expect(screen.getByRole('alert').textContent).toMatch(/could not load/i)
+    expect(screen.getByRole('alert').classList.contains('data-error')).toBe(
+      true,
+    )
   })
 
   it('preserves intentionally hidden layers when the map remounts', () => {

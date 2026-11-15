@@ -27,6 +27,7 @@ const mocks = vi.hoisted(() => {
 vi.mock('maplibre-gl', () => ({
   setWorkerUrl: vi.fn(),
   NavigationControl: class {},
+  ScaleControl: class {},
   Marker: class {
     entry = { point: null as unknown, map: null as unknown, removed: false }
     constructor() {
