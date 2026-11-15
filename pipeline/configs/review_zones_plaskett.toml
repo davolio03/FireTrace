@@ -1,0 +1,18 @@
+# XP-04 review zones (P1, EV-04 data) for the Plaskett Fire case.
+# Run from the repository root, after XP-01 (pipeline.highlight) and DT-05 (pipeline.terrain):
+#   uv run python -m pipeline.review_zones --config pipeline/configs/review_zones_plaskett.toml
+# Parameters were fixed a priori with David on 2026-11-15 and must not be tuned on the data.
+# The change threshold, smoothing window and connectivity are read from highlight_meta.json,
+# so CO/CI zones use exactly the XP-01 mask. Relative paths resolve against the cwd.
+
+no_change_threshold = 0.0    # NI: smoothed robust z-score <= 0 inside the perimeter
+min_area_ha = 5.0            # zones under 5 ha (500 px) are not listed, for every kind
+max_zones_per_kind = 10      # at most 10 zones per kind, ranked by area
+simplify_tolerance_m = 5.0   # half a pixel; topology preserved, holes kept
+
+change_dir = "data/interim/change"
+sar_dir = "data/interim/sar"
+perimeter_dir = "data/interim/perimeter"
+terrain_dir = "data/interim/terrain"
+highlight_dir = "data/interim/highlight"
+output_dir = "data/interim/review_zones"

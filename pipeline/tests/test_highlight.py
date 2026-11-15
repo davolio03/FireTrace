@@ -570,3 +570,17 @@ def test_recorded_input_hash_is_of_the_bytes_that_were_parsed(
     monkeypatch.undo()
     meta = _read_json(config.output_dir / "highlight_meta.json")
     assert meta["inputs"]["perimeter.json"] == hashlib.sha256(parsed).hexdigest()
+
+
+def test_huge_integer_threshold_is_a_config_error(tmp_path: Path) -> None:
+    path = _write_config(tmp_path / "h.toml", threshold=None)
+    text = path.read_text(encoding="utf-8") + f"threshold = 1{'0' * 400}" + chr(10)
+    path.write_text(text, encoding="utf-8")
+    with pytest.raises(HighlightError, match="threshold"):
+        load_config(path, base_dir=tmp_path)
+
+
+@pytest.mark.parametrize("window", [10**30 + 1, 101])
+def test_oversized_smoothing_window_is_a_config_error(tmp_path: Path, window: int) -> None:
+    with pytest.raises(HighlightError, match="smoothing_window"):
+        load_config(_write_config(tmp_path / "h.toml", smoothing_window=window), base_dir=tmp_path)
