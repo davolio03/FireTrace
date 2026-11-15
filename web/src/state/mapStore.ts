@@ -80,7 +80,25 @@ export function isInitialCamera(camera: Camera) {
   )
 }
 
+function prefersReducedMotion() {
+  return (
+    typeof window !== 'undefined' &&
+    window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true
+  )
+}
+
+const easeInOutCubic = (t: number) =>
+  t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2
+
+const clamp01 = (value: number) => Math.min(1, Math.max(0, value))
+
 export function createMapStore() {
+  // At most one swipe animation runs per store; any new swipe change cancels it.
+  let compareFrame: number | null = null
+  const cancelCompareAnimation = () => {
+    if (compareFrame !== null) cancelAnimationFrame(compareFrame)
+    compareFrame = null
+  }
   return createStore<MapStore>()((set, get) => ({
     camera: { center: [...initialCamera.center], zoom: initialCamera.zoom },
     cameraDurationMs: 0,
@@ -103,11 +121,42 @@ export function createMapStore() {
       })),
     setOpacity: (id, value) =>
       set((state) => ({ opacity: { ...state.opacity, [id]: value } })),
-    setCompare: (compare) => set({ compare }),
-    animateCompare: (position) =>
-      set((state) => ({
-        compare: state.compare ? { ...state.compare, position } : null,
-      })),
+    setCompare: (compare) => {
+      cancelCompareAnimation()
+      set({ compare })
+    },
+    animateCompare: (to, ms) => {
+      cancelCompareAnimation()
+      const start = get().compare
+      if (!start) return
+      const target = clamp01(to)
+      if (
+        ms <= 0 ||
+        prefersReducedMotion() ||
+        typeof requestAnimationFrame !== 'function'
+      ) {
+        set({ compare: { ...start, position: target } })
+        return
+      }
+      const from = start.position
+      const startedAt = performance.now()
+      const step = (now: number) => {
+        const current = get().compare
+        if (!current) {
+          compareFrame = null
+          return
+        }
+        const progress = clamp01((now - startedAt) / ms)
+        set({
+          compare: {
+            ...current,
+            position: from + (target - from) * easeInOutCubic(progress),
+          },
+        })
+        compareFrame = progress < 1 ? requestAnimationFrame(step) : null
+      }
+      compareFrame = requestAnimationFrame(step)
+    },
     select: (selection) =>
       set({ selection, panel: panelForSelection[selection.type] }),
     setPanel: (panel) => set({ panel }),
