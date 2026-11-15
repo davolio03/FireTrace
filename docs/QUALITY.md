@@ -58,6 +58,8 @@ The DT-07 stage adds optical context from public Sentinel-2 L2A scenes: `uv run 
 
 The DT-04 stage exports the web bundle: `uv run python -m pipeline.export --config pipeline/configs/case_plaskett.toml`. It verifies every upstream manifest and checksum, merges the DT-05 terrain layers and copies the DT-06 `weather.json` only when those stages have been run, and writes `data/processed/web/`, which must pass `uv run contracts/tools/validate.py data/processed/web`. Set `SOURCE_DATE_EPOCH` for a byte-identical rerun; see [web-export](methods/web-export.md).
 
+The EV-02 caveat rules are a pure module, `api/caveats.py`, with no endpoint and no data dependency: `uv run pytest api/tests/test_caveats.py` covers every threshold boundary and validates the output against the inspect-point `caveats` schema; see [caveats](methods/caveats.md).
+
 `npm run dev` within `web/` starts the web scaffold. `uv run python -m pipeline.run --all` and `uv run uvicorn api.main:app --reload` remain planned processing/start targets, **not working commands in this checkout**.
 
 Cover deterministic numerical rules and realistic failure paths with small synthetic rasters. Application integration must verify actual lookup/display alignment, no-data, coverage arithmetic, provenance and mock-to-real switching. Real science requires separate reproducible sample evidence and an agreed method/domain; schema-valid mocks are not that evidence.
