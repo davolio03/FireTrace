@@ -55,11 +55,11 @@ def case(tmp_path: Path):
         config.write_text(
             f"""
 case_id = "test-case"
-output_dir = "{values["output_dir"]}"
+output_dir = {json.dumps(str(values["output_dir"]))}
 
 [[dem]]
-raw = "{dem}"
-sha256 = "{values["sha256"]}"
+raw = {json.dumps(str(dem))}
+sha256 = {json.dumps(str(values["sha256"]))}
 product_id = "synthetic"
 url = "https://example.org/dem.tif"
 

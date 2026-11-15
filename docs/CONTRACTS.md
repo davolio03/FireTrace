@@ -33,6 +33,7 @@ The real web output mirrors `contracts/fixtures/web/` under `data/processed/web/
 | Analysis | Point sampling on the 10 m EPSG:32610 grid; return sampled row/column, projected position and WGS84 center. |
 | Display | PNGs warped/resampled to EPSG:3857; transparency means invalid/no-data. Corners are WGS84 `[lon, lat]` in top-left, top-right, bottom-right, bottom-left order. |
 | Point query | `/api/inspect/point?lon=...&lat=...` uses WGS84. Out-of-AOI remains 200 with `valid=false`, `pixel=null`; malformed/out-of-range parameters use 422. |
+| Transect query | `POST /api/inspect/profile` samples the 10 m analysis grid at `spacing_m` (default 10 m) along a WGS84 `[lon, lat]` polyline, includes the final endpoint once and caps the response at 2,000 samples (`truncated`). Masked or out-of-grid positions stay in `samples` with null values; `perimeter_crossings_m` marks inside/outside changes on the operational perimeter. Invalid bodies use 422; unavailable or incompatible products use 503. |
 | Coverage | Invalid pixels excluded; valid/total domain, area units and denominator must be documented, not assumed from a fixture. |
 | P1 | `highlight=null` when disabled; inspection `highlighted=null`. Hide optional widgets. Flagged area/IoU are reference agreement, not validated burned area/severity. |
 
