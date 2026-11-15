@@ -10,8 +10,12 @@ import { useReviewZones } from './useReviewZones'
 
 const sections: { title: string; kinds: ZoneKind[] }[] = [
   {
+    title: 'Change outside the perimeter',
+    kinds: ['change_outside_perimeter'],
+  },
+  {
     title: 'Discrepancies to investigate',
-    kinds: ['change_outside_perimeter', 'no_change_inside_perimeter'],
+    kinds: ['no_change_inside_perimeter'],
   },
   { title: 'Agreement examples', kinds: ['change_inside_perimeter'] },
 ]

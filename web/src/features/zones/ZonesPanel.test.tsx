@@ -53,7 +53,11 @@ describe('zones panel', () => {
     expect(await screen.findByText('CO-01', { exact: false })).toBeTruthy()
     expect(
       screen.getAllByRole('heading', { level: 3 }).map((h) => h.textContent),
-    ).toEqual(['Discrepancies to investigate', 'Agreement examples'])
+    ).toEqual([
+      'Change outside the perimeter',
+      'Discrepancies to investigate',
+      'Agreement examples',
+    ])
     const kinds = screen
       .getAllByRole('heading', { level: 4 })
       .map((h) => h.textContent ?? '')
@@ -83,6 +87,24 @@ describe('zones panel', () => {
     expect(
       within(section).getByRole('heading', { level: 4 }).textContent,
     ).toMatch(/little/i)
+  })
+
+  it('keeps the CO group with its empty state when no CO zones exist', async () => {
+    show({
+      ...data,
+      features: data.features.filter(
+        (f) => f.properties.kind !== 'change_outside_perimeter',
+      ),
+    })
+    const empty = await screen.findByText('No zones of this kind ≥ 15 ha')
+    const group = empty.closest('div')!
+    expect(within(group).getByRole('heading', { level: 3 }).textContent).toBe(
+      'Change outside the perimeter',
+    )
+    expect(
+      within(empty.closest('section')!).getByRole('heading', { level: 4 })
+        .textContent,
+    ).toMatch(/outside/i)
   })
 
   it('selects a zone and flies to its bbox on click', async () => {
