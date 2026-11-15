@@ -325,7 +325,11 @@ describe('case map', () => {
       mapStore.getState().flyTo({ center: [-121.4, 35.9], zoom: 12 }, 1000),
     )
     expect(map.flyTo).toHaveBeenCalledWith(
-      expect.objectContaining({ center: [-121.4, 35.9], zoom: 12, duration: 1000 }),
+      expect.objectContaining({
+        center: [-121.4, 35.9],
+        zoom: 12,
+        duration: 1000,
+      }),
     )
     act(() => mapStore.getState().select({ type: 'zone', zoneId: 'CO-01' }))
     expect(map.setFilter).toHaveBeenLastCalledWith(
