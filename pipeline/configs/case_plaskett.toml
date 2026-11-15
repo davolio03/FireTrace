@@ -2,8 +2,8 @@
 # Run from the repository root:
 #   uv run python -m pipeline.export --config pipeline/configs/case_plaskett.toml
 # Relative paths resolve against the current working directory. Every input is verified
-# against its upstream manifest; terrain_dir and weather_dir are optional and are merged
-# only when their manifest (terrain.json / weather_meta.json) exists.
+# against its upstream manifest; terrain_dir, optical_dir and weather_dir are optional and
+# are merged only when their manifest (terrain.json / optical.json / weather_meta.json) exists.
 # Case identity fields below are not produced by any pipeline stage: name, location and
 # fire_start come from docs/PRODUCT.md and the CAL FIRE incident page.
 
@@ -19,6 +19,7 @@ perimeter_dir = "data/interim/perimeter"
 stats_dir = "data/interim/stats"
 terrain_dir = "data/interim/terrain"
 weather_dir = "data/interim/weather"
+optical_dir = "data/interim/optical"
 output_dir = "data/processed/web"
 
 [[sources]]

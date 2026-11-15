@@ -56,6 +56,7 @@ RESAMPLING = "nearest"
 SAR_NAMES: tuple[str, ...] = ("t1_hh", "t2_hh", "t1_hv", "t2_hv")
 CHANGE_NAMES: tuple[str, ...] = ("change_hh_db", "change_hv_db", "change_index")
 TERRAIN_IDS: tuple[str, ...] = ("hillshade", "slope")
+OPTICAL_IDS: tuple[str, ...] = ("optical_during", "optical_after")
 RASTER_IDS: tuple[str, ...] = (
     "sar_t1_hh",
     "sar_t2_hh",
@@ -69,7 +70,9 @@ RASTER_IDS: tuple[str, ...] = (
 TOP_FILES: frozenset[str] = frozenset(
     {"case.json", "layers.json", "stats.json", "perimeter.geojson", "weather.json", "export.json"}
 )
-LAYER_FILES: frozenset[str] = frozenset(f"{lid}.png" for lid in (*RASTER_IDS, *TERRAIN_IDS))
+LAYER_FILES: frozenset[str] = frozenset(
+    f"{lid}.png" for lid in (*RASTER_IDS, *TERRAIN_IDS, *OPTICAL_IDS)
+)
 LAYER_SUBDIRS: dict[str, frozenset[str]] = {"layers": LAYER_FILES}
 
 GREY = ("#000000", "#ffffff")
@@ -123,9 +126,10 @@ class ExportConfig:
     terrain_dir: Path
     weather_dir: Path
     output_dir: Path
+    optical_dir: Path | None = None  # DT-07; optional, merged only when its manifest exists
 
     def input_dirs(self) -> list[Path]:
-        return [
+        dirs = [
             self.ingest_dir,
             self.sar_dir,
             self.change_dir,
@@ -134,6 +138,7 @@ class ExportConfig:
             self.terrain_dir,
             self.weather_dir,
         ]
+        return dirs if self.optical_dir is None else [*dirs, self.optical_dir]
 
 
 def _require_str(table: Mapping[str, Any], key: str) -> str:
@@ -190,6 +195,7 @@ def load_config(path: Path, base_dir: Path | None = None) -> ExportConfig:
         terrain_dir=resolve("terrain_dir"),
         weather_dir=resolve("weather_dir"),
         output_dir=resolve("output_dir"),
+        optical_dir=resolve("optical_dir") if "optical_dir" in raw else None,
     )
 
 
@@ -540,6 +546,40 @@ def load_terrain(config: ExportConfig, ingest_sha: str, crop: Mapping[str, Any])
     )
 
 
+def load_optical(config: ExportConfig, ingest_sha: str, crop: Mapping[str, Any]) -> Terrain | None:
+    """DT-07 optical context layers, or None when the optical stage has not been run."""
+    if config.optical_dir is None or not config.optical_dir.exists():
+        return None
+    doc, sha = _manifest(config.optical_dir / "optical.json")
+    _version(doc, "optical_format_version", "optical.json")
+    _chain(
+        _get(doc, ("ingest", "sha256"), "optical.json"), ingest_sha, "optical.json", "ingest.json"
+    )
+    _same_grid(doc.get("grid"), crop, "optical.json")
+    payloads: dict[str, bytes] = {}
+    for name in ("optical_layers.json", *(f"{lid}.png" for lid in OPTICAL_IDS)):
+        file, file_sha = _record(doc, ("outputs", name), "optical.json")
+        payloads[name] = _verified(config.optical_dir / file, file_sha, "optical.json")
+    fragment = _parse(payloads.pop("optical_layers.json"), "optical_layers.json")
+    _real(fragment, "optical_layers.json")
+    layers = fragment.get("layers")
+    if not isinstance(layers, list) or [lyr.get("id") for lyr in layers] != list(OPTICAL_IDS):
+        raise ExportError(f"optical_layers.json: layers must be exactly {list(OPTICAL_IDS)}")
+    for layer in layers:
+        lid = layer["id"]
+        if layer.get("group") != "optical_context" or not isinstance(layer.get("source"), dict):
+            raise ExportError(
+                f"optical_layers.json: {lid} needs group 'optical_context' and a source"
+            )
+        if layer.get("url") != f"layers/{lid}.png":
+            raise ExportError(f"optical_layers.json: {lid} url must be layers/{lid}.png")
+        if not isinstance(layer.get("acquired"), str):
+            raise ExportError(f"optical_layers.json: {lid} needs its acquisition time")
+    return Terrain(
+        layers=layers, pngs={lid: payloads[f"{lid}.png"] for lid in OPTICAL_IDS}, sha=sha
+    )
+
+
 def load_weather(config: ExportConfig, ingest_sha: str) -> tuple[bytes, str] | None:
     """DT-06 ``weather.json`` bytes and manifest sha, or None when not built."""
     if not config.weather_dir.exists():
@@ -814,6 +854,7 @@ def run_export(config: ExportConfig, environ: Mapping[str, str] | None = None) -
     check_output_dir(config.output_dir)
     inputs = load_inputs(config)
     terrain = load_terrain(config, inputs.shas["ingest.json"], inputs.crop)
+    optical = load_optical(config, inputs.shas["ingest.json"], inputs.crop)
     weather = load_weather(config, inputs.shas["ingest.json"])
 
     staging, _ = staging_dirs(config.output_dir)
@@ -821,19 +862,20 @@ def run_export(config: ExportConfig, environ: Mapping[str, str] | None = None) -
         publishing.remove_owned(staging, TOP_FILES, LAYER_SUBDIRS)
         (staging / "layers").mkdir(parents=True)
         layers, grid, domains = _render(staging, inputs)
-        if terrain is not None:
-            for layer in terrain.layers:
+        for extra, fragment_name in (
+            (terrain, "terrain_layers.json"),
+            (optical, "optical_layers.json"),
+        ):
+            if extra is None:
+                continue
+            for layer in extra.layers:
                 lid = layer["id"]
                 if layer.get("coordinates") != grid.coordinates:
-                    raise ExportError(
-                        f"terrain_layers.json: {lid} corners differ from the SAR layers"
-                    )
+                    raise ExportError(f"{fragment_name}: {lid} corners differ from the SAR layers")
                 if (layer.get("width_px"), layer.get("height_px")) != (grid.width, grid.height):
-                    raise ExportError(
-                        f"terrain_layers.json: {lid} size differs from the SAR layers"
-                    )
-                (staging / "layers" / f"{lid}.png").write_bytes(terrain.pngs[lid])
-            layers += terrain.layers
+                    raise ExportError(f"{fragment_name}: {lid} size differs from the SAR layers")
+                (staging / "layers" / f"{lid}.png").write_bytes(extra.pngs[lid])
+            layers += extra.layers
         layers.append(_perimeter_layer(_get(inputs.perimeter, ("reference",), "perimeter.json")))
         _write_json(
             staging / "layers.json",
@@ -845,6 +887,8 @@ def run_export(config: ExportConfig, environ: Mapping[str, str] | None = None) -
         input_shas = dict(inputs.shas)
         if terrain is not None:
             input_shas["terrain.json"] = terrain.sha
+        if optical is not None:
+            input_shas["optical.json"] = optical.sha
         if weather is not None:
             (staging / "weather.json").write_bytes(weather[0])
             input_shas["weather_meta.json"] = weather[1]
@@ -859,7 +903,11 @@ def run_export(config: ExportConfig, environ: Mapping[str, str] | None = None) -
             "generated_at": stamp,
             "pipeline_version": version,
             "inputs": input_shas,
-            "optional": {"terrain": terrain is not None, "weather": weather is not None},
+            "optional": {
+                "terrain": terrain is not None,
+                "optical": optical is not None,
+                "weather": weather is not None,
+            },
             "display": {
                 "crs": "EPSG:3857",
                 "resampling": RESAMPLING,
