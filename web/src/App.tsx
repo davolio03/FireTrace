@@ -92,6 +92,8 @@ function AppContent() {
     setView('story')
     start(0)
   }
+  const canResume =
+    player.status === 'exploring' && player.index < player.count - 1
   const resumeStory = () => {
     setView('story')
     resume()
@@ -268,16 +270,9 @@ function AppContent() {
             >
               Back to overview
             </button>
-            {player.available && (
-              <button
-                type="button"
-                onClick={watchStory}
-                className="rounded border px-4 py-2 focus-visible:outline-2 focus-visible:outline-offset-2"
-              >
-                Play story
-              </button>
-            )}
-            {player.status === 'exploring' && (
+            {/* One story button: resume where the user left it mid-way,
+                otherwise (never started, or finished) play from the start. */}
+            {canResume ? (
               <button
                 type="button"
                 onClick={resumeStory}
@@ -285,6 +280,16 @@ function AppContent() {
               >
                 Resume story · {player.index + 1}/{player.count}
               </button>
+            ) : (
+              player.available && (
+                <button
+                  type="button"
+                  onClick={watchStory}
+                  className="rounded border px-4 py-2 focus-visible:outline-2 focus-visible:outline-offset-2"
+                >
+                  Play story
+                </button>
+              )
             )}
           </div>
           <div className="mt-6 overflow-hidden rounded-lg border border-slate-300">

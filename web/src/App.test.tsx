@@ -87,12 +87,22 @@ describe('application scaffold', () => {
     const camera = mapStore.getState().camera
     expect(camera.pitch).toBe(0)
     expect(camera.zoom).toBeGreaterThanOrEqual(10)
+    // Left mid-way: one button, to resume (no separate "Play story").
+    expect(screen.queryByRole('button', { name: /^play story$/i })).toBeNull()
     fireEvent.click(
       screen.getByRole('button', { name: /resume story · 1\/7/i }),
     )
     expect(screen.getByTestId('cinematic-map')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: /close the story/i }))
     expect(screen.getByRole('region', { name: /map of big sur/i })).toBeTruthy()
+    // Finished through the final call to action: nothing left to resume.
+    fireEvent.click(
+      screen.getByRole('button', { name: /resume story · 1\/7/i }),
+    )
+    fireEvent.click(screen.getByLabelText('Go to step 7'))
+    fireEvent.click(screen.getByText('Explore the evidence'))
+    expect(screen.queryByRole('button', { name: /resume story/i })).toBeNull()
+    expect(screen.getByRole('button', { name: /^play story$/i })).toBeTruthy()
   })
 
   it('hides the story when it was written for another case', async () => {
