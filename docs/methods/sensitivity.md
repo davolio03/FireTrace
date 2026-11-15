@@ -11,7 +11,7 @@ Producer: `pipeline/sensitivity.py`, configured by `pipeline/configs/sensitivity
 | A. Indices | `combined` = the CH-01 index. `hh`, `hv` = robust z-score of `|change|` per polarization: `(|Δ| − median) / (1.4826 × MAD)` over all valid crop pixels, the CH-01 rule applied to one polarization, so the three share a scale. Signed (decrease-only) variants are out of scope. |
 | B. Thresholds | 0.50 to 5.00 in steps of 0.25 (19 values), always including 2.0 |
 | C. Smoothing | Valid-only window mean of 1 (none), 3 and 5, each followed by the 1 ha (100 px, 8-connected) region filter |
-| D. Baselines | Per point, `iou_upper_bound = min(H, P) / max(H, P)` (perfect overlap for these two areas) and `iou_chance = I / (H + P − I)` with `I = H × P / N` (a same-area mask placed at random over the N valid pixels) |
+| D. Baselines | Per point, `iou_upper_bound = min(H, P) / max(H, P)` (perfect overlap for these two areas) and `iou_chance = I / (H + P − I)` with `I = H × P / N` (a ratio-of-expectations baseline for a same-area mask placed uniformly at random over the N valid pixels; a reference value, neither a lower bound nor the exact expected IoU) |
 | E. Outputs | JSON and CSV only; no plotting dependency. The curves are drawn in DL-02. |
 
 That gives 3 indices × 3 windows × 19 thresholds = 171 points. Each point reports area, inside/outside area, IoU, the two baselines, the share of the highlight inside the perimeter, the share of the perimeter covered, the region count and the IoU without the edge band. Every point uses `pipeline.highlight` functions, and the XP-01 point is checked to reproduce `highlight.json` exactly.
@@ -36,7 +36,7 @@ Window 3 (the XP-01 smoothing):
 How to read it:
 
 - **IoU is limited by the size of the highlight, not by misplaced pixels.** From threshold 1.0 upward the IoU of the combined and HV indices is within 0.004 of its upper bound (HH within 0.017), and across the grid the IoU is 2.2 to 3.2 times the chance baseline. Lowering the threshold raises the IoU only by highlighting more area, and below about 1.0 the area outside the perimeter grows quickly (511 ha at 0.5). The largest IoU in the grid (0.49, combined, window 5, threshold 0.5) comes with 503 ha outside the perimeter. That is why the XP-01 threshold was fixed a priori and not chosen from this table.
-- **HV carries most of the signal.** At the same threshold, HV alone highlights almost as much as the combined index, with the same near-perfect inside share. HH alone highlights much less, and at low thresholds much more of it falls outside (1,337 ha at 0.5). This is consistent with L-band cross-polarization responding to volume scattering from vegetation. It is an observation for this pair, not a general rule.
+- **The HV-only mask resembles the combined one; the HH-only mask does not.** Each polarization is normalized on its own, so these are separate masks, not a decomposition of the combined index. At the same threshold, the HV-only mask has an area and agreement close to the combined mask, with the same near-perfect inside share. The HH-only mask is much smaller at moderate thresholds, and at low thresholds much more of it falls outside (1,337 ha at 0.5). This sweep does not identify a scattering mechanism; a possible explanation to check against the literature is the sensitivity of L-band cross-polarization to vegetation volume. It is an observation for this pair, not a general rule.
 - **Smoothing changes little.** Windows 1, 3 and 5 give similar areas and IoU at each threshold. Smoothing mainly removes isolated pixels outside the perimeter (32.9 ha with no smoothing versus 13.7 ha at window 3, threshold 1.0).
 - **Edge band.** Removing the 50 m band never lowers the IoU and raises it by at most 0.011, so the result does not hinge on the perimeter edge.
 
@@ -45,5 +45,5 @@ Two identical runs produce byte-identical outputs.
 ## Limitations
 
 - One case and one image pair; nothing here sets a general threshold.
-- The reference perimeter predates the after scene and is an operational outline, not pixel-level ground truth. The chance baseline assumes a uniformly random placement, which ignores the spatial clustering of real change; it is a floor for orientation, not a significance test.
+- The reference perimeter predates the after scene and is an operational outline, not pixel-level ground truth. The chance baseline assumes a uniformly random placement, which ignores the spatial clustering of real change, and is a ratio of expectations: a random placement can score lower (even 0), so it is a reference value for orientation, not a lower bound or a significance test.
 - Moisture was not varied: the AOI was essentially dry between the acquisitions (DT-06). Terrain, geometry and vegetation can still raise or hide the index; see the EV-02 caveats.

@@ -16,8 +16,10 @@ Decisions (agreed with David, 2026-11-15):
   crop pixels, the CH-01 rule applied to each polarization on its own).
 - B: thresholds 0.50 to 5.00 in steps of 0.25, always including 2.0.
 - C: windows 1, 3 and 5, each followed by the region filter.
-- D: each point also reports the IoU upper bound ``min(H, P) / max(H, P)`` and the chance
-  baseline: the expected IoU of a same-area mask placed at random over the valid domain.
+- D: each point also reports the IoU upper bound ``min(H, P) / max(H, P)`` and a chance
+  baseline for a same-area mask placed uniformly at random over the valid domain. The
+  baseline is a ratio of expectations, ``I / (H + P - I)`` with ``I = H * P / N``: a
+  reference value for comparison, neither a lower bound nor the exact expected IoU.
 - E: no plotting dependency; outputs are JSON and CSV for DL-02.
 
 Run from the repository root::
@@ -66,6 +68,9 @@ from pipeline.stats import StatsError
 SENSITIVITY_FORMAT_VERSION = 1
 XP01_THRESHOLD = 2.0
 XP01_WINDOW = 3
+XP01_MIN_REGION_PX = 100
+XP01_CONNECTIVITY = 8
+MAX_THRESHOLDS = 1000
 INDEX_NAMES: tuple[str, ...] = ("combined", "hh", "hv")
 PIXEL_AREA_M2 = ANALYSIS_PIXEL_SIZE_M * ANALYSIS_PIXEL_SIZE_M
 OUTPUT_FILES: frozenset[str] = frozenset({"sensitivity.json", "sensitivity.csv"})
@@ -121,13 +126,23 @@ class SensitivityConfig:
 
 
 def threshold_grid(start: float, stop: float, step: float) -> list[float]:
-    """``start, start + step, ... <= stop``, rounded to 10 decimals; must contain 2.0."""
+    """``start, start + step, ... <= stop``, rounded to 10 decimals; must contain 2.0.
+
+    At most ``MAX_THRESHOLDS`` values, all distinct after rounding.
+    """
+    if not all(math.isfinite(v) for v in (start, stop, step)):
+        raise SensitivityError("threshold_min, threshold_max and threshold_step must be finite")
     if not step > 0:
         raise SensitivityError(f"threshold_step must be positive, got {step}")
     if not stop >= start:
         raise SensitivityError(f"threshold_max {stop} is below threshold_min {start}")
-    count = math.floor(round((stop - start) / step, 9)) + 1
+    ratio = (stop - start) / step
+    if not math.isfinite(ratio) or ratio >= MAX_THRESHOLDS:
+        raise SensitivityError(f"threshold grid has too many values (limit {MAX_THRESHOLDS})")
+    count = math.floor(round(ratio, 9)) + 1
     grid = [round(start + k * step, 10) + 0.0 for k in range(count)]
+    if len(set(grid)) != len(grid):
+        raise SensitivityError("threshold grid values are not distinct after rounding")
     if XP01_THRESHOLD not in grid:
         raise SensitivityError(
             f"the threshold grid must include the XP-01 threshold {XP01_THRESHOLD}"
@@ -149,10 +164,12 @@ def polarization_index(delta: np.ndarray, valid: np.ndarray) -> tuple[np.ndarray
 
 
 def chance_iou(highlighted_px: int, reference_px: int, domain_px: int) -> float:
-    """Expected IoU of ``highlighted_px`` pixels placed at random over ``domain_px`` pixels.
+    """Chance baseline for ``highlighted_px`` pixels placed uniformly over ``domain_px``.
 
-    The expected intersection with ``reference_px`` reference pixels is ``H * P / N``; the
-    ratio of expectations is used as the baseline (exact enough for large N).
+    The expected intersection with ``reference_px`` reference pixels is ``I = H * P / N``,
+    and the baseline is the ratio of expectations ``I / (H + P - I)`` (decision D). It is a
+    reference value for comparison: a random placement can score lower (even 0), and it is
+    not the exact expected IoU (for H = P = 1, N = 2 it gives 1/3; the expected IoU is 1/2).
     """
     if highlighted_px == 0:
         return 0.0
@@ -232,8 +249,8 @@ def load_config(path: Path, base_dir: Path | None = None) -> SensitivityConfig:
     if (
         not isinstance(windows, list)
         or not windows
-        or len(set(windows)) != len(windows)
         or not all(isinstance(w, int) and not isinstance(w, bool) for w in windows)
+        or len(set(windows)) != len(windows)
     ):
         raise SensitivityError(f"config: 'windows' must be distinct integers, got {windows!r}")
     if any(w < 1 or w % 2 == 0 for w in windows):
@@ -327,6 +344,11 @@ def run_sensitivity(config: SensitivityConfig) -> dict[str, Any]:
             "mad_scale": MAD_SCALE,
         }
 
+    # The XP-01 point exists only with the XP-01 region settings (1 ha, 8-connected).
+    has_xp01 = (config.min_region_px, config.connectivity) == (
+        XP01_MIN_REGION_PX,
+        XP01_CONNECTIVITY,
+    )
     points: list[dict[str, Any]] = []
     for name in INDEX_NAMES:
         for window in config.windows:
@@ -338,7 +360,7 @@ def run_sensitivity(config: SensitivityConfig) -> dict[str, Any]:
                         smoothed, threshold, inputs, config.min_region_px, config.connectivity
                     )
                 )
-                point["xp01_operating_point"] = (name, window, threshold) == (
+                point["xp01_operating_point"] = has_xp01 and (name, window, threshold) == (
                     "combined",
                     XP01_WINDOW,
                     XP01_THRESHOLD,
@@ -357,7 +379,11 @@ def run_sensitivity(config: SensitivityConfig) -> dict[str, Any]:
                 "index": "combined",
                 "window": XP01_WINDOW,
                 "threshold": XP01_THRESHOLD,
-            },
+                "min_region_px": XP01_MIN_REGION_PX,
+                "connectivity": XP01_CONNECTIVITY,
+            }
+            if has_xp01
+            else None,
         },
         "indices": normalization,
         "rules": {
@@ -366,8 +392,9 @@ def run_sensitivity(config: SensitivityConfig) -> dict[str, Any]:
             "domain": "valid pixels only; unavailable pixels never count as negatives; DT-03 "
             "50 m edge band and open water included (iou_without_edge_band removes the band)",
             "iou_upper_bound": "min(H, P) / max(H, P): best IoU two areas of these sizes reach",
-            "iou_chance": "I / (H + P - I) with I = H * P / N: same-area mask placed at random "
-            "over the N valid pixels",
+            "iou_chance": "I / (H + P - I) with I = H * P / N: ratio-of-expectations baseline "
+            "for a same-area mask placed uniformly at random over the N valid pixels; a "
+            "reference value, neither a lower bound nor the exact expected IoU",
             "interpretation": "Describes sensitivity; does not choose a threshold. IoU is "
             "agreement with the WFIGS perimeter dated 2026-09-14 (before the after scene), "
             "not accuracy; highlighted change is not burned area.",
@@ -425,11 +452,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     except SensitivityError as exc:
         print(f"sensitivity error: {exc}", file=sys.stderr)
         return 2
-    op = next(p for p in doc["points"] if p["xp01_operating_point"])
-    print(
-        f"sensitivity ok: {len(doc['points'])} points; XP-01 point area {op['area_ha']:.2f} ha, "
-        f"IoU {op['iou']:.3f} (chance {op['iou_chance']:.3f}, bound {op['iou_upper_bound']:.3f})"
-    )
+    op = next((p for p in doc["points"] if p["xp01_operating_point"]), None)
+    if op is None:
+        summary = "XP-01 point not in this sweep (different region settings)"
+    else:
+        summary = (
+            f"XP-01 point area {op['area_ha']:.2f} ha, IoU {op['iou']:.3f} "
+            f"(chance {op['iou_chance']:.3f}, bound {op['iou_upper_bound']:.3f})"
+        )
+    print(f"sensitivity ok: {len(doc['points'])} points; {summary}")
     return 0
 
 

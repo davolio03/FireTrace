@@ -166,13 +166,16 @@ def test_sweep_has_every_point_once(tmp_path: Path) -> None:
     assert {p["index"] for p in points} == {"combined", "hh", "hv"}
 
 
-def test_xp01_operating_point_matches_the_highlight_stage(tmp_path: Path) -> None:
+def test_combined_window3_threshold2_matches_the_highlight_stage(tmp_path: Path) -> None:
+    # Same rules as XP-01 with the same region settings -> identical numbers. (The tiny grid
+    # needs a 2 px region filter, so this point is not marked as the XP-01 operating point.)
     config = config_for(tmp_path)
     doc = run_sensitivity(config)
-    marked = [p for p in doc["points"] if p["xp01_operating_point"]]
-    assert len(marked) == 1
-    point = marked[0]
-    assert (point["index"], point["window"], point["threshold"]) == ("combined", 3, 2.0)
+    point = next(
+        p
+        for p in doc["points"]
+        if (p["index"], p["window"], p["threshold"]) == ("combined", 3, 2.0)
+    )
     block = run_highlight(
         HighlightConfig(
             params=HighlightParams(2.0, 3, config.min_region_px, config.connectivity),
@@ -376,3 +379,76 @@ def test_cli_exit_codes(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> N
     (dirs["change"] / "change.json").write_bytes(b"\xff")
     assert main(["--config", str(path)]) == 2
     assert "sensitivity error" in capsys.readouterr().err
+
+
+# --------------------------------------------------------------------------- review fixes
+
+
+def test_marker_requires_the_xp01_region_settings(tmp_path: Path) -> None:
+    config = config_for(tmp_path)  # min_region_px = 2: not the XP-01 1 ha filter
+    doc = run_sensitivity(config)
+    assert not any(p["xp01_operating_point"] for p in doc["points"])
+    assert doc["parameters"]["xp01_operating_point"] is None
+    from dataclasses import replace
+
+    xp01 = replace(config, min_region_px=100, output_dir=tmp_path / "xp01")
+    doc = run_sensitivity(xp01)
+    marked = [p for p in doc["points"] if p["xp01_operating_point"]]
+    assert [(p["index"], p["window"], p["threshold"]) for p in marked] == [("combined", 3, 2.0)]
+    assert doc["parameters"]["xp01_operating_point"] == {
+        "index": "combined",
+        "window": 3,
+        "threshold": 2.0,
+        "min_region_px": 100,
+        "connectivity": 8,
+    }
+
+
+def test_cli_without_the_xp01_point_still_succeeds(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    dirs = write_inputs(tmp_path)
+    path = _write_config(
+        tmp_path / "s.toml",
+        min_region_px=2,
+        connectivity=4,
+        change_dir=str(dirs["change"]),
+        sar_dir=str(dirs["sar"]),
+        perimeter_dir=str(dirs["perimeter"]),
+        output_dir=str(tmp_path / "out"),
+    )
+    assert main(["--config", str(path)]) == 0
+    assert "XP-01 point not in this sweep" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("windows", ["[[3]]", '["3"]', "[3.0]", "[true, 3]"])
+def test_malformed_windows_are_a_clean_cli_error(
+    tmp_path: Path, windows: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = _write_config(tmp_path / "s.toml", windows=None)
+    text = path.read_text(encoding="utf-8") + f"windows = {windows}" + chr(10)
+    path.write_text(text, encoding="utf-8")
+    assert main(["--config", str(path)]) == 2
+    assert "windows" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("start", "stop", "step", "message"),
+    [
+        (0.5, 5.0, 1e-320, "too many"),
+        (2.0, 2.00000000002, 1e-11, "distinct"),
+        (0.5, 5.0, float("inf"), "threshold_step"),
+    ],
+    ids=["tiny_step", "collapsed", "infinite"],
+)
+def test_impractical_threshold_grids_are_rejected(
+    start: float, stop: float, step: float, message: str
+) -> None:
+    with pytest.raises(SensitivityError, match=message):
+        threshold_grid(start, stop, step)
+
+
+def test_chance_baseline_is_a_ratio_of_expectations_not_the_expected_iou() -> None:
+    # H = P = 1 of N = 2: the expected IoU is 1/2 (overlap 1 half the time, else 0), but the
+    # agreed ratio-of-expectations baseline is I / (H + P - I) with I = 1/2 -> 1/3.
+    assert chance_iou(1, 1, 2) == pytest.approx(1 / 3)
