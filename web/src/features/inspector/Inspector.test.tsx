@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import {
   act,
@@ -173,5 +175,42 @@ describe('point inspector', () => {
     await act(async () => resolveFirst({ ok: true, json: async () => inside }))
     expect(screen.getByText('-42')).toBeTruthy()
     expect(screen.queryByText('-11.61')).toBeNull()
+  })
+
+  it('shows zone evidence from the review zones file', async () => {
+    const zones: unknown = JSON.parse(
+      readFileSync(
+        resolve(
+          __dirname,
+          '../../../../contracts/fixtures/web/review_zones.geojson',
+        ),
+        'utf8',
+      ),
+    )
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({ ok: true, json: async () => zones }),
+    )
+    renderInspector()
+    act(() => mapStore.getState().select({ type: 'zone', zoneId: 'CO-01' }))
+    expect(await screen.findByText(/Zone evidence: CO-01/)).toBeTruthy()
+    expect(await screen.findByText('-11.8 dB')).toBeTruthy()
+    expect(screen.getByText('Steep slope: 12%')).toBeTruthy()
+    expect(screen.getByText(/to investigate, not errors/)).toBeTruthy()
+    expect(screen.getByText('Change index: median 3.91, P90 5.25')).toBeTruthy()
+    expect(screen.getByText('Distance to perimeter: 3182 m')).toBeTruthy()
+    for (const [id, text] of [
+      [
+        'NI-01',
+        /Little radar change inside the reference perimeter; discrepancy to investigate, not an error/,
+      ],
+      [
+        'CI-01',
+        /Radar change inside the reference perimeter; agreement example/,
+      ],
+    ] as const) {
+      act(() => mapStore.getState().select({ type: 'zone', zoneId: id }))
+      expect(await screen.findByText(text)).toBeTruthy()
+    }
   })
 })

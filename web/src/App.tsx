@@ -12,6 +12,7 @@ import { loadCaseData } from './data/caseData'
 import { CaseMap } from './features/map/CaseMap'
 import { LocationMap } from './features/map/LocationMap'
 import { Inspector } from './features/inspector/Inspector'
+import { ZonesPanel } from './features/zones/ZonesPanel'
 import { MetricsPanel } from './features/metrics/MetricsPanel'
 import { WeatherPanel } from './features/weather/WeatherPanel'
 import { ProfilePanel } from './features/profile/ProfilePanel'
@@ -298,14 +299,17 @@ function AppContent() {
               )
             )}
           </div>
-          <div className="mt-6 overflow-hidden rounded-lg border border-slate-300">
-            <CaseMap
-              layers={layers}
-              dates={dates}
-              dataBaseUrl={import.meta.env.VITE_DATA_BASE_URL || '/'}
-              profileSample={profileSample}
-              onCaptureReady={setCapture}
-            />
+          <div className="mt-6 grid gap-4">
+            <div className="overflow-hidden rounded-lg border border-slate-300">
+              <CaseMap
+                layers={layers}
+                dates={dates}
+                dataBaseUrl={import.meta.env.VITE_DATA_BASE_URL || '/'}
+                profileSample={profileSample}
+                onCaptureReady={setCapture}
+              />
+            </div>
+            <ZonesPanel />
           </div>
           <Inspector caseData={caseData} />
           <ProfilePanel onSample={setProfileSample} />
