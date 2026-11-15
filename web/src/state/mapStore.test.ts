@@ -1,13 +1,20 @@
 import { describe, expect, it, vi } from 'vitest'
 import storyFixture from '../../../contracts/fixtures/web/story.json'
-import { createMapStore, type StoryStep } from './mapStore'
+import { createMapStore, isInitialCamera, type StoryStep } from './mapStore'
 
 describe('shared map state', () => {
-  it('stores camera updates without controlling MapLibre', () => {
+  it('stores camera updates and their animation duration for the map', () => {
     const store = createMapStore()
+    expect(isInitialCamera(store.getState().camera)).toBe(true)
     const camera = { center: [-121.4, 35.9] as [number, number], zoom: 12 }
     store.getState().flyTo(camera, 500)
     expect(store.getState().camera).toEqual(camera)
+    expect(store.getState().cameraDurationMs).toBe(500)
+    expect(isInitialCamera(store.getState().camera)).toBe(false)
+    store.getState().flyTo(camera)
+    expect(store.getState().cameraDurationMs).toBe(0)
+    store.getState().flyTo(camera, -20)
+    expect(store.getState().cameraDurationMs).toBe(0)
   })
 
   it('sets and toggles visible layers without duplicates and stores opacity', () => {
