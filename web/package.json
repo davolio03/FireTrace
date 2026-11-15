@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "preview": "vite preview",
     "generate:types": "openapi-typescript ../contracts/openapi.yaml -o src/generated/api.ts && prettier --write src/generated/api.ts",
     "build": "tsc -b && vite build",
     "lint": "eslint . && prettier --check .",

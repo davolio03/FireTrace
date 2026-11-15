@@ -66,7 +66,9 @@ The DT-04 stage exports the web bundle: `uv run python -m pipeline.export --conf
 
 The EV-02 caveat rules are a pure module, `api/caveats.py`, with no endpoint and no data dependency: `uv run pytest api/tests/test_caveats.py` covers every threshold boundary and validates the output against the inspect-point `caveats` schema; see [caveats](methods/caveats.md).
 
-`npm run dev` within `web/` starts the web. `uv run python -m pipeline.run --all` and `uv run uvicorn api.main:app --reload` remain planned processing/start targets, **not working commands in this checkout**: there is no single pipeline runner, and no ASGI server is a declared dependency yet (IN-02, DL-01).
+Real inspection checks are opt-in: `FIRETRACE_DATA_ROOT=<data-dir> uv run pytest api/tests/test_real_data.py -q` compares the API responses with the verified COGs and manifests. The module skips when the variable is absent, so CI and offline checkouts never read real products; a pass is integration evidence, not scientific validation.
+
+`npm run dev` within `web/` starts the web. `uv run uvicorn api.main:app --host 127.0.0.1 --port 8000` serves the API from the verified local bundle, and `web/README.md` documents the dev/preview proxy plus static-server recipe for real-API mode. `uv run python -m pipeline.run --all` remains a planned orchestration target, **not a working command in this checkout**: there is no single pipeline runner.
 
 Cover deterministic numerical rules and realistic failure paths with small synthetic rasters. Application integration must verify actual lookup/display alignment, no-data, coverage arithmetic, provenance and mock-to-real switching. Real science requires separate reproducible sample evidence and an agreed method/domain; schema-valid mocks are not that evidence.
 

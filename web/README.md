@@ -17,6 +17,35 @@ to disable the mock service worker and load other case data. An API consumer can
 use `VITE_API_BASE_URL` to select its server. Regenerate API types from the
 contract with `npm run generate:types`.
 
+## Real API mode
+
+The Vite dev/preview server proxies `/api` to the FastAPI app and `/data` to a
+static server for `data/processed/web`, so the browser only talks to one origin
+and neither server needs CORS. Override the targets with
+`FIRETRACE_API_PROXY` and `FIRETRACE_DATA_PROXY` (defaults
+`http://127.0.0.1:8000` and `http://127.0.0.1:8001`). Copy `.env.example` to
+`.env` first.
+
+From the repository root, in three terminals:
+
+```sh
+# 1. API over the verified bundle (FIRETRACE_DATA_ROOT defaults to ./data).
+#    It also needs data/interim/{sar,change,perimeter[,terrain]}; without those
+#    products the inspection endpoints answer 503.
+uv run uvicorn api.main:app --host 127.0.0.1 --port 8000
+
+# 2. Static server for the published web bundle.
+python -m http.server 8001 --bind 127.0.0.1 --directory data/processed/web
+
+# 3. Web against the proxy (development, or `npm run preview` for a build).
+npm run dev
+```
+
+With `VITE_USE_MOCKS=false`, `VITE_DATA_BASE_URL=/data/` and an empty
+`VITE_API_BASE_URL`, case metadata, stats, layers, point inspection and the
+transect all come from the real bundle and API. Any MOCK notice then indicates
+that the served manifest itself is synthetic.
+
 The map loads OpenStreetMap tiles in the browser; this requires a connection and
 shares the visitor's IP address with the tile service. When offline, geographic
 details are unavailable. The viewer displays fixture SAR and observed-change
