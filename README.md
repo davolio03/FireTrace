@@ -74,10 +74,11 @@ gh release download data-web-plaskett-f66c4d9 -D data/processed
 gh release download data-interim-plaskett-f66c4d9 -D data
 (cd data/processed && sha256sum -c SHA256SUMS.txt && unzip firetrace-web-plaskett.zip)
 (cd data && sha256sum -c SHA256SUMS.txt && unzip firetrace-interim-plaskett.zip)
+(cd data && sha256sum -c SHA256SUMS-highlight.txt && unzip firetrace-highlight-plaskett-f66c4d9.zip)
 uv run contracts/tools/validate.py data/processed/web
 ```
 
-Use a fresh extraction directory; verify checksums before unpacking. The resulting layout must include `data/processed/web/` and `data/interim/{sar,change,perimeter,terrain}/`. The API needs the interim rasters as well as the display bundle; missing or mismatched products must not be replaced with mock evidence.
+Use a fresh extraction directory; verify checksums before unpacking. The interim release includes a required highlight supplement alongside the original archive; extract both under `data/`. The resulting layout must include `data/processed/web/` and `data/interim/{sar,change,perimeter,terrain,highlight}/`. The API needs the interim rasters as well as the display bundle; missing or mismatched products must not be replaced with mock evidence.
 
 Change `web/.env.local` to:
 
