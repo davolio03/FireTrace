@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import {
   act,
@@ -173,5 +174,21 @@ describe('point inspector', () => {
     await act(async () => resolveFirst({ ok: true, json: async () => inside }))
     expect(screen.getByText('-42')).toBeTruthy()
     expect(screen.queryByText('-11.61')).toBeNull()
+  })
+
+  it('shows zone evidence from the review zones file', async () => {
+    const zones: unknown = JSON.parse(
+      readFileSync('../contracts/fixtures/web/review_zones.geojson', 'utf8'),
+    )
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({ ok: true, json: async () => zones }),
+    )
+    renderInspector()
+    act(() => mapStore.getState().select({ type: 'zone', zoneId: 'CO-01' }))
+    expect(await screen.findByText(/Zone evidence: CO-01/)).toBeTruthy()
+    expect(await screen.findByText('-11.81')).toBeTruthy()
+    expect(screen.getByText('Steep slope: 12%')).toBeTruthy()
+    expect(screen.getByText(/to investigate, not errors/)).toBeTruthy()
   })
 })

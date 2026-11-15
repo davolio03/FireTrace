@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useState, type FormEvent } from 'react'
 import type { operations } from '../../generated/api'
 import { useMapStore } from '../../state/mapStore'
+import { ZoneEvidence } from '../zones/ZoneEvidence'
 
 type PointEvidence =
   operations['inspectPoint']['responses'][200]['content']['application/json']
@@ -112,6 +113,7 @@ export function Inspector({ caseData }: { caseData: CaseData | null }) {
           Selected coordinates: {point[0]}, {point[1]}
         </p>
       )}
+      {selection.type === 'zone' && <ZoneEvidence zoneId={selection.zoneId} />}
       {panel === 'inspector' && (
         <section aria-labelledby="inspector-heading" className="space-y-3">
           <h2 id="inspector-heading" className="text-xl font-semibold">
