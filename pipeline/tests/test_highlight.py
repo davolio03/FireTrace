@@ -480,3 +480,66 @@ def test_cli_exit_codes(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> N
     (dirs["change"] / "change.json").write_text("[]", encoding="utf-8")
     assert main(["--config", str(path)]) == 2
     assert "highlight error" in capsys.readouterr().err
+
+
+# --------------------------------------------------------------------------- review fixes
+
+
+def test_manifest_with_invalid_utf8_is_a_clean_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    dirs = write_inputs(tmp_path)
+    (dirs["sar"] / "sar.json").write_bytes(b'{"sar_format_version": 1, "x": "\xff"}')
+    path = _write_config(
+        tmp_path / "h.toml",
+        change_dir=str(dirs["change"]),
+        sar_dir=str(dirs["sar"]),
+        perimeter_dir=str(dirs["perimeter"]),
+        output_dir=str(tmp_path / "out"),
+    )
+    assert main(["--config", str(path)]) == 2
+    assert "sar.json" in capsys.readouterr().err
+    assert not (tmp_path / "out").exists()
+
+
+def test_config_with_invalid_utf8_is_a_clean_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = tmp_path / "h.toml"
+    path.write_bytes(b'output_dir = "\xff"\n')
+    assert main(["--config", str(path)]) == 2
+    assert "config" in capsys.readouterr().err
+
+
+def test_recorded_input_hash_is_of_the_bytes_that_were_parsed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = config_for(tmp_path)
+    manifest = config.perimeter_dir / "perimeter.json"
+    parsed = manifest.read_bytes()
+    read_bytes, read_text = Path.read_bytes, Path.read_text
+    swapped: list[bool] = []
+
+    def swap(self: Path) -> None:
+        if self == manifest and not swapped:  # replaced right after the first read
+            swapped.append(True)
+            with manifest.open("ab") as fh:
+                fh.write(b" ")
+
+    def fake_bytes(self: Path) -> bytes:
+        payload = read_bytes(self)
+        swap(self)
+        return payload
+
+    def fake_text(self: Path, *args: Any, **kwargs: Any) -> str:
+        payload = read_text(self, *args, **kwargs)
+        swap(self)
+        return payload
+
+    monkeypatch.setattr(Path, "read_bytes", fake_bytes)
+    monkeypatch.setattr(Path, "read_text", fake_text)
+    run_highlight(config)
+    assert swapped
+    monkeypatch.undo()
+    meta = _read_json(config.output_dir / "highlight_meta.json")
+    assert meta["inputs"]["perimeter.json"] == hashlib.sha256(parsed).hexdigest()

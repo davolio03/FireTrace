@@ -1139,6 +1139,8 @@ def test_highlight_is_merged_into_stats_and_layers(tmp_path: Path):
     assert layer["legend"]["type"] == "categorical"
     assert layer["legend"]["items"][0]["value"] == 1
     assert "not a validated burned-area mask" in layer["legend"]["note"]
+    # Pixels above the threshold in regions removed by the size filter are transparent too.
+    assert "removed by the minimum region size" in layer["legend"]["note"]
     assert layer["coordinates"] == _layers(web)["change_index"]["coordinates"]
     manifest = _load(web / "export.json")
     assert manifest["optional"]["highlight"] is True

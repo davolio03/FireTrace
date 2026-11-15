@@ -31,6 +31,7 @@ Run from the repository root::
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import sys
@@ -196,7 +197,7 @@ def load_config(path: Path, base_dir: Path | None = None) -> HighlightConfig:
     base = Path.cwd() if base_dir is None else base_dir
     try:
         raw = tomllib.loads(path.read_text(encoding="utf-8"))
-    except (OSError, tomllib.TOMLDecodeError) as exc:
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
         raise HighlightError(f"config: cannot read {path.name}: {exc}") from exc
     unknown = sorted(set(raw) - CONFIG_KEYS)
     if unknown:
@@ -257,16 +258,28 @@ class Inputs:
     method_id: str
 
 
+def _manifest(path: Path) -> tuple[dict[str, Any], str]:
+    """Parse a JSON manifest and return it with the sha256 of the exact bytes parsed."""
+    try:
+        payload = path.read_bytes()
+        doc = json.loads(payload.decode("utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise HighlightError(f"cannot read {path.name}: {exc}") from exc
+    if not isinstance(doc, dict):
+        raise HighlightError(f"{path.name}: top level must be an object")
+    return doc, hashlib.sha256(payload).hexdigest()
+
+
 def load_inputs(config: HighlightConfig) -> Inputs:
     """Read CH-01, DT-02 and DT-03 products and check versions, linkage, grids and hashes.
 
     The checks are the CH-02 ones (``pipeline.stats``), so both stages accept exactly the
-    same upstream generation.
+    same upstream generation. Each manifest is hashed from the same bytes that were parsed.
     """
+    change, change_sha = _manifest(config.change_dir / "change.json")
+    sar, sar_sha = _manifest(config.sar_dir / "sar.json")
+    perimeter, perimeter_sha = _manifest(config.perimeter_dir / "perimeter.json")
     try:
-        change = stats._load(config.change_dir / "change.json")
-        sar = stats._load(config.sar_dir / "sar.json")
-        perimeter = stats._load(config.perimeter_dir / "perimeter.json")
         for doc, source in (
             (change, "change.json"),
             (sar, "sar.json"),
@@ -275,7 +288,6 @@ def load_inputs(config: HighlightConfig) -> Inputs:
             key, version = stats.SUPPORTED_INPUT_VERSIONS[source]
             if doc.get(key) != version:
                 raise HighlightError(f"{source}: unsupported {key} {doc.get(key)!r}")
-        sar_sha = sha256_file(config.sar_dir / "sar.json")
         if stats._get(change, ("source_sar", "sha256"), "change.json") != sar_sha:
             raise HighlightError(
                 "change.json was computed from another sar.json (source_sar sha256 differs); "
@@ -326,9 +338,9 @@ def load_inputs(config: HighlightConfig) -> Inputs:
             "perimeter.json",
         )
         shas = {
-            "change.json": sha256_file(config.change_dir / "change.json"),
+            "change.json": change_sha,
             "sar.json": sar_sha,
-            "perimeter.json": sha256_file(config.perimeter_dir / "perimeter.json"),
+            "perimeter.json": perimeter_sha,
         }
     except (StatsError, SarError) as exc:
         raise HighlightError(str(exc)) from exc

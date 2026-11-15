@@ -115,8 +115,9 @@ MASK_NOTE = (
 PERIMETER_NOTE = "Reference only, not pixel-level truth."
 HIGHLIGHT_NOTE = (
     "Exploratory threshold, not a validated burned-area mask. Smoothed change index >= {t:g} "
-    "({smoothing}); fixed a priori, not tuned on the perimeter. Transparent where the change "
-    "is below the threshold or the pixel is invalid."
+    "({smoothing}); fixed a priori, not tuned on the perimeter. Transparent where the "
+    "smoothed change is below the threshold, where it is above but its region was removed by "
+    "the minimum region size, or where the pixel is invalid."
 )
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _CASE_ID = re.compile(r"^[a-z0-9-]+$")
