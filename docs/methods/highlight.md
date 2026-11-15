@@ -22,6 +22,16 @@ outside_ha       = highlighted valid pixels outside it            (area = inside
 iou_vs_perimeter = |H ∩ P| / |H ∪ P|   over valid pixels, H = highlighted, P = perimeter mask
 ```
 
+IoU mixes two different questions, so `highlight_meta.json` also records them separately (meta only; the contract is unchanged, and the web can derive the first two from `stats.json`):
+
+```text
+highlighted_inside_pct = 100 × |H ∩ P| / |H|     how much of the highlight lies inside (null if H is empty)
+reference_covered_pct  = 100 × |H ∩ P| / |P|     how much of the perimeter is highlighted
+iou_upper_bound        = min(|H|, |P|) / max(|H|, |P|)   best IoU two areas of these sizes can reach
+```
+
+When the highlight is much smaller than the perimeter, the IoU is capped by `iou_upper_bound` however well the two agree, so a low IoU alone does not say whether the highlight falls in the right place.
+
 `highlight_mask.tif` is a uint8 COG on the 10 m EPSG:32610 crop grid: 1 highlighted, 0 not highlighted, 255 invalid (no data). EV-01 can read it for the inspector's `highlighted` field. `highlight_meta.json` records the input manifest hashes, the parameters, the region count and sizes, the pixels removed by the region filter, the pixel counts behind the IoU and the no-edge-band variant.
 
 DT-04 (`pipeline/export.py`) merges the result only when `highlight_meta.json` exists in `highlight_dir`, and only if it was built from the same `change.json`, `sar.json` and `perimeter.json` as the bundle. It then fills `stats.json` `highlight` (every other field unchanged) and adds the `highlight_mask` layer (group `highlighted_change`, `p1: true`, hidden by default, nearest-neighbour warp, orange where highlighted and transparent elsewhere). Without the stage, the bundle is unchanged and `stats.json` stays byte-identical to the CH-02 file, with `highlight: null`.
@@ -33,10 +43,12 @@ DT-04 (`pipeline/export.py`) merges the result only when `highlight_meta.json` e
 | Highlighted | 1,049.66 ha in 238 regions (largest 62.9 ha) |
 | Inside / outside the perimeter | 1,049.20 ha / 0.46 ha |
 | Perimeter (valid, pixel-centre) | 12,134.98 ha |
-| IoU vs perimeter | 0.086 |
+| Highlighted area inside the perimeter | 99.96 % |
+| Perimeter covered by the highlight | 8.6 % |
+| IoU vs perimeter | 0.086 (upper bound for these two areas: 0.086) |
 | Before the 1 ha region filter | 1,538 ha (5,184 small regions removed, 488 ha) |
 
-Almost everything highlighted lies inside the perimeter, but it covers only about 9 % of it, so the IoU is low. This matches CH-02 (median index 0.50 inside versus −0.22 outside): the strong change is concentrated in patches, many aligned with slopes and drainages, rather than spread over the whole perimeter. The low IoU is a description of the data, not a defect to tune away. Two identical runs produce byte-identical outputs.
+Almost everything highlighted lies inside the perimeter, but it covers only about 9 % of it, so the IoU is low: it equals its upper bound for these two areas to three decimals, so it is limited by the size of the highlight, not by highlight pixels in the wrong place. Without the edge band the shares are 99.99 % and 8.9 % (IoU 0.089). This matches CH-02 (median index 0.50 inside versus −0.22 outside): the strong change is concentrated in patches, many aligned with slopes and drainages, rather than spread over the whole perimeter. The low IoU is a description of the data, not a defect to tune away. Two identical runs produce byte-identical outputs.
 
 ## Limitations
 

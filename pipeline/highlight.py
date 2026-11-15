@@ -156,22 +156,35 @@ def remove_small_regions(
 
 
 def agreement(highlighted: np.ndarray, inside: np.ndarray, domain: np.ndarray) -> dict[str, Any]:
-    """Pixel counts and IoU of the highlight against the perimeter, within ``domain`` only."""
+    """Pixel counts and IoU of the highlight against the perimeter, within ``domain`` only.
+
+    Also the two shares that IoU mixes, so a low IoU can be read correctly:
+
+    - ``highlighted_inside_pct``: share of highlighted pixels inside the perimeter (None when
+      nothing is highlighted: undefined, not 0 %);
+    - ``reference_covered_pct``: share of perimeter pixels that are highlighted;
+    - ``iou_upper_bound``: ``min(H, P) / max(H, P)``, the best IoU two areas of these sizes
+      could reach with perfect overlap.
+    """
     h = highlighted.astype(bool) & domain.astype(bool)
     p = inside.astype(bool) & domain.astype(bool)
     if not p.any():
         raise HighlightError("no valid pixel inside the perimeter; agreement is undefined")
     intersection = int((h & p).sum())
     union = int((h | p).sum())
+    h_px, p_px = int(h.sum()), int(p.sum())
     return {
         "domain_px": int(domain.astype(bool).sum()),
-        "highlighted_px": int(h.sum()),
+        "highlighted_px": h_px,
         "inside_px": intersection,
         "outside_px": int((h & ~p).sum()),
-        "reference_px": int(p.sum()),
+        "reference_px": p_px,
         "intersection_px": intersection,
         "union_px": union,
         "iou": intersection / union,
+        "highlighted_inside_pct": 100.0 * intersection / h_px if h_px else None,
+        "reference_covered_pct": 100.0 * intersection / p_px,
+        "iou_upper_bound": min(h_px, p_px) / max(h_px, p_px),
     }
 
 

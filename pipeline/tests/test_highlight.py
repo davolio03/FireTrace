@@ -199,6 +199,30 @@ def test_agreement_excludes_unavailable_pixels_from_the_union() -> None:
     assert result["intersection_px"] == 1 and result["union_px"] == 3
     assert result["iou"] == pytest.approx(1 / 3)
     assert (result["highlighted_px"], result["inside_px"], result["outside_px"]) == (2, 1, 1)
+    # 1 of 2 highlighted pixels is inside; 1 of 2 reference pixels is highlighted.
+    assert result["highlighted_inside_pct"] == 50.0
+    assert result["reference_covered_pct"] == 50.0
+    # With 2 highlighted and 2 reference pixels, perfect overlap would give IoU 1.
+    assert result["iou_upper_bound"] == 1.0
+
+
+def test_iou_upper_bound_is_the_area_ratio() -> None:
+    domain = np.ones((1, 10), dtype=bool)
+    inside = np.array([[1] * 8 + [0, 0]], dtype=bool)  # 8 reference pixels
+    highlighted = np.array([[1, 1] + [0] * 8], dtype=bool)  # 2 highlighted, both inside
+    result = agreement(highlighted, inside, domain)
+    assert result["iou"] == result["iou_upper_bound"] == pytest.approx(2 / 8)
+    assert result["highlighted_inside_pct"] == 100.0
+    assert result["reference_covered_pct"] == 25.0
+
+
+def test_shares_with_nothing_highlighted() -> None:
+    result = agreement(
+        np.zeros((1, 3), dtype=bool), np.ones((1, 3), dtype=bool), np.ones((1, 3), dtype=bool)
+    )
+    assert result["iou"] == 0.0 and result["iou_upper_bound"] == 0.0
+    assert result["highlighted_inside_pct"] is None, "undefined, not 0 %"
+    assert result["reference_covered_pct"] == 0.0
 
 
 def test_agreement_needs_reference_pixels_in_the_domain() -> None:
@@ -223,6 +247,9 @@ def test_end_to_end_values_by_hand(tmp_path: Path) -> None:
     assert _read_json(out / "highlight.json") == block
     meta = _read_json(out / "highlight_meta.json")
     assert meta["agreement"]["intersection_px"] == 5 and meta["agreement"]["union_px"] == 13
+    assert meta["agreement"]["highlighted_inside_pct"] == pytest.approx(100 * 5 / 6)
+    assert meta["agreement"]["reference_covered_pct"] == pytest.approx(100 * 5 / 12)
+    assert meta["agreement"]["iou_upper_bound"] == pytest.approx(6 / 12)
     assert meta["regions"] == {
         "count": 2,
         "removed_count": 1,
