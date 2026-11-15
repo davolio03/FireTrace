@@ -18,6 +18,10 @@ const map = vi.hoisted(() => ({
   setLayoutProperty: vi.fn(),
   setPaintProperty: vi.fn(),
   fitBounds: vi.fn(),
+  canvas: { style: { cursor: '' } },
+  markerSet: vi.fn(),
+  markerAdd: vi.fn(),
+  markerRemove: vi.fn(),
 }))
 
 vi.mock('maplibre-gl', () => ({
@@ -34,6 +38,18 @@ vi.mock('maplibre-gl', () => ({
     setLayoutProperty = map.setLayoutProperty
     setPaintProperty = map.setPaintProperty
     fitBounds = map.fitBounds
+    getCanvas = () => map.canvas
+  },
+  Marker: class {
+    setLngLat(point: unknown) {
+      map.markerSet(point)
+      return this
+    }
+    addTo(mapInstance: unknown) {
+      map.markerAdd(mapInstance)
+      return this
+    }
+    remove = map.markerRemove
   },
   NavigationControl: class {},
   setWorkerUrl: map.setWorkerUrl,
@@ -43,7 +59,12 @@ describe('case map', () => {
   afterEach(cleanup)
   beforeEach(() => {
     vi.clearAllMocks()
-    mapStore.setState({ visible: [], opacity: {} })
+    mapStore.setState({
+      visible: [],
+      opacity: {},
+      tool: 'pan',
+      selection: { type: 'none' },
+    })
   })
   it('centers on Big Sur and releases its map when unmounted', () => {
     const { unmount } = render(<CaseMap />)
@@ -68,6 +89,38 @@ describe('case map', () => {
     )
     unmount()
     expect(map.remove).toHaveBeenCalledOnce()
+  })
+
+  it('selects map points only in inspect mode', () => {
+    mapStore.setState({ tool: 'pan', selection: { type: 'none' } })
+    render(<CaseMap />)
+    const click = map.on.mock.calls.find(([event]) => event === 'click')?.[1]
+    act(() => click({ lngLat: { lng: -121.4, lat: 35.9 } }))
+    expect(mapStore.getState().selection).toEqual({ type: 'none' })
+    act(() => {
+      mapStore.getState().setTool('inspect')
+      click({ lngLat: { lng: -121.4, lat: 35.9 } })
+    })
+    expect(mapStore.getState().selection).toEqual({
+      type: 'point',
+      point: [-121.4, 35.9],
+    })
+    expect(mapStore.getState().panel).toBe('inspector')
+  })
+
+  it('shows an inspect cursor and marks the selected point', () => {
+    const { unmount } = render(<CaseMap />)
+    act(() => mapStore.getState().setTool('inspect'))
+    expect(map.canvas.style.cursor).toBe('crosshair')
+    act(() =>
+      mapStore.getState().select({ type: 'point', point: [-121.4, 35.9] }),
+    )
+    expect(map.markerSet).toHaveBeenCalledWith([-121.4, 35.9])
+    expect(map.markerAdd).toHaveBeenCalled()
+    act(() => mapStore.getState().setTool('pan'))
+    expect(map.canvas.style.cursor).toBe('')
+    unmount()
+    expect(map.markerRemove).toHaveBeenCalled()
   })
 
   it('uses fixture corners, draws the perimeter and follows shared visibility and opacity', () => {

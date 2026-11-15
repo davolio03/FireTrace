@@ -20,12 +20,30 @@ const mocks = vi.hoisted(() => {
     jumpTo: ReturnType<typeof vi.fn>
     remove: ReturnType<typeof vi.fn>
   }> = []
-  return { instances }
+  const markers: Array<{ point: unknown; map: unknown; removed: boolean }> = []
+  return { instances, markers }
 })
 
 vi.mock('maplibre-gl', () => ({
   setWorkerUrl: vi.fn(),
   NavigationControl: class {},
+  Marker: class {
+    entry = { point: null as unknown, map: null as unknown, removed: false }
+    constructor() {
+      mocks.markers.push(this.entry)
+    }
+    setLngLat(point: unknown) {
+      this.entry.point = point
+      return this
+    }
+    addTo(map: unknown) {
+      this.entry.map = map
+      return this
+    }
+    remove() {
+      this.entry.removed = true
+    }
+  },
   Map: class {
     events: Record<string, (...args: unknown[]) => void> = {}
     on = vi.fn((event: string, callback: (...args: unknown[]) => void) => {
@@ -35,6 +53,7 @@ vi.mock('maplibre-gl', () => ({
       delete this.events[event]
     })
     addControl = vi.fn()
+    getCanvas = vi.fn(() => ({ style: { cursor: '' } }))
     addSource = vi.fn()
     addLayer = vi.fn()
     getLayer = vi.fn(() => true)
@@ -61,6 +80,7 @@ const layers = manifest.layers as components['schemas']['layer'][]
 describe('synchronized map comparison', () => {
   beforeEach(() => {
     mocks.instances.length = 0
+    mocks.markers.length = 0
     mapStore.setState({
       compare: null,
       visible: ['perimeter', 'change_index'],
@@ -68,6 +88,35 @@ describe('synchronized map comparison', () => {
     })
   })
   afterEach(cleanup)
+
+  it('shows the selected marker on both maps while comparing', () => {
+    mapStore.setState({ selection: { type: 'none' }, tool: 'inspect' })
+    render(<CaseMap layers={layers} />)
+    fireEvent.click(
+      screen.getByRole('button', { name: /compare before and after/i }),
+    )
+    act(() =>
+      mapStore.getState().select({ type: 'point', point: [-121.4, 35.9] }),
+    )
+    expect(
+      mocks.markers.some(
+        (marker) => marker.map === mocks.instances[0] && !marker.removed,
+      ),
+    ).toBe(true)
+    expect(
+      mocks.markers.some(
+        (marker) =>
+          marker.map === mocks.instances[1] &&
+          !marker.removed &&
+          JSON.stringify(marker.point) === JSON.stringify([-121.4, 35.9]),
+      ),
+    ).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: /exit comparison/i }))
+    expect(
+      mocks.markers.find((marker) => marker.map === mocks.instances[1])
+        ?.removed,
+    ).toBe(true)
+  })
 
   it('uses one synchronized viewport and restores prior layer selection after comparison', () => {
     render(

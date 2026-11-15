@@ -47,7 +47,23 @@ export function ComparisonOverlay({
     syncCamera()
     const syncLayers = () =>
       syncMapLayers(map, displayed, mapStore.getState(), 'right')
-    const unsubscribe = mapStore.subscribe(syncLayers)
+    let marker: maplibregl.Marker | null = null
+    let currentSelection = mapStore.getState().selection
+    const syncMarker = () => {
+      marker?.remove()
+      marker =
+        currentSelection.type === 'point'
+          ? new maplibregl.Marker().setLngLat(currentSelection.point).addTo(map)
+          : null
+    }
+    syncMarker()
+    const unsubscribe = mapStore.subscribe((state) => {
+      syncLayers()
+      if (state.selection !== currentSelection) {
+        currentSelection = state.selection
+        syncMarker()
+      }
+    })
     map.on('load', () => {
       addMapLayers(map, displayed, dataBaseUrl, onError)
       syncLayers()
@@ -55,6 +71,7 @@ export function ComparisonOverlay({
     })
     return () => {
       unsubscribe()
+      marker?.remove()
       main.off('move', syncCamera)
       map.remove()
     }

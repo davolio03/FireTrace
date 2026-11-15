@@ -24,9 +24,11 @@ layers and the reference perimeter with independent visibility and opacity
 controls. Its legends come from the layer manifest. The before/after comparison
 uses synchronized maps and a keyboard- and touch-accessible divider for HH and
 HV. During comparison, other raster selections are preserved but temporarily
-hidden; the perimeter remains independently controllable. The Evidence
-Inspector belongs to a later task. Fixture display is not evidence of
-real-data alignment or scientific validation.
+hidden; the perimeter remains independently controllable. In the analysis
+view, use **Inspect on map** and select a point, or enter longitude and
+latitude using the keyboard, to view the point evidence. The inspector uses
+the mock API by default; its synthetic values are not scientific validation.
+Fixture display is not evidence of real-data alignment.
 
 ## Shared map state
 
