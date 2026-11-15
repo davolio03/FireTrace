@@ -752,10 +752,11 @@ def _check_tile_png(name: str, payload: bytes, size: int) -> None:
 
     Parsed strictly in memory, following the PNG specification: every chunk's CRC; IHDR
     first and only once, with compression, filter and interlace methods 0; only the
-    critical chunks IHDR, PLTE (before IDAT), IDAT (consecutive) and an empty IEND, which
-    must be last; ancillary chunks are allowed. The IDAT stream must inflate to exactly the
-    scanline bytes the header implies, and every scanline must start with a filter type
-    0-4. GDAL's PNG reader accepts truncated files, so it is not used here.
+    critical chunks IHDR, PLTE (at most once, before IDAT, 3-768 bytes in RGB triples),
+    IDAT (consecutive) and an empty IEND, which must be last; ancillary chunks are allowed.
+    The IDAT stream must inflate to exactly the scanline bytes the header implies, and
+    every scanline must start with a filter type 0-4. GDAL's PNG reader accepts truncated
+    files, so it is not used here.
     """
 
     def bad(reason: str) -> ExportError:
@@ -765,6 +766,7 @@ def _check_tile_png(name: str, payload: bytes, size: int) -> None:
         raise ExportError(f"{name}: not a PNG file")
     pos, header, idat, ended = len(PNG_SIGNATURE), None, bytearray(), False
     idat_state = "before"  # before -> inside -> after (IDAT chunks must be consecutive)
+    palette = False  # an optional suggested palette: once, before IDAT, 1-256 entries
     while pos < len(payload) and not ended:
         if pos + 12 > len(payload):
             raise bad("truncated chunk")
@@ -794,8 +796,11 @@ def _check_tile_png(name: str, payload: bytes, size: int) -> None:
                 raise bad("IEND is not empty")
             ended = True
         elif kind == b"PLTE":
-            if idat_state != "before":
-                raise bad("PLTE after IDAT")
+            if idat_state != "before" or palette:
+                raise bad("PLTE after IDAT or repeated")
+            if not 3 <= length <= 768 or length % 3:
+                raise bad(f"PLTE of {length} bytes")
+            palette = True
         elif kind[0] & 0x20 == 0:  # an unknown critical chunk cannot be skipped
             raise bad(f"unsupported critical chunk {kind!r}")
         if kind != b"IDAT" and idat_state == "inside":

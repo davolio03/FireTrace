@@ -1855,6 +1855,7 @@ def _crafted_png(
 def test_hand_built_png_passes_the_check():
     export._check_tile_png("t.png", _crafted_png(), 256)
     export._check_tile_png("t.png", _crafted_png(extra=(_chunk(b"tEXt", b"k\x00v"),)), 256)
+    export._check_tile_png("t.png", _crafted_png(extra=(_chunk(b"PLTE", bytes(768)),)), 256)
 
 
 @pytest.mark.parametrize(
@@ -1867,6 +1868,10 @@ def test_hand_built_png_passes_the_check():
         (_crafted_png(split_idat=True, extra=(_chunk(b"tEXt", b"k\x00v"),)), "consecutive"),
         (_crafted_png(iend=b"x"), "IEND"),
         (_crafted_png(extra=(_chunk(b"AB1D", b""),)), "chunk type"),
+        (_crafted_png(extra=(_chunk(b"PLTE", b""),)), "PLTE of 0 bytes"),
+        (_crafted_png(extra=(_chunk(b"PLTE", bytes(4)),)), "PLTE of 4 bytes"),
+        (_crafted_png(extra=(_chunk(b"PLTE", bytes(771)),)), "PLTE of 771 bytes"),
+        (_crafted_png(extra=(_chunk(b"PLTE", bytes(3)),) * 2), "repeated"),
     ],
 )
 def test_crc_correct_but_undecodable_png_is_rejected(payload: bytes, match: str):
@@ -1878,3 +1883,9 @@ def test_invalid_filter_tile_is_never_published(tmp_path: Path):
     config = _with_tiles(tmp_path)
     _replace_tile(tmp_path, _crafted_png(filter_byte=5))
     _fails_without_writing(config, "filter type")
+
+
+def test_repeated_palette_tile_is_never_published(tmp_path: Path):
+    config = _with_tiles(tmp_path)
+    _replace_tile(tmp_path, _crafted_png(extra=(_chunk(b"PLTE", bytes(3)),) * 2))
+    _fails_without_writing(config, "repeated")
