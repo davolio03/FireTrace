@@ -1,129 +1,132 @@
 # FireTrace Explorer
 
-Explore what changed in NISAR HH/HV radar observations before and after the **Plaskett Fire (Big Sur, California, 2026)**. Inspect the radar values behind every pixel and compare them with a dated official fire perimeter. Built for the NASA Space Apps Challenge 2026, *Dancing with the SARs*.
+Explore the **Plaskett Fire, Big Sur, California (2026)** through NISAR radar observations: compare before and after, inspect the numerical evidence, and investigate where radar changes agree with a dated official perimeter. Built for NASA Space Apps Challenge 2026, *Dancing with the SARs*.
 
-FireTrace shows **observed radar change**. Radar change is not confirmed fire, burned area or ecological severity: moisture, terrain, viewing geometry and vegetation can explain it too ([limitations](docs/LIMITATIONS.md)).
+**Observed radar change is not confirmed fire, burned area or ecological severity.** Moisture, terrain, viewing geometry and vegetation can also change the signal. The WFIGS perimeter is dated **14 September 2026**, before the 3 October after observation; it is neither a final outline nor pixel-level ground truth.
 
-## Current state (2026-11-15)
+## Explore the case
 
-- **Pipeline (`pipeline/`):** implemented and run on real data. It goes from the four NISAR GCOV inputs to the web bundle, with optional P1 stages (highlight mask, sensitivity sweep, zones to review, terrain tiles). Every stage verifies its inputs by sha256 and publishes atomically, and reruns are byte-identical.
-- **API (`api/`):** a FastAPI service implements the contract endpoints: health, case, stats, layers, point inspection and transect profile. It reads the 10 m analysis rasters and verifies their manifests, and it is tested against the contract schemas. Serving it to the web with real data is integration task IN-02; deployment is DL-01.
-- **Web (`web/`):** a React + MapLibre application with these parts:
-  - before/after comparison;
-  - independent layers with legends;
-  - the change map and the reference perimeter;
-  - results;
-  - the Evidence Inspector and transect;
-  - the guided story;
-  - annotations.
+- Follow the guided story from the globe to the Plaskett observations, then enter the analysis map.
+- Compare aligned HH/HV before and after views; independently toggle **Observed radar changes**, the **Official fire perimeter**, legends and contextual layers.
+- Select a point in the **Evidence Inspector** to read HH/HV dB, signed differences, change index, terrain and deterministic caveats from the analysis products. Draw a transect to explore sampled values along a line.
+- Inspect descriptive statistics, precipitation and optional highlighted changes/review zones. Add analyst annotations and export GeoJSON or a Markdown report; analyst judgements are not validated classifications.
+- Switch between the real artifact bundle/API and synthetic fixtures with a visible **MOCK** notice. Mocks are a software demonstration, not scientific evidence.
 
-  It loads the real bundle (IN-01) or the contract fixtures with a visible MOCK notice.
-- **Not done:** a deployed demo, independent validation and any deep-learning model.
+The pipeline precomputes products offline; FastAPI samples the analysis rasters; the React application displays the bundle and queries the API. No scene downloads, Earthdata authentication or model training belongs in the presentation. This repository provides a local demo; no hosted endpoint or independent scientific validation is claimed here.
 
-Task state lives only in Kanvas (`python3 .agents/skills/kanvas/kanvas.py status`); [STATUS](docs/STATUS.md) records the evidence.
+## Data and attribution
 
-## Data sources and attribution
+**NISAR is the primary observation.** Other sources provide context or a dated reference, not independent validation.
 
-| Source | Role | Identity | Provider and attribution |
-| --- | --- | --- | --- |
-| **NASA/ASF NISAR L2 GCOV (provisional)** | Primary observation | Before: `G4284560161-ASF`, 2026-08-16 02:56:39 UTC, orbit 5504. After: `G4340499432-ASF`, 2026-10-03 02:56:38 UTC, orbit 6196. Frequency A, HHHH and HVHV, track 42, frame 70, descending ([CMR before](https://cmr.earthdata.nasa.gov/search/granules.umm_json?concept_id=G4284560161-ASF), [CMR after](https://cmr.earthdata.nasa.gov/search/granules.umm_json?concept_id=G4340499432-ASF)) | NASA Earth science data, distributed by the Alaska Satellite Facility DAAC |
-| **NASA GPM IMERG Late Run daily V07C** (`GPM_3IMERGDL`) | Precipitation context for the moisture caveat | 49 daily granules, 2026-08-16 to 2026-10-03 ([GES DISC](https://disc.gsfc.nasa.gov/datasets/GPM_3IMERGDL_07/summary)) | NASA Earth science data, distributed by NASA GES DISC |
-| **NIFC WFIGS Interagency Perimeters** | Dated reference for contrast | OBJECTID 58728, dated 2026-09-14 20:44 UTC ([query](https://services3.arcgis.com/T4QMspbfLg3qTGWY/arcgis/rest/services/WFIGS_Interagency_Perimeters_YearToDate/FeatureServer/0/query?where=OBJECTID%3D58728&outFields=*&returnGeometry=true&outSR=4326&f=geojson)) | NIFC open data |
-| **CAL FIRE** | Incident facts (start date 2026-08-26) | [Incident page](https://www.fire.ca.gov/incidents/2026/8/26/plaskett-fire) | CAL FIRE |
-| **Copernicus DEM GLO-30** | Terrain context (slope, hillshade, layover/shadow) | Tile `Copernicus_DSM_COG_10_N35_00_W122_00_DEM` ([DOI](https://doi.org/10.5270/ESA-c5d3d65)) | "Produced using Copernicus WorldDEM-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved" |
-| **Copernicus Sentinel-2 L2A** | Optical context (smoke during, clear after) | `S2A_10SFE_20260830_0_L2A`, `S2B_10SFE_20261015_0_L2A`, via Earth Search ([AWS Open Data](https://registry.opendata.aws/sentinel-2-l2a-cogs/)) | Contains modified Copernicus Sentinel data 2026 (ESA) |
+| Source | Use and identity |
+| --- | --- |
+| NASA/ISRO NISAR L2 GCOV (provisional), distributed by ASF DAAC | Frequency A HHHH/HVHV; before `G4284560161-ASF` (2026-08-16), after `G4340499432-ASF` (2026-10-03); descending track 42, frame 70 |
+| NIFC WFIGS / CAL FIRE | WFIGS OBJECTID 58728, 2026-09-14 20:44 UTC; CAL FIRE incident start 2026-08-26 |
+| NASA GPM IMERG Late daily V07C, distributed by GES DISC | Precipitation context between the radar observations; not a soil-moisture measurement |
+| Copernicus DEM GLO-30 (European Union / ESA) | Terrain context and optional 3D relief; produced using Copernicus WorldDEM-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved |
+| Copernicus Sentinel-2 L2A, via Earth Search | Smoke context on 2026-08-30 and clear optical context on 2026-10-15; contains modified Copernicus Sentinel data 2026 |
+| OpenStreetMap contributors | Basemap, with attribution in the map; [ODbL and copyright](https://www.openstreetmap.org/copyright) |
 
-NISAR is the primary source. The other sources are context and never replace or validate the radar result. The web shows each layer's source with it. Every data set, service, software package and reference, with its licence, is listed in [REFERENCES](docs/REFERENCES.md), as the NASA Space Apps rules require. The scientific background is the Döweler, Leuzinger and Bader preprint on Plaskett and Timber ([SSRN](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=7553393)). Its AUC-ROC of 0.984 is their result, not FireTrace's.
+Full citations, source links, software licences and redistribution terms are in [References and licences](docs/REFERENCES.md). The external preprint's AUC-ROC of **0.984 is the authors' result, not FireTrace performance**.
 
-## Methodology
+## Method and example results
 
-All analysis runs offline on the common **10 m EPSG:32610** grid of the NISAR scenes.
+1. Crop the four GCOV power inputs to the common **10 m EPSG:32610 analysis grid**. Mask source no-data, non-finite, zero and negative powers; use the common valid set across all four inputs.
+2. Convert valid power with `10 * log10(x)`. Compute signed HH/HV differences (after minus before) and a continuous robust z-score of `abs(delta_HH) + abs(delta_HV)` relative to this crop.
+3. Compare distributions with the dated perimeter. Optional P1 products add a documented highlight threshold, sensitivity sweep and zones to review; they do not classify confirmed fire.
+4. Export display PNGs in **EPSG:3857**. The API reads numerical analysis rasters, never PNG colours or Web Mercator screen pixels; selections and reference geometry use WGS84/EPSG:4326.
 
-1. **Ingest (DT-01):** crop the four GCOV power rasters around the perimeter (2 km margin) without resampling.
-2. **dB and validity (DT-02):** `10 × log10(x)` for finite positive powers; one common valid mask over the four inputs.
-3. **Continuous change (CH-01, P0):** signed HH and HV differences (after − before); the index is the robust z-score of `|ΔHH| + |ΔHV|` over the crop, with no threshold ([change index](docs/methods/change-index.md)).
-4. **Reference perimeter (DT-03):** the pinned WFIGS geometry, repaired, rasterized by pixel centre with a 50 m edge band ([reference perimeter](docs/methods/reference-perimeter.md)).
-5. **Statistics (CH-02):** index distributions inside and outside the perimeter ([stats](docs/methods/stats.md)).
-6. **Context (DT-05, DT-06, DT-07):** [terrain](docs/methods/terrain.md), [precipitation](docs/methods/weather.md) and [optical](docs/methods/optical.md) layers.
-7. **Exploratory, P1:**
-   - the [highlight mask](docs/methods/highlight.md) with its IoU;
-   - the [sensitivity sweep](docs/methods/sensitivity.md);
-   - the [zones to review](docs/methods/review-zones.md);
-   - [3D terrain tiles](docs/methods/terrain-tiles.md).
-8. **Web export (DT-04):** contract bundle with EPSG:3857 display PNGs ([web export](docs/methods/web-export.md)).
-9. **Inspection (EV-01, EV-05):** the API reads the numerical rasters, never the PNG colours. The deterministic [caveat rules](docs/methods/caveats.md) (EV-02) are implemented but not yet wired into the real point inspection, which returns only generic cautions.
-
-## Results on Plaskett
-
-From the releases of commit `f66c4d9`:
-
-- **Coverage:** 100 % valid.
-- **Change index:** median 0.50 inside the perimeter versus −0.22 outside.
-- **Highlighted radar changes (P1):** 1,049.66 ha, of which 0.46 ha lie outside. The highlight covers 8.6 % of the perimeter, and its IoU of 0.086 is limited by its size.
-- **Zones to review:** none with change outside; 10 with little change inside, mostly along the perimeter line; 10 with change inside.
-
-The discrepancies, their possible causes and the limitations are in [LIMITATIONS](docs/LIMITATIONS.md).
+The documented `f66c4d9` artifact generation reports **100% valid coverage**, a median index of **0.50 inside versus -0.22 outside** the reference perimeter, and a P1 highlighted area of **1,049.66 ha** with perimeter IoU **0.086**. These describe one image pair and its chosen analysis domain, not burned area, classification accuracy or generalization. See [results, discrepancies and limitations](docs/LIMITATIONS.md) for source hashes, denominators and confounds, and [methods](docs/methods/) for the calculation and conventions.
 
 ## Run it locally
 
-Requirements: Python 3.11 with [uv](https://docs.astral.sh/uv/), Node 24 and the GitHub CLI.
+Requirements: **Python 3.11**, [uv](https://docs.astral.sh/uv/) and **Node 24**. Real-data setup additionally uses the GitHub CLI, `sha256sum` and `unzip` (commands below use a POSIX shell).
+
+From the repository root, install the locked dependencies:
 
 ```sh
-uv sync
+uv sync --locked
 npm ci --prefix web
 ```
 
-Real data comes from GitHub releases, never from Git. Download and verify both from the repository root:
+### Quick demo: visible MOCK mode
+
+Create or update the ignored `web/.env.local`:
+
+```dotenv
+VITE_USE_MOCKS=true
+VITE_DATA_BASE_URL=/
+VITE_API_BASE_URL=
+```
+
+```sh
+npm --prefix web run dev -- --host 127.0.0.1 --port 5173 --strictPort
+```
+
+Open `http://127.0.0.1:5173`. This mode uses contract fixtures and a mock API, so no data download or backend is required. Keep the MOCK notice visible.
+
+### Real observations and numerical inspection
+
+Use the matching web and interim artifact releases recorded in the [integration runbook](docs/DEMO.md). Raw scenes are not distributed in Git. From the repository root:
 
 ```sh
 gh release download data-web-plaskett-f66c4d9 -D data/processed
 gh release download data-interim-plaskett-f66c4d9 -D data
-cd data/processed && sha256sum -c SHA256SUMS.txt && unzip -o firetrace-web-plaskett.zip && cd ../..
-cd data && sha256sum -c SHA256SUMS.txt && unzip -o firetrace-interim-plaskett.zip && cd ..
+(cd data/processed && sha256sum -c SHA256SUMS.txt && unzip firetrace-web-plaskett.zip)
+(cd data && sha256sum -c SHA256SUMS.txt && unzip firetrace-interim-plaskett.zip)
 uv run contracts/tools/validate.py data/processed/web
 ```
 
-- **Web with the real bundle:** serve `data/processed/web/` locally and start the web with `VITE_USE_MOCKS=false` and `VITE_DATA_BASE_URL`, as recorded in [DEMO](docs/DEMO.md).
-- **Web with the contract fixtures:** run `npm run dev` in `web/`; it shows a MOCK notice.
-- **API:** the service reads `data/` by default; `FIRETRACE_DATA_ROOT` selects another directory. It is exercised by `uv run pytest api`.
-- **Rebuilding the data:** this needs the raw inputs (GCOV GeoTIFFs and `.h5`, DEM tile, WFIGS GeoJSON, IMERG and Sentinel-2 windows), which are not distributed. The stage commands are in [QUALITY](docs/QUALITY.md).
+Use a fresh extraction directory; verify checksums before unpacking. The resulting layout must include `data/processed/web/` and `data/interim/{sar,change,perimeter,terrain}/`. The API needs the interim rasters as well as the display bundle; missing or mismatched products must not be replaced with mock evidence.
 
-The demo needs no Earthdata login, scene download or model training.
+Change `web/.env.local` to:
 
-## Quality checks
+```dotenv
+VITE_USE_MOCKS=false
+VITE_DATA_BASE_URL=/data/
+VITE_API_BASE_URL=
+```
+
+Start these in **three separate terminals**, each from the repository root:
 
 ```sh
-python3 scripts/check.py
+# Terminal 1: numerical API; FIRETRACE_DATA_ROOT defaults to ./data
+uv run uvicorn api.main:app --host 127.0.0.1 --port 8000
+```
+
+```sh
+# Terminal 2: static artifact bundle
+uv run python -m http.server 8001 --bind 127.0.0.1 --directory data/processed/web
+```
+
+```sh
+# Terminal 3: browser application
+npm --prefix web run dev -- --host 127.0.0.1 --port 5173 --strictPort
+```
+
+Restart Vite after changing environment files. Its configured `/data` and `/api` proxies keep browser requests on one origin; `VITE_API_BASE_URL` stays empty. Check `/api/health` through the web origin for `data_status: real`, then inspect a point. Never put secrets in `VITE_*`: those values are public client configuration. See [web configuration](web/README.md) for proxy overrides and [DEMO](docs/DEMO.md) for recorded integration checks and their limits.
+
+The basemap requests OpenStreetMap tiles over the internet and shares the visitor's IP with that provider. Precomputed radar layers remain local. 3D relief is optional: the documented `f66c4d9` web release lacks terrain tiles, so its story uses the 2D fallback. Rebuilding products requires separately obtained raw inputs; stage commands are in [QUALITY](docs/QUALITY.md).
+
+## Stack and checks
+
+- **Offline pipeline:** Python, NumPy, rasterio, xarray, GeoPandas, Shapely and rio-cogeo.
+- **API:** FastAPI, Pydantic and rasterio; contract-defined point and transect inspection, with deterministic caveat rules.
+- **Web:** React 19, strict TypeScript, Vite, MapLibre GL JS, Tailwind CSS, Motion, TanStack Query, Zustand and Recharts.
+- **Interfaces:** JSON Schema 2020-12 and OpenAPI [v1.2.0 contracts](contracts/README.md); synthetic fixtures share the real bundle's shape.
+
+```sh
+uv run python scripts/check.py
 uv run contracts/tools/validate.py
 git diff --check
 ```
 
-`scripts/check.py` runs the Python and web lint, tests and build ([QUALITY](docs/QUALITY.md)). These checks test the software, not the science.
+The repository gate runs Python/web lint, tests and the web build. Fixture/schema checks establish interface consistency, not scientific validation. [QUALITY](docs/QUALITY.md) details the checks; [DEMO](docs/DEMO.md) records bounded real-data integration evidence. Neither substitutes for independent validation or a timed end-to-end rehearsal.
 
-## Use of AI
+## Documentation and licence
 
-AI coding agents (Claude Code and Codex through T3 Code, and OpenCode with Claude models) helped write and review code and documentation. People made the scientific decisions, approved every task and reviewed and merged every change. The product runs no AI and shows no AI-generated evidence. See [AI_USE](docs/AI_USE.md).
+Start with [limitations](docs/LIMITATIONS.md), [methods](docs/methods/) and the [demo runbook](docs/DEMO.md). For development, see [architecture](docs/ARCHITECTURE.md), [contract semantics](docs/CONTRACTS.md), [contributing](CONTRIBUTING.md) and the [team agreement](docs/TEAM.md).
 
-## Team navigation
+AI coding tools assisted development; the product runs no language model, produces no LLM-generated evidence, and uses no trained deep-learning model. The disclosure is in [AI_USE](docs/AI_USE.md) and [NOTICE](NOTICE).
 
-| Resource | Purpose |
-| --- | --- |
-| [AGENTS](AGENTS.md) | Team contract for people and agents |
-| [Proposal](docs/propuesta.md) / [PRODUCT](docs/PRODUCT.md) | Scientific and product scope, P0/P1 and acceptance criteria |
-| [ARCHITECTURE](docs/ARCHITECTURE.md) | Stack, data flow, artifact layout and geographic invariants |
-| [CONTRACTS](docs/CONTRACTS.md) / [contracts](contracts/README.md) | Executable schemas, OpenAPI and fixtures |
-| [Methods](docs/methods/) | How each product is computed, with its real-data result |
-| [LIMITATIONS](docs/LIMITATIONS.md) / [AI_USE](docs/AI_USE.md) | Discrepancies, limitations and the AI-use declaration |
-| [REFERENCES](docs/REFERENCES.md) | Data, software and references with their licences |
-| [TEAM](docs/TEAM.md) / [CONTRIBUTING](CONTRIBUTING.md) | Owners, Kanvas, worktrees and human review |
-| [STATUS](docs/STATUS.md) / [DEMO](docs/DEMO.md) | Evidence snapshot and rehearsal runbook |
-| [QUALITY](docs/QUALITY.md) / [quality.json](quality.json) | Quality gate and pipeline commands |
-| [ENGRAM_CLOUD](docs/ENGRAM_CLOUD.md) | Shared team memory |
-
-## Licence
-
-FireTrace's code and documentation are licensed under the [Apache License 2.0](LICENSE); see [NOTICE](NOTICE). Data are not in the repository and keep the licences listed in [REFERENCES](docs/REFERENCES.md).
-
-## Safety and delivery
-
-One writer per worktree. Contract changes need approval from the affected side and their own versioned PR. People own publication, review and merge. No direct or force pushes to `main`, and no secrets, raw data, model weights or memory exports in Git.
+Code and documentation are licensed under [Apache 2.0](LICENSE). Third-party data and software retain their own licences and required attribution: see [REFERENCES](docs/REFERENCES.md). Do not commit secrets, raw inputs, private infrastructure settings or memory exports.
