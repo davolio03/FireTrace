@@ -54,6 +54,8 @@ The DT-05 stage builds terrain context on the crop grid: `uv run python -m pipel
 
 The DT-06 stage adds the precipitation context: `uv run python -m pipeline.weather fetch --token-file <file>` downloads IMERG once with the user's Earthdata token (never stored), and `uv run python -m pipeline.weather build` is offline. It reads NetCDF4 through the `h5netcdf[h5py]` dependency; see [weather](methods/weather.md).
 
+The optional XP-01 stage (P1) builds the exploratory highlight mask and its perimeter agreement: `uv run python -m pipeline.highlight --config pipeline/configs/highlight_plaskett.toml`. DT-04 merges it into `stats.json` and `layers.json` when `highlight_dir` has a `highlight_meta.json`; see [highlight](methods/highlight.md).
+
 The DT-07 stage adds optical context from public Sentinel-2 L2A scenes: `uv run python -m pipeline.optical fetch --config pipeline/configs/optical_plaskett.toml` (one-off, no credentials) and `uv run python -m pipeline.optical build --config pipeline/configs/optical_plaskett.toml` (offline). DT-04 merges `optical_layers.json` when `optical_dir` has an `optical.json`; see [optical](methods/optical.md).
 
 The DT-04 stage exports the web bundle: `uv run python -m pipeline.export --config pipeline/configs/case_plaskett.toml`. It verifies every upstream manifest and checksum, merges the DT-05 terrain layers and copies the DT-06 `weather.json` only when those stages have been run, and writes `data/processed/web/`, which must pass `uv run contracts/tools/validate.py data/processed/web`. Set `SOURCE_DATE_EPOCH` for a byte-identical rerun; see [web-export](methods/web-export.md).

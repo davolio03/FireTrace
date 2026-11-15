@@ -15,6 +15,7 @@ The PNGs are **for viewing only**. Every number the product shows (inspector, me
 | `stats_meta.json`, `stats.json` | CH-02 | built from exactly these `change.json`, `sar.json` and `perimeter.json`; `stats.json` sha256; `data_status: real` |
 | `terrain.json`, `terrain_layers.json`, `{hillshade,slope}.png` | DT-05, optional | only when `terrain_dir` exists; built from this `ingest.json`; same grid; sha256 of each file; `data_status: real`; corners and size identical to the radar layers |
 | `weather_meta.json`, `weather.json` | DT-06, optional | only when `weather_dir` exists; built from this `ingest.json`; sha256; `data_status: real` |
+| `highlight_meta.json`, `highlight.json`, `highlight_mask.tif` | XP-01, optional (P1) | only when `highlight_dir` has `highlight_meta.json`; built from exactly these `change.json`, `sar.json` and `perimeter.json`; same grid; sha256 of each file; contract `highlight` block (keys, finite non-negative numbers, IoU in [0, 1], inside + outside = area); mask values 0/1/255 with 255 exactly where the DT-02 mask is 0; `stats.json` must still have `highlight: null` |
 | `case_plaskett.toml` | config | `name`, `location`, `fire_start` and `sources`, which no stage produces (from [PRODUCT](../PRODUCT.md) and the CAL FIRE incident page) |
 
 Each raster is decoded from the same in-memory bytes whose sha256 was verified, so a file replaced after hashing cannot slip in. Each radar layer must be finite wherever the DT-02 common mask is 1.
@@ -71,4 +72,6 @@ With the same inputs and the same `SOURCE_DATE_EPOCH`, two runs are byte-identic
 
 Command: `uv run python -m pipeline.export --config pipeline/configs/case_plaskett.toml`.
 
-Out of scope: P1 layers (`highlight_mask`, `review_zones`), optical layers (DT-07, which should follow the terrain fragment pattern), and computing statistics, terrain or weather.
+When the XP-01 result is merged, `stats.json` is re-serialized with only `highlight` filled, and `layers/highlight_mask.png` is warped with nearest neighbour from the mask (orange where highlighted, transparent elsewhere) as a hidden-by-default `p1` layer ([highlight](highlight.md)).
+
+Out of scope: the `review_zones` P1 layer (XP-04) and computing statistics, terrain, weather or the highlight mask.

@@ -14,6 +14,9 @@ to real data by changing ``VITE_DATA_BASE_URL`` only:
 - ``case.json``: identity from ``case_plaskett.toml``, acquisition/epochs/AOI/product from
   ``ingest.json``, reference from ``perimeter.json``, method from ``change.json``.
 - ``perimeter.geojson``, ``stats.json`` and (when present) ``weather.json`` byte for byte.
+  When the optional XP-01 stage was run (``highlight_meta.json`` exists), ``stats.json``
+  gets its ``highlight`` block and ``layers/highlight_mask.png`` is added (P1, hidden by
+  default); otherwise ``stats.json`` stays byte-identical to the CH-02 file.
 - ``export.json``: input/output checksums, resampling and stretch rules (not a contract file).
 
 The PNGs are for viewing only; nothing is ever measured from them. Every input is checked
@@ -57,6 +60,15 @@ SAR_NAMES: tuple[str, ...] = ("t1_hh", "t2_hh", "t1_hv", "t2_hv")
 CHANGE_NAMES: tuple[str, ...] = ("change_hh_db", "change_hv_db", "change_index")
 TERRAIN_IDS: tuple[str, ...] = ("hillshade", "slope")
 OPTICAL_IDS: tuple[str, ...] = ("optical_during", "optical_after")
+HIGHLIGHT_ID = "highlight_mask"
+HIGHLIGHT_KEYS: tuple[str, ...] = (
+    "threshold",
+    "smoothing",
+    "area_ha",
+    "inside_ha",
+    "outside_ha",
+    "iou_vs_perimeter",
+)
 RASTER_IDS: tuple[str, ...] = (
     "sar_t1_hh",
     "sar_t2_hh",
@@ -71,7 +83,7 @@ TOP_FILES: frozenset[str] = frozenset(
     {"case.json", "layers.json", "stats.json", "perimeter.geojson", "weather.json", "export.json"}
 )
 LAYER_FILES: frozenset[str] = frozenset(
-    f"{lid}.png" for lid in (*RASTER_IDS, *TERRAIN_IDS, *OPTICAL_IDS)
+    f"{lid}.png" for lid in (*RASTER_IDS, HIGHLIGHT_ID, *TERRAIN_IDS, *OPTICAL_IDS)
 )
 LAYER_SUBDIRS: dict[str, frozenset[str]] = {"layers": LAYER_FILES}
 
@@ -79,6 +91,7 @@ GREY = ("#000000", "#ffffff")
 RDBU = ("#2166ac", "#92c5de", "#f7f7f7", "#f4a582", "#b2182b")  # contract fixture stops
 VIRIDIS = ("#440154", "#3b528b", "#21918c", "#5ec962", "#fde725")
 INVALID_GREY = "#7f7f7f"
+HIGHLIGHT_COLOR = "#e66101"  # contract fixture colour
 CHANGE_UNITS = "dB difference (after - before)"
 INDEX_UNITS = "index (unitless, robust z-score)"
 SAR_NOTE = (
@@ -100,6 +113,11 @@ MASK_NOTE = (
     "pixels are transparent in every other radar layer."
 )
 PERIMETER_NOTE = "Reference only, not pixel-level truth."
+HIGHLIGHT_NOTE = (
+    "Exploratory threshold, not a validated burned-area mask. Smoothed change index >= {t:g} "
+    "({smoothing}); fixed a priori, not tuned on the perimeter. Transparent where the change "
+    "is below the threshold or the pixel is invalid."
+)
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _CASE_ID = re.compile(r"^[a-z0-9-]+$")
 
@@ -127,6 +145,7 @@ class ExportConfig:
     weather_dir: Path
     output_dir: Path
     optical_dir: Path | None = None  # DT-07; optional, merged only when its manifest exists
+    highlight_dir: Path | None = None  # XP-01 (P1); optional, merged only when its manifest exists
 
     def input_dirs(self) -> list[Path]:
         dirs = [
@@ -138,7 +157,8 @@ class ExportConfig:
             self.terrain_dir,
             self.weather_dir,
         ]
-        return dirs if self.optical_dir is None else [*dirs, self.optical_dir]
+        optional = (self.optical_dir, self.highlight_dir)
+        return [*dirs, *(d for d in optional if d is not None)]
 
 
 def _require_str(table: Mapping[str, Any], key: str) -> str:
@@ -196,6 +216,7 @@ def load_config(path: Path, base_dir: Path | None = None) -> ExportConfig:
         weather_dir=resolve("weather_dir"),
         output_dir=resolve("output_dir"),
         optical_dir=resolve("optical_dir") if "optical_dir" in raw else None,
+        highlight_dir=resolve("highlight_dir") if "highlight_dir" in raw else None,
     )
 
 
@@ -628,6 +649,109 @@ def load_weather(config: ExportConfig, ingest_sha: str) -> tuple[bytes, str] | N
     return payload, sha
 
 
+@dataclass(frozen=True)
+class Highlight:
+    block: dict[str, Any]
+    highlighted: np.ndarray
+    sha: str
+
+
+def _check_highlight_block(block: Any) -> None:
+    """The ``stats.highlight`` contract block (stats.schema.json), checked before publishing."""
+    if not isinstance(block, dict) or set(block) != set(HIGHLIGHT_KEYS):
+        raise ExportError(f"highlight.json: keys must be exactly {sorted(HIGHLIGHT_KEYS)}")
+    if not isinstance(block["smoothing"], str) or not block["smoothing"].strip():
+        raise ExportError("highlight.json: smoothing must be a non-empty string")
+    for key in ("threshold", "area_ha", "inside_ha", "outside_ha", "iou_vs_perimeter"):
+        value = block[key]
+        if (
+            not isinstance(value, int | float)
+            or isinstance(value, bool)
+            or not math.isfinite(value)
+        ):
+            raise ExportError(f"highlight.json: {key} must be a finite number, got {value!r}")
+        if key != "threshold" and value < 0:
+            raise ExportError(f"highlight.json: {key} must not be negative, got {value!r}")
+    if block["iou_vs_perimeter"] > 1:
+        raise ExportError("highlight.json: iou_vs_perimeter must lie in [0, 1]")
+    if not math.isclose(
+        block["inside_ha"] + block["outside_ha"], block["area_ha"], rel_tol=1e-9, abs_tol=1e-9
+    ):
+        raise ExportError("highlight.json: inside_ha + outside_ha must equal area_ha")
+
+
+def load_highlight(config: ExportConfig, inputs: Inputs) -> Highlight | None:
+    """XP-01 exploratory mask (P1), or None when the highlight stage has not been run."""
+    if config.highlight_dir is None or not (config.highlight_dir / "highlight_meta.json").exists():
+        return None  # the stage has not been run (an empty directory is not an error)
+    meta, sha = _manifest(config.highlight_dir / "highlight_meta.json")
+    _version(meta, "highlight_format_version", "highlight_meta.json")
+    expected = {k: inputs.shas[k] for k in ("change.json", "sar.json", "perimeter.json")}
+    recorded = _get(meta, ("inputs",), "highlight_meta.json")
+    _chain(recorded, expected, "highlight_meta.json", "upstream set")
+    _same_grid(meta.get("grid"), inputs.crop, "highlight_meta.json")
+    file, file_sha = _record(meta, ("outputs", "highlight.json"), "highlight_meta.json")
+    payload = _verified(config.highlight_dir / file, file_sha, "highlight_meta.json")
+    block = _parse(payload, "highlight.json")
+    _check_highlight_block(block)
+    record = _record(meta, ("outputs", "highlight_mask.tif"), "highlight_meta.json")
+    mask = _raster(config.highlight_dir, record, inputs.crop, "uint8", "highlight_meta.json")
+    if not np.isin(mask, (0, 1, 255)).all():
+        raise ExportError("highlight_mask.tif: values must be 0, 1 or 255")
+    if not ((mask == 255) == ~inputs.valid).all():
+        raise ExportError("highlight_mask.tif: must be 255 exactly where the DT-02 mask is 0")
+    return Highlight(block=block, highlighted=mask == 1, sha=sha)
+
+
+def _stats_with_highlight(stats_json: bytes, block: Mapping[str, Any]) -> bytes:
+    """``stats.json`` with its ``highlight`` block filled; every other field unchanged."""
+    doc = _parse(stats_json, "stats.json")
+    if doc.get("highlight") is not None:
+        raise ExportError("stats.json already has a highlight block; re-run CH-02")
+    doc["highlight"] = dict(block)
+    text = json.dumps(doc, indent=2, sort_keys=True, ensure_ascii=True, allow_nan=False)
+    return (text + "\n").encode("utf-8")
+
+
+def _highlight_layer(
+    staging: Path, inputs: Inputs, grid: WebRaster, highlight: Highlight
+) -> dict[str, Any]:
+    """Warp the mask (nearest) and return its P1 layer; transparent where not highlighted."""
+    web = warp_to_web(
+        np.where(highlight.highlighted, 1.0, np.nan),
+        src_transform=Affine(*inputs.crop["transform"]),
+        src_crs=ANALYSIS_CRS,
+        resampling=RESAMPLING,
+    )
+    _same_web_grid(web, grid, HIGHLIGHT_ID)
+    write_png(
+        staging / "layers" / f"{HIGHLIGHT_ID}.png",
+        colorize(web.data, [(0.0, HIGHLIGHT_COLOR), (1.0, HIGHLIGHT_COLOR)]),
+    )
+    threshold = highlight.block["threshold"]
+    legend = {
+        "type": "categorical",
+        "items": [
+            {
+                "value": 1,
+                "label": f"Change above exploratory threshold (smoothed index >= {threshold:g})",
+                "color": HIGHLIGHT_COLOR,
+            }
+        ],
+        "note": HIGHLIGHT_NOTE.format(t=threshold, smoothing=highlight.block["smoothing"]),
+    }
+    return _layer(
+        HIGHLIGHT_ID,
+        "Highlighted radar changes",
+        "highlighted_change",
+        web,
+        legend,
+        visible=False,
+        opacity=0.8,
+        p1=True,
+    )
+
+
 # --------------------------------------------------------------------------- build
 
 
@@ -887,12 +1011,15 @@ def run_export(config: ExportConfig, environ: Mapping[str, str] | None = None) -
     terrain = load_terrain(config, inputs.shas["ingest.json"], inputs.crop)
     optical = load_optical(config, inputs.shas["ingest.json"], inputs.crop)
     weather = load_weather(config, inputs.shas["ingest.json"])
+    highlight = load_highlight(config, inputs)
 
     staging, _ = staging_dirs(config.output_dir)
     try:
         publishing.remove_owned(staging, TOP_FILES, LAYER_SUBDIRS)
         (staging / "layers").mkdir(parents=True)
         layers, grid, domains = _render(staging, inputs)
+        if highlight is not None:
+            layers.append(_highlight_layer(staging, inputs, grid, highlight))
         for extra, fragment_name in (
             (terrain, "terrain_layers.json"),
             (optical, "optical_layers.json"),
@@ -914,12 +1041,17 @@ def run_export(config: ExportConfig, environ: Mapping[str, str] | None = None) -
         )
         _write_json(staging / "case.json", build_case(config, inputs, stamp, version))
         (staging / "perimeter.geojson").write_bytes(inputs.perimeter_geojson)
-        (staging / "stats.json").write_bytes(inputs.stats_json)
+        stats_json = inputs.stats_json
+        if highlight is not None:
+            stats_json = _stats_with_highlight(stats_json, highlight.block)
+        (staging / "stats.json").write_bytes(stats_json)
         input_shas = dict(inputs.shas)
         if terrain is not None:
             input_shas["terrain.json"] = terrain.sha
         if optical is not None:
             input_shas["optical.json"] = optical.sha
+        if highlight is not None:
+            input_shas["highlight_meta.json"] = highlight.sha
         if weather is not None:
             (staging / "weather.json").write_bytes(weather[0])
             input_shas["weather_meta.json"] = weather[1]
@@ -938,6 +1070,7 @@ def run_export(config: ExportConfig, environ: Mapping[str, str] | None = None) -
                 "terrain": terrain is not None,
                 "optical": optical is not None,
                 "weather": weather is not None,
+                "highlight": highlight is not None,
             },
             "display": {
                 "crs": "EPSG:3857",
