@@ -58,7 +58,13 @@ def _cog(path: Path, data: np.ndarray, nodata: float | None) -> dict[str, str]:
     return {"file": path.name, "sha256": _sha(path)}
 
 
-def write_inputs(root: Path, *, hh: np.ndarray = HH, method_id: str = "abs-logratio-hhhv-v1"):
+def write_inputs(
+    root: Path,
+    *,
+    hh: np.ndarray = HH,
+    inside: np.ndarray = INSIDE,
+    method_id: str = "abs-logratio-hhhv-v1",
+):
     """Mimic the CH-01, DT-02 and DT-03 output directories with minimal manifests."""
     grid = {"crs": "EPSG:32610", "transform": list(TRANSFORM)[:6], "width": W, "height": H}
     dirs = {name: root / name for name in ("change", "sar", "perimeter")}
@@ -87,7 +93,7 @@ def write_inputs(root: Path, *, hh: np.ndarray = HH, method_id: str = "abs-logra
         "grid": grid,
         "rasterization": {"rule": "pixel_centre", "all_touched": False, "edge_distance_m": 50.0},
         "outputs": {
-            "perimeter_mask.tif": _cog(dirs["perimeter"] / "perimeter_mask.tif", INSIDE, None),
+            "perimeter_mask.tif": _cog(dirs["perimeter"] / "perimeter_mask.tif", inside, None),
             "perimeter_edge.tif": _cog(dirs["perimeter"] / "perimeter_edge.tif", EDGE, None),
         },
     }
@@ -452,3 +458,76 @@ def test_chance_baseline_is_a_ratio_of_expectations_not_the_expected_iou() -> No
     # H = P = 1 of N = 2: the expected IoU is 1/2 (overlap 1 half the time, else 0), but the
     # agreed ratio-of-expectations baseline is I / (H + P - I) with I = 1/2 -> 1/3.
     assert chance_iou(1, 1, 2) == pytest.approx(1 / 3)
+
+
+# --------------------------------------------------------------------------- second review
+
+
+def _cli_config(tmp_path: Path, dirs: dict[str, Path], **overrides: Any) -> Path:
+    return _write_config(
+        tmp_path / "s.toml",
+        min_region_px=2,
+        change_dir=str(dirs["change"]),
+        sar_dir=str(dirs["sar"]),
+        perimeter_dir=str(dirs["perimeter"]),
+        output_dir=str(tmp_path / "out"),
+        **overrides,
+    )
+
+
+def test_no_reference_pixel_is_a_clean_cli_error_keeping_outputs(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    dirs = write_inputs(tmp_path)
+    path = _cli_config(tmp_path, dirs)
+    assert main(["--config", str(path)]) == 0
+    before = _files(tmp_path / "out")
+    write_inputs(tmp_path, inside=np.zeros((H, W), dtype=np.uint8))
+    assert main(["--config", str(path)]) == 2
+    assert "no valid pixel inside the perimeter" in capsys.readouterr().err
+    assert _files(tmp_path / "out") == before
+
+
+@pytest.mark.parametrize(
+    ("start", "stop", "step", "expected_len", "expected_last"),
+    [
+        (2.0, 1001.9999999996, 1.0, 1000, 1001.0),
+        (2.0, 2.9999999996, 1.0, 1, 2.0),
+        (1.0, 1000.0, 1.0, 1000, 1000.0),
+        (0.5, 5.0, 0.25, 19, 5.0),
+    ],
+    ids=["rounded_up_past_limit", "rounded_up_past_stop", "exactly_1000", "agreed"],
+)
+def test_threshold_grid_never_exceeds_the_stop_or_the_limit(
+    start: float, stop: float, step: float, expected_len: int, expected_last: float
+) -> None:
+    grid = threshold_grid(start, stop, step)
+    assert len(grid) == expected_len and grid[-1] == expected_last
+    assert max(grid) <= stop
+
+
+def test_threshold_grid_over_the_limit_is_rejected() -> None:
+    with pytest.raises(SensitivityError, match="too many"):
+        threshold_grid(1.0, 1001.0, 1.0)  # 1,001 values
+
+
+@pytest.mark.parametrize("key", ["threshold_min", "threshold_max", "threshold_step"])
+def test_huge_integer_threshold_value_is_a_clean_cli_error(
+    tmp_path: Path, key: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    dirs = write_inputs(tmp_path)
+    path = _cli_config(tmp_path, dirs, **{key: None})
+    text = path.read_text(encoding="utf-8") + f"{key} = 1{'0' * 400}" + chr(10)
+    path.write_text(text, encoding="utf-8")
+    assert main(["--config", str(path)]) == 2
+    assert key in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("window", [10**30 + 1, 101])
+def test_oversized_window_is_a_clean_cli_error(
+    tmp_path: Path, window: int, capsys: pytest.CaptureFixture[str]
+) -> None:
+    dirs = write_inputs(tmp_path)
+    path = _cli_config(tmp_path, dirs, windows=[3, window])
+    assert main(["--config", str(path)]) == 2
+    assert "window" in capsys.readouterr().err

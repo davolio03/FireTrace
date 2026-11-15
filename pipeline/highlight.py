@@ -65,6 +65,7 @@ HIGHLIGHT_FORMAT_VERSION = 1
 MASK_NODATA = 255
 PIXEL_AREA_M2 = ANALYSIS_PIXEL_SIZE_M * ANALYSIS_PIXEL_SIZE_M
 CONNECTIVITY = {4: 1, 8: 2}  # neighbourhood size -> skimage connectivity (2-D)
+MAX_WINDOW = 99  # 990 m; larger boxes are not a speckle filter and cost memory/time
 CONFIG_KEYS = frozenset(
     {
         "threshold",
@@ -103,6 +104,17 @@ class HighlightConfig:
     output_dir: Path
 
 
+def finite_number(value: Any) -> float | None:
+    """``value`` as a finite float, or None (bools, non-numbers, NaN/inf, huge integers)."""
+    if not isinstance(value, int | float) or isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except OverflowError:  # a TOML integer too large for a float
+        return None
+    return number if math.isfinite(number) else None
+
+
 # --------------------------------------------------------------------------- core
 
 
@@ -112,8 +124,10 @@ def smooth_valid(index: np.ndarray, valid: np.ndarray, window: int) -> np.ndarra
     Invalid pixels are NaN in the result and never contribute to a neighbour's mean, whatever
     value they hold. ``window = 1`` returns the valid values unchanged.
     """
-    if window < 1 or window % 2 == 0:
-        raise HighlightError(f"smoothing window must be a positive odd integer, got {window}")
+    if window < 1 or window % 2 == 0 or window > MAX_WINDOW:
+        raise HighlightError(
+            f"smoothing window must be a positive odd integer up to {MAX_WINDOW}, got {window}"
+        )
     valid = valid.astype(bool)
     values = np.where(valid, index.astype(np.float64), 0.0)
     if window == 1:
@@ -222,17 +236,16 @@ def load_config(path: Path, base_dir: Path | None = None) -> HighlightConfig:
             raise HighlightError(f"config: '{key}' must be an integer, got {value!r}")
         return value
 
-    threshold = raw.get("threshold")
-    if (
-        not isinstance(threshold, int | float)
-        or isinstance(threshold, bool)
-        or not math.isfinite(threshold)
-    ):
-        raise HighlightError(f"config: 'threshold' must be a finite number, got {threshold!r}")
-    window = integer("smoothing_window")
-    if window < 1 or window % 2 == 0:
+    threshold = finite_number(raw.get("threshold"))
+    if threshold is None:
         raise HighlightError(
-            f"config: 'smoothing_window' must be a positive odd integer ({window})"
+            f"config: 'threshold' must be a finite number, got {raw.get('threshold')!r}"
+        )
+    window = integer("smoothing_window")
+    if window < 1 or window % 2 == 0 or window > MAX_WINDOW:
+        raise HighlightError(
+            f"config: 'smoothing_window' must be a positive odd integer up to {MAX_WINDOW} "
+            f"({window})"
         )
     min_region = integer("min_region_px")
     if min_region < 1:

@@ -47,8 +47,10 @@ from pipeline import highlight, publishing, stats
 from pipeline.change import MAD_SCALE, ChangeError, robust_stats, robust_z
 from pipeline.highlight import (
     CONNECTIVITY,
+    MAX_WINDOW,
     HighlightError,
     agreement,
+    finite_number,
     remove_small_regions,
     smooth_valid,
     threshold_mask,
@@ -128,7 +130,10 @@ class SensitivityConfig:
 def threshold_grid(start: float, stop: float, step: float) -> list[float]:
     """``start, start + step, ... <= stop``, rounded to 10 decimals; must contain 2.0.
 
-    At most ``MAX_THRESHOLDS`` values, all distinct after rounding.
+    Tolerance policy: ``(stop - start) / step`` may be up to 1e-9 below a whole number and
+    still reach it (so 0.5..5.0 by 0.25 ends at 5.0 despite float error), but no emitted
+    value may exceed ``stop``. At most ``MAX_THRESHOLDS`` values, all distinct after
+    rounding.
     """
     if not all(math.isfinite(v) for v in (start, stop, step)):
         raise SensitivityError("threshold_min, threshold_max and threshold_step must be finite")
@@ -139,8 +144,12 @@ def threshold_grid(start: float, stop: float, step: float) -> list[float]:
     ratio = (stop - start) / step
     if not math.isfinite(ratio) or ratio >= MAX_THRESHOLDS:
         raise SensitivityError(f"threshold grid has too many values (limit {MAX_THRESHOLDS})")
-    count = math.floor(round(ratio, 9)) + 1
+    count = math.floor(ratio + 1e-9) + 1
     grid = [round(start + k * step, 10) + 0.0 for k in range(count)]
+    while grid and grid[-1] > stop:  # rounding must never push past the configured max
+        grid.pop()
+    if len(grid) > MAX_THRESHOLDS:
+        raise SensitivityError(f"threshold grid has too many values (limit {MAX_THRESHOLDS})")
     if len(set(grid)) != len(grid):
         raise SensitivityError("threshold grid values are not distinct after rounding")
     if XP01_THRESHOLD not in grid:
@@ -227,14 +236,13 @@ def load_config(path: Path, base_dir: Path | None = None) -> SensitivityConfig:
         raise SensitivityError(f"config: unknown key(s) {unknown}")
 
     def number(key: str) -> float:
-        value = raw.get(key)
-        if (
-            not isinstance(value, int | float)
-            or isinstance(value, bool)
-            or not math.isfinite(value)
-        ):
-            raise SensitivityError(f"config: '{key}' must be a finite number, got {value!r}")
-        return float(value)
+        value = finite_number(raw.get(key))
+        if value is None:
+            shown = raw.get(key)
+            if isinstance(shown, int) and not isinstance(shown, bool):
+                shown = "an integer too large for a float"  # avoid printing 400 digits
+            raise SensitivityError(f"config: '{key}' must be a finite number, got {shown!r}")
+        return value
 
     def integer(key: str) -> int:
         value = raw.get(key)
@@ -253,8 +261,10 @@ def load_config(path: Path, base_dir: Path | None = None) -> SensitivityConfig:
         or len(set(windows)) != len(windows)
     ):
         raise SensitivityError(f"config: 'windows' must be distinct integers, got {windows!r}")
-    if any(w < 1 or w % 2 == 0 for w in windows):
-        raise SensitivityError(f"config: every window must be a positive odd integer {windows}")
+    if any(w < 1 or w % 2 == 0 or w > MAX_WINDOW for w in windows):
+        raise SensitivityError(
+            f"config: every window must be a positive odd integer up to {MAX_WINDOW}"
+        )
     if XP01_WINDOW not in windows:
         raise SensitivityError(f"config: 'windows' must include the XP-01 window {XP01_WINDOW}")
     min_region = integer("min_region_px")
@@ -350,22 +360,25 @@ def run_sensitivity(config: SensitivityConfig) -> dict[str, Any]:
         XP01_CONNECTIVITY,
     )
     points: list[dict[str, Any]] = []
-    for name in INDEX_NAMES:
-        for window in config.windows:
-            smoothed = smooth_valid(indices[name], inputs.valid, window)
-            for threshold in config.thresholds:
-                point = {"index": name, "window": window, "threshold": threshold}
-                point.update(
-                    sweep_point(
-                        smoothed, threshold, inputs, config.min_region_px, config.connectivity
+    try:
+        for name in INDEX_NAMES:
+            for window in config.windows:
+                smoothed = smooth_valid(indices[name], inputs.valid, window)
+                for threshold in config.thresholds:
+                    point = {"index": name, "window": window, "threshold": threshold}
+                    point.update(
+                        sweep_point(
+                            smoothed, threshold, inputs, config.min_region_px, config.connectivity
+                        )
                     )
-                )
-                point["xp01_operating_point"] = has_xp01 and (name, window, threshold) == (
-                    "combined",
-                    XP01_WINDOW,
-                    XP01_THRESHOLD,
-                )
-                points.append(point)
+                    point["xp01_operating_point"] = has_xp01 and (name, window, threshold) == (
+                        "combined",
+                        XP01_WINDOW,
+                        XP01_THRESHOLD,
+                    )
+                    points.append(point)
+    except HighlightError as exc:  # e.g. no valid reference pixel: agreement is undefined
+        raise SensitivityError(str(exc)) from exc
 
     document: dict[str, Any] = {
         "sensitivity_format_version": SENSITIVITY_FORMAT_VERSION,
