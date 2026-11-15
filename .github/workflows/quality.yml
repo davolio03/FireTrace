@@ -35,8 +35,10 @@ jobs:
         run: python3 scripts/check.py
       - name: Check Python formatting
         run: uv run ruff format --check .
-      - name: Test quality command orchestration
-        run: python3 -m unittest discover -s tests -p test_quality_commands.py
+      - name: Test quality command orchestration and private board configuration
+        run: |
+          python3 -m unittest discover -s tests -p test_quality_commands.py
+          python3 -m unittest discover -s tests -p test_kanvas_configuration.py
       - name: Validate existing contract fixtures
         run: uv run contracts/tools/validate.py
       - name: Validate the production guided story

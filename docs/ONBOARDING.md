@@ -6,14 +6,14 @@ The case, stack and executable v1 contracts are selected. Pipeline/API/web imple
 
 1. Use the agreed Python **3.11** and uv environment; install tools only with local permission. [QUALITY](QUALITY.md) distinguishes current checks from future stack commands.
 2. Run `python3 scripts/check.py` and `uv run contracts/tools/validate.py`. If uv is absent but jsonschema is already installed, `python3 contracts/tools/validate.py` provides limited direct-run evidence: record interpreter/dependency versions and any mismatch with the declaration. Do not treat bootstrap checks as app tests or an out-of-spec environment as canonical verification.
-3. Read [.agents/skills/kanvas/SKILL.md](../.agents/skills/kanvas/SKILL.md), then run:
+3. Read [.agents/skills/kanvas/SKILL.md](../.agents/skills/kanvas/SKILL.md). Before `status` or `ready`, copy `.agents/skills/kanvas/remote.example.json` to `.agents/skills/kanvas/remote.json` if no configured file exists. Replace the reserved example URL with the approved live-board endpoint supplied privately by the maintainer. Keep this file untracked; do not overwrite existing working configuration. With separately authorized remote access, run:
 
    ```sh
    python3 .agents/skills/kanvas/kanvas.py status
    python3 .agents/skills/kanvas/kanvas.py ready
    ```
 
-   The CLI reads `.agents/skills/kanvas/remote.json` and writes the live board at `http://andriudevserver.tail8ddc4a.ts.net:8765/FireTrace/`; `git pull` brings the config. Do not pass `-b`, set `KANVAS_BOARD`, or edit a local `kanvas.json`. If nothing is approved, report it to the human rather than approving a proposal yourself.
+   The CLI uses the ignored local endpoint configuration; `git pull` brings only the example. Missing configuration blocks board work: do not fall back to a local snapshot. Do not pass `-b`, set `KANVAS_BOARD`, or edit a local `kanvas.json`. If nothing is approved, report it to the human rather than approving a proposal yourself.
 4. Agree the task owner and isolated worktree. With explicit Git authorization, branch from current `origin/main` into a separate worktree; one writer owns it. No fetch, staging, commit or publication is implied by this guide.
 5. For Python work in `pipeline/` or `api/`, run `uv sync` once, then `python3 scripts/check.py` (ruff check + pytest from `quality.json`) and `uv run ruff format --check .`. No processing or API start command exists yet.
 6. Read only relevant fixtures and affected code; agree open science/interfaces with the producer and consumer. Configure real lint/tests before the first application source file.

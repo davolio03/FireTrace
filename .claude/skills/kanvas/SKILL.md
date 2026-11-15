@@ -7,13 +7,13 @@ compatibility: Requires Python 3.8 or later.
 
 # Kanvas
 
-The board is `kanvas.json` at the project root. Change it only through the CLI in `.agents/skills/kanvas/`; the CLI enforces the workflow and keeps the file valid:
+The canonical board is remote. Follow [.agents/skills/kanvas/SKILL.md](../../../.agents/skills/kanvas/SKILL.md) for live-board configuration and authorization. Configure ignored `.agents/skills/kanvas/remote.json` from `remote.example.json` with the approved endpoint supplied privately by the maintainer before running `status` or `ready`. Change the board only through the CLI in `.agents/skills/kanvas/`:
 
 ```bash
 python .agents/skills/kanvas/kanvas.py <command>
 ```
 
-Use `python3` where `python` is missing. Never edit `kanvas.json` by hand. The human watches the board in a browser, where your changes appear within a second. It opens with `kanvas serve` when Kanvas is installed, or `python .agents/skills/kanvas/kanvas.py serve`. When Kanvas already runs for another project, this opens the board there and returns at once; otherwise it keeps running until stopped.
+Use `python3` where `python` is missing. Never edit or use a local `kanvas.json` snapshot, set `KANVAS_BOARD`, or pass `-b`. Missing live configuration blocks board work; do not fall back locally. `git pull` brings only the public example, not private endpoints. `--local` and `kanvas serve` are only for the board-server computer under separate authorization.
 
 ## Workflow
 

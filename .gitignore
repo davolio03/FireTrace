@@ -70,3 +70,7 @@ Thumbs.db
 *.tar
 *.tar.gz
 *.tgz
+
+# Private live-board configuration and obsolete local snapshot
+/.agents/skills/kanvas/remote.json
+/kanvas.json
