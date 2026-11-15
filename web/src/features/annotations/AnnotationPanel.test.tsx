@@ -74,6 +74,7 @@ describe('analyst annotations', () => {
       coordinates: [-121.4, 35.9],
     })
     expect(screen.getByText(/analyst judgement/i)).toBeTruthy()
+    expect(screen.getByText('Annotation saved locally.')).toBeTruthy()
   })
 
   it('does not save without a supported selection', async () => {
@@ -89,6 +90,31 @@ describe('analyst annotations', () => {
     fireEvent.click(screen.getByRole('button', { name: /save annotation/i }))
     expect(screen.getByRole('alert')).toBeTruthy()
     expect(loadAnnotations(caseFixture.case_id)).toBeNull()
+  })
+
+  it('clears the success notice when a later storage operation fails', async () => {
+    show()
+    act(() =>
+      mapStore.getState().select({ type: 'point', point: [-121.4, 35.9] }),
+    )
+    fireEvent.change(screen.getByLabelText('Author'), {
+      target: { value: 'Analyst' },
+    })
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: /save annotation/i }),
+      ).not.toHaveProperty('disabled', true),
+    )
+    fireEvent.click(screen.getByRole('button', { name: /save annotation/i }))
+    const saved = loadAnnotations(caseFixture.case_id)
+    expect(screen.getByText('Annotation saved locally.')).toBeTruthy()
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementationOnce(() => {
+      throw new Error('Storage full')
+    })
+    fireEvent.click(screen.getByRole('button', { name: /save annotation/i }))
+    expect(screen.queryByText('Annotation saved locally.')).toBeNull()
+    expect(screen.getByRole('alert').textContent).toMatch(/storage full/i)
+    expect(loadAnnotations(caseFixture.case_id)).toEqual(saved)
   })
 
   it('saves and shows a profile annotation without inventing aggregate evidence', async () => {
@@ -153,6 +179,7 @@ describe('analyst annotations', () => {
       screen.getByRole('button', { name: /confirm replace annotations/i }),
     )
     expect(loadAnnotations(caseFixture.case_id)).toEqual(imported)
+    expect(screen.getByText('Annotations imported locally.')).toBeTruthy()
   })
 
   it('exports a report with a mock notice and the reference perimeter caution', async () => {

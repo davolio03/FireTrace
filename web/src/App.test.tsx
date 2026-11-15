@@ -1,4 +1,5 @@
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -6,6 +7,7 @@ import {
   waitFor,
 } from '@testing-library/react'
 import type { ReactNode } from 'react'
+import { useEffect, useRef } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import caseFixture from '../../contracts/fixtures/web/case.json'
 import storyJson from './story/story.json'
@@ -24,14 +26,19 @@ vi.mock('./features/map/CaseMap', () => ({
   CaseMap: ({
     dates = { before: '', after: '' },
     overlay = null,
+    sidebar,
   }: {
     dates?: { before: string; after: string }
     overlay?: ReactNode
+    sidebar?: ReactNode
   }) => (
-    <div role="region" aria-label="Map of Big Sur">
-      {dates.before} / {dates.after}
-      {overlay}
-    </div>
+    <>
+      <div role="region" aria-label="Map of Big Sur">
+        {dates.before} / {dates.after}
+        {overlay}
+      </div>
+      {sidebar}
+    </>
   ),
 }))
 
@@ -39,16 +46,151 @@ vi.mock('./features/map/CinematicMap', () => ({
   CinematicMap: () => <div data-testid="cinematic-map" />,
 }))
 
+let diveAutoCompletes = true
+
 vi.mock('./features/map/LocationMap', () => ({
-  LocationMap: ({ bbox }: { bbox: number[] }) => (
-    <div role="region" aria-label="Location map">
-      {bbox.join(',')}
-    </div>
-  ),
+  LocationMap: ({
+    bbox,
+    diveToken,
+    onDiveComplete,
+  }: {
+    bbox: number[]
+    diveToken?: number
+    onDiveComplete?: (camera: {
+      center: [number, number]
+      zoom: number
+    }) => void
+  }) => {
+    const seen = useRef(diveToken ?? 0)
+    useEffect(() => {
+      if (!diveToken || diveToken === seen.current) return
+      seen.current = diveToken
+      if (!diveAutoCompletes) return
+      onDiveComplete?.({ center: [-121.47, 35.92], zoom: 11 })
+    }, [diveToken, onDiveComplete])
+    return (
+      <div role="region" aria-label="Location map">
+        {bbox.join(',')}
+      </div>
+    )
+  },
 }))
 
 describe('application scaffold', () => {
   afterEach(cleanup)
+  it('shows the selected evidence after leaving the final story chapter', async () => {
+    render(<App />)
+    fireEvent.click(
+      await screen.findByRole('button', { name: /watch the story/i }),
+    )
+    fireEvent.click(screen.getByLabelText('Go to step 7'))
+    fireEvent.click(screen.getByText('Explore the evidence'))
+
+    expect(mapStore.getState().panel).toBe('inspector')
+    expect(
+      screen.getByRole('heading', { name: 'Evidence Inspector' }),
+    ).toBeTruthy()
+  })
+  it('shows the selected evidence after leaving the final chapter with Escape', async () => {
+    render(<App />)
+    fireEvent.click(
+      await screen.findByRole('button', { name: /watch the story/i }),
+    )
+    fireEvent.click(screen.getByLabelText('Go to step 7'))
+    fireEvent.keyDown(document.body, { key: 'Escape' })
+    expect(mapStore.getState().panel).toBe('inspector')
+    expect(
+      screen.getByRole('heading', { name: 'Evidence Inspector' }),
+    ).toBeTruthy()
+  })
+  it('enters the analysis even when the globe never reports the descent', async () => {
+    diveAutoCompletes = false
+    try {
+      render(<App />)
+      fireEvent.click(
+        await screen.findByRole('button', { name: /explore analysis/i }),
+      )
+      expect(
+        await screen.findByRole(
+          'region',
+          { name: /map of big sur/i },
+          { timeout: 4000 },
+        ),
+      ).toBeTruthy()
+    } finally {
+      diveAutoCompletes = true
+    }
+  })
+  it('exposes the analysis as an instrument rail with one floating panel', async () => {
+    render(<App />)
+    fireEvent.click(
+      await screen.findByRole('button', { name: /explore analysis/i }),
+    )
+    const rail = screen.getByRole('navigation', { name: /analysis tools/i })
+    expect(rail).toBeTruthy()
+    const inspect = screen.getByRole('button', { name: 'Inspect' })
+    fireEvent.click(inspect)
+    expect(inspect.getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByRole('region', { name: /map of big sur/i })).toBeTruthy()
+    expect(screen.getByLabelText(/inspect panel/i)).toBeTruthy()
+    // Number keys switch instruments.
+    fireEvent.keyDown(document.body, { key: '3' })
+    expect(
+      screen
+        .getByRole('button', { name: 'Zones' })
+        .getAttribute('aria-pressed'),
+    ).toBe('true')
+    fireEvent.keyDown(document.body, { key: '4' })
+    expect(
+      screen
+        .getByRole('button', { name: 'Transect' })
+        .getAttribute('aria-pressed'),
+    ).toBe('true')
+  })
+  it('keeps the MOCK notice visible in the analysis HUD', async () => {
+    render(<App />)
+    fireEvent.click(
+      await screen.findByRole('button', { name: /explore analysis/i }),
+    )
+    expect(
+      screen.getByText(/MOCK DATA - NOT SCIENTIFIC VALIDATION/i),
+    ).toBeTruthy()
+  })
+  it('organizes analysis tools beside the map and preserves form state across panels', async () => {
+    render(<App />)
+    await screen.findByText(caseFixture.fire_start)
+    fireEvent.click(screen.getByRole('button', { name: /explore analysis/i }))
+    expect(
+      screen.getByRole('navigation', { name: /analysis tools/i }),
+    ).toBeTruthy()
+    const annotations = screen.getByRole('button', { name: 'Annotations' })
+    fireEvent.click(annotations)
+    expect(annotations.getAttribute('aria-pressed')).toBe('true')
+    fireEvent.change(screen.getByLabelText('Author'), {
+      target: { value: 'Analyst' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Layers' }))
+    fireEvent.click(annotations)
+    expect((screen.getByLabelText('Author') as HTMLInputElement).value).toBe(
+      'Analyst',
+    )
+    expect(screen.getByRole('region', { name: /map of big sur/i })).toBeTruthy()
+  })
+  it('keeps the active map tool and selection visible while another panel is open', async () => {
+    render(<App />)
+    await screen.findByText(caseFixture.fire_start)
+    fireEvent.click(screen.getByRole('button', { name: /explore analysis/i }))
+    act(() => {
+      mapStore.getState().setTool('inspect')
+      mapStore.getState().select({ type: 'point', point: [-121.4, 35.9] })
+    })
+    expect(screen.getByText('Inspect mode')).toBeTruthy()
+    expect(screen.getByText('Point selected')).toBeTruthy()
+    act(() => {
+      mapStore.getState().setTool('pan')
+      mapStore.getState().select({ type: 'none' })
+    })
+  })
   it('introduces the case, displays an accessible map and labels mock data', async () => {
     render(<App />)
     expect(
@@ -64,7 +206,7 @@ describe('application scaffold', () => {
     fireEvent.click(screen.getByRole('button', { name: /explore analysis/i }))
     expect(screen.getByRole('region', { name: /map of big sur/i })).toBeTruthy()
     expect(await screen.findByText('2026-08-16 / 2026-10-03')).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: /back to overview/i }))
+    fireEvent.click(screen.getByRole('button', { name: /overview/i }))
     expect(
       screen.getByRole('button', { name: /explore analysis/i }),
     ).toBeTruthy()

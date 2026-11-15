@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useState, type FormEvent } from 'react'
 import type { operations } from '../../generated/api'
 import { useMapStore } from '../../state/mapStore'
+import { AnimatedValue } from './AnimatedValue'
 import { ZoneEvidence } from '../zones/ZoneEvidence'
 
 type PointEvidence =
@@ -228,22 +229,36 @@ export function Inspector({ caseData }: { caseData: CaseData | null }) {
                     <tbody>
                       <tr>
                         <th>HH</th>
-                        <td>{value(data.hh_db.t1)}</td>
-                        <td>{value(data.hh_db.t2)}</td>
-                        <td>{value(data.hh_db.delta)}</td>
+                        <td>
+                          <AnimatedValue value={data.hh_db.t1} />
+                        </td>
+                        <td>
+                          <AnimatedValue value={data.hh_db.t2} />
+                        </td>
+                        <td>
+                          <AnimatedValue value={data.hh_db.delta} />
+                        </td>
                       </tr>
                       <tr>
                         <th>HV</th>
-                        <td>{value(data.hv_db.t1)}</td>
-                        <td>{value(data.hv_db.t2)}</td>
-                        <td>{value(data.hv_db.delta)}</td>
+                        <td>
+                          <AnimatedValue value={data.hv_db.t1} />
+                        </td>
+                        <td>
+                          <AnimatedValue value={data.hv_db.t2} />
+                        </td>
+                        <td>
+                          <AnimatedValue value={data.hv_db.delta} />
+                        </td>
                       </tr>
                     </tbody>
                   </table>
-                  <p>Change index: {value(data.change_index)}</p>
+                  <p>
+                    Change index: <AnimatedValue value={data.change_index} />
+                  </p>
                   <p>
                     Percentile among valid pixels:{' '}
-                    <span>{value(data.change_index_percentile)}</span>
+                    <AnimatedValue value={data.change_index_percentile} />
                   </p>
                 </>
               )}

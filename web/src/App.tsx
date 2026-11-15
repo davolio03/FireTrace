@@ -1,5 +1,26 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import {
+  domAnimation,
+  LazyMotion,
+  MotionConfig,
+  type Variants,
+} from 'motion/react'
+import * as m from 'motion/react-m'
+import {
+  Activity,
+  ArrowLeft,
+  ArrowRight,
+  BarChart3,
+  Crosshair,
+  Layers,
+  MapPin,
+  NotebookPen,
+  Play,
+  Route,
+  ScanSearch,
+  X,
+} from 'lucide-react'
 import storyJson from './story/story.json'
 import { parseStory } from './features/story/story'
 import { StoryView } from './features/story/StoryView'
@@ -17,11 +38,25 @@ import { MetricsPanel } from './features/metrics/MetricsPanel'
 import { WeatherPanel } from './features/weather/WeatherPanel'
 import { ProfilePanel } from './features/profile/ProfilePanel'
 import { AnnotationPanel } from './features/annotations/AnnotationPanel'
-import { mapStore, type LonLat } from './state/mapStore'
-import type { ComparisonDates } from './features/map/ComparisonControls'
+import { mapStore, useMapStore, type LonLat } from './state/mapStore'
+import {
+  ComparisonControls,
+  type ComparisonDates,
+} from './features/map/ComparisonControls'
+import { LayerControls } from './features/map/LayerControls'
 import { layersAreRenderable, type Layer } from './features/map/layers'
 
 type CaseData = Awaited<ReturnType<typeof loadCaseData>>['case']
+type WorkspacePanel =
+  'layers' | 'inspect' | 'zones' | 'transect' | 'annotations' | 'results'
+const workspacePanels = [
+  { id: 'layers', label: 'Layers', icon: Layers },
+  { id: 'inspect', label: 'Inspect', icon: Crosshair },
+  { id: 'zones', label: 'Zones', icon: ScanSearch },
+  { id: 'transect', label: 'Transect', icon: Route },
+  { id: 'annotations', label: 'Annotations', icon: NotebookPen },
+  { id: 'results', label: 'Results', icon: BarChart3 },
+] as const
 
 /**
  * Leaving the story keeps its layers and selection, but levels the camera for
@@ -59,10 +94,34 @@ function isValidSource(
 
 const queryClient = new QueryClient()
 
+/**
+ * Entrance choreography: the overview reads in order instead of appearing at
+ * once. With reduced motion the elements are simply present.
+ */
+const revealContainer: Variants = {
+  hidden: {},
+  show: {
+    transition: { staggerChildren: 0.07, delayChildren: 0.04 },
+  },
+}
+
+const revealItem: Variants = {
+  hidden: { opacity: 0, y: 18 },
+  show: {
+    opacity: 1,
+    y: 0,
+    transition: { duration: 0.5, ease: [0.2, 0.7, 0.2, 1] },
+  },
+}
+
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <AppContent />
+      <MotionConfig reducedMotion="user">
+        <LazyMotion features={domAnimation} strict>
+          <AppContent />
+        </LazyMotion>
+      </MotionConfig>
     </QueryClientProvider>
   )
 }
@@ -82,18 +141,91 @@ function AppContent() {
     'overview',
   )
   const [profileSample, setProfileSample] = useState<LonLat | null>(null)
+  const [activePanel, setActivePanel] = useState<WorkspacePanel>('layers')
+  const [diveToken, setDiveToken] = useState(0)
+  const mapTool = useMapStore((state) => state.tool)
+  const mapSelection = useMapStore((state) => state.selection)
+  const comparison = useMapStore((state) => state.compare)
   const mapCapture = useRef<(() => string) | null>(null)
   const setCapture = useCallback((capture: (() => string) | null) => {
     mapCapture.current = capture
   }, [])
+  // The descent from the globe ends where the analysis map starts, so the
+  // shared camera keeps the reader's place. If the map never reports the
+  // descent, the reader still enters the analysis after a short wait.
+  const [diving, setDiving] = useState(false)
+  const completeDive = useCallback(
+    (camera: { center: [number, number]; zoom: number }) => {
+      mapStore
+        .getState()
+        .flyTo(
+          { center: camera.center, zoom: camera.zoom, bearing: 0, pitch: 0 },
+          0,
+        )
+      setDiving(false)
+      setView('analysis')
+    },
+    [],
+  )
+  useEffect(() => {
+    if (!diving) return
+    const fallback = setTimeout(() => {
+      setDiving(false)
+      setView('analysis')
+    }, 2500)
+    return () => clearTimeout(fallback)
+  }, [diving])
 
   const reducedMotion = usePrefersReducedMotion()
+  const activeToolLabel =
+    workspacePanels.find((panel) => panel.id === activePanel)?.label ?? 'Tools'
+  const mapToolLabel =
+    mapTool === 'inspect'
+      ? 'Inspect mode'
+      : mapTool === 'draw-profile'
+        ? 'Draw transect'
+        : 'Pan mode'
+  const mapSelectionLabel =
+    mapSelection.type === 'point'
+      ? 'Point selected'
+      : mapSelection.type === 'profile'
+        ? `Transect ${mapSelection.line.length} pts`
+        : mapSelection.type === 'zone'
+          ? `Zone ${mapSelection.zoneId}`
+          : 'No selection'
+  // Number keys switch tools, like an instrument panel.
+  useEffect(() => {
+    if (view !== 'analysis') return
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null
+      if (
+        target &&
+        (target.isContentEditable ||
+          ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))
+      )
+        return
+      const index = Number(event.key) - 1
+      const panel = workspacePanels[index]
+      if (!panel) return
+      setActivePanel(panel.id)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [view])
   // Only play the story written for the loaded case.
   const story =
     productionStory && caseData?.case_id === productionStory.case_id
       ? productionStory
       : null
-  const player = useStoryPlayer(story, layers, reducedMotion, levelCamera)
+  const onStoryExit = () => {
+    const panel = mapStore.getState().panel
+    if (panel === 'inspector') setActivePanel('inspect')
+    else if (panel === 'profile') setActivePanel('transect')
+    else if (panel === 'metrics' || panel === 'weather')
+      setActivePanel('results')
+    levelCamera()
+  }
+  const player = useStoryPlayer(story, layers, reducedMotion, onStoryExit)
   const { start, resume } = player
   const watchStory = () => {
     setView('story')
@@ -160,171 +292,343 @@ function AppContent() {
     }
   }, [])
 
+  const isHud = view === 'analysis'
+
   return (
-    <main className="mx-auto max-w-6xl p-6">
-      {status === 'mock' && (
-        <p
-          role="status"
-          className="mb-4 rounded border border-amber-700 bg-amber-100 p-3 text-amber-950"
-        >
-          MOCK — synthetic data for development, not scientific validation.
-        </p>
-      )}
-      {(status === 'error' || manifestError) && (
-        <p role="alert" className="mb-4 text-red-700">
-          Unable to load case data.
-        </p>
-      )}
-      <h1 className="text-3xl font-semibold">FireTrace Explorer</h1>
-      {view === 'overview' ? (
-        <>
-          {caseData && (
-            <div className="mt-6 grid gap-6 lg:grid-cols-2">
-              <section aria-labelledby="case-heading" className="space-y-4">
-                <h2 id="case-heading" className="text-2xl font-semibold">
-                  {caseData.name}
-                </h2>
-                <p>{caseData.location}</p>
-                <dl className="grid gap-3 sm:grid-cols-2">
-                  <div>
-                    <dt className="font-semibold">Fire start</dt>
-                    <dd>{caseData.fire_start || 'Unavailable'}</dd>
-                  </div>
-                  <div>
-                    <dt className="font-semibold">Before observation (UTC)</dt>
-                    <dd>{caseData.epochs?.t1?.datetime || 'Unavailable'}</dd>
-                  </div>
-                  <div>
-                    <dt className="font-semibold">After observation (UTC)</dt>
-                    <dd>{caseData.epochs?.t2?.datetime || 'Unavailable'}</dd>
-                  </div>
-                  <div>
-                    <dt className="font-semibold">Radar product</dt>
-                    <dd>{caseData.product || 'Unavailable'}</dd>
-                  </div>
-                </dl>
-                <p>
-                  Synthetic aperture radar (SAR) observes how the surface
-                  scatters radar signals. Comparing observations can reveal
-                  changes worth investigating.
-                </p>
-                <p className="rounded border border-amber-700 bg-amber-50 p-3 text-amber-950">
-                  Exploratory evidence: observed radar changes are not confirmed
-                  burned area. Moisture, terrain, geometry and vegetation can
-                  also affect the signal.
-                </p>
-                <h3 className="font-semibold">Sources</h3>
-                <ul className="list-inside list-disc">
-                  {Array.isArray(caseData.sources) &&
-                    caseData.sources
-                      .filter(isValidSource)
-                      .map((source) => (
-                        <li key={source.url}>{source.label}</li>
-                      ))}
-                </ul>
-              </section>
-              {Array.isArray(caseData.aoi_bbox) &&
-                caseData.aoi_bbox.length === 4 &&
-                caseData.aoi_bbox.every(Number.isFinite) && (
-                  <LocationMap bbox={caseData.aoi_bbox} />
-                )}
+    <main className={isHud ? 'app-shell app-shell--hud' : 'app-shell'}>
+      {!isHud && (
+        <header className="app-header">
+          <div className="app-brand">
+            <span className="brand-mark" aria-hidden="true">
+              <Activity size={21} />
+            </span>
+            <div>
+              <span className="brand-eyebrow">NISAR · FIELD EXPLORER</span>
+              <h1>FireTrace Explorer</h1>
             </div>
-          )}
-          <div className="mt-6 flex flex-wrap gap-3">
-            {player.available && (
-              <button
-                type="button"
-                onClick={watchStory}
-                className="rounded bg-slate-900 px-4 py-2 text-white focus-visible:outline-2 focus-visible:outline-offset-2"
-              >
-                Watch the story ({storyMinutes} min)
-              </button>
-            )}
-            <button
-              type="button"
-              onClick={() => setView('analysis')}
-              className={
-                player.available
-                  ? 'rounded border px-4 py-2 focus-visible:outline-2 focus-visible:outline-offset-2'
-                  : 'rounded bg-slate-900 px-4 py-2 text-white focus-visible:outline-2 focus-visible:outline-offset-2'
-              }
-            >
-              Explore analysis
-            </button>
           </div>
-        </>
-      ) : view === 'story' && player.active ? (
-        <StoryView
-          player={player}
-          layers={layers}
-          dataBaseUrl={import.meta.env.VITE_DATA_BASE_URL || '/'}
-          dates={dates}
-          isMock={status === 'mock'}
-          reducedMotion={reducedMotion}
-          onLeave={player.exit}
-          onExplore={player.exit}
-        />
-      ) : (
-        <>
-          <div className="mt-4 flex flex-wrap gap-3">
-            <button
-              type="button"
-              onClick={() => {
-                player.exit()
-                setView('overview')
-              }}
-              className="rounded border px-4 py-2 focus-visible:outline-2 focus-visible:outline-offset-2"
-            >
-              Back to overview
-            </button>
-            {/* One story button: resume where the user left it mid-way,
-                otherwise (never started, or finished) play from the start. */}
-            {canResume ? (
-              <button
-                type="button"
-                onClick={resumeStory}
-                className="rounded bg-slate-900 px-4 py-2 text-white focus-visible:outline-2 focus-visible:outline-offset-2"
-              >
-                Resume story · {player.index + 1}/{player.count}
-              </button>
-            ) : (
-              player.available && (
+          <div className="header-meta">
+            <span className="header-location">
+              <MapPin size={14} aria-hidden="true" />{' '}
+              {caseData?.location || 'Location unavailable'}
+            </span>
+            <span className={`data-badge data-badge--${status}`}>
+              <span className="status-dot" aria-hidden="true" />
+              {status === 'mock'
+                ? 'MOCK DATA'
+                : status === 'real'
+                  ? 'REAL DATA'
+                  : status === 'error'
+                    ? 'DATA UNAVAILABLE'
+                    : 'LOADING DATA'}
+            </span>
+          </div>
+        </header>
+      )}
+      <div className={isHud ? 'hud-root' : 'app-content'}>
+        {(status === 'error' || manifestError) && (
+          <p role="alert" className="data-error">
+            Unable to load case data.
+          </p>
+        )}
+        {view === 'overview' ? (
+          <div className="overview">
+            {caseData && (
+              <>
+                {Array.isArray(caseData.aoi_bbox) &&
+                  caseData.aoi_bbox.length === 4 &&
+                  caseData.aoi_bbox.every(Number.isFinite) && (
+                    <m.div
+                      className="overview-globe"
+                      initial={{ opacity: 0, scale: 1.04 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      transition={{ duration: 0.9, ease: [0.2, 0.7, 0.2, 1] }}
+                    >
+                      <LocationMap
+                        bbox={caseData.aoi_bbox}
+                        diveToken={diveToken}
+                        onDiveComplete={completeDive}
+                      />
+                    </m.div>
+                  )}
+                <m.div
+                  className="overview-overlay"
+                  initial="hidden"
+                  animate="show"
+                  variants={revealContainer}
+                >
+                  <m.section
+                    aria-labelledby="case-heading"
+                    className="overview-copy"
+                    variants={revealItem}
+                  >
+                    <p className="section-kicker">
+                      <span /> NISAR CASE STUDY / 01
+                    </p>
+                    <h2 id="case-heading" className="overview-title">
+                      {caseData.name}
+                    </h2>
+                    <p className="overview-location">
+                      <MapPin size={17} aria-hidden="true" />{' '}
+                      {caseData.location}
+                    </p>
+                    <p className="overview-lead">
+                      Explore how the landscape changed through the lens of
+                      radar.
+                    </p>
+                    <p className="overview-description">
+                      Synthetic aperture radar (SAR) observes how the surface
+                      scatters radar signals. Comparing observations can reveal
+                      changes worth investigating.
+                    </p>
+                    <div className="overview-actions">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDiving(true)
+                          setDiveToken((token) => token + 1)
+                        }}
+                        className="button-primary"
+                      >
+                        Explore analysis{' '}
+                        <ArrowRight size={17} aria-hidden="true" />
+                      </button>
+                      {player.available && (
+                        <button
+                          type="button"
+                          onClick={watchStory}
+                          className="button-secondary"
+                        >
+                          <Play size={15} aria-hidden="true" /> Watch the story
+                          ({storyMinutes} min)
+                        </button>
+                      )}
+                    </div>
+                    <p className="science-note">
+                      Exploratory evidence: observed radar changes are not
+                      confirmed burned area. Moisture, terrain, geometry and
+                      vegetation can also affect the signal.
+                    </p>
+                    <details className="source-details">
+                      <summary>View data sources</summary>
+                      <ul>
+                        {Array.isArray(caseData.sources) &&
+                          caseData.sources
+                            .filter(isValidSource)
+                            .map((source) => (
+                              <li key={source.url}>{source.label}</li>
+                            ))}
+                      </ul>
+                    </details>
+                  </m.section>
+                  <m.aside
+                    className="overview-meta"
+                    aria-label="Case metadata"
+                    variants={revealItem}
+                  >
+                    <div>
+                      <span className="overview-meta-label">Fire start</span>
+                      <span className="overview-meta-value">
+                        {caseData.fire_start || 'Unavailable'}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="overview-meta-label">
+                        Before observation (UTC)
+                      </span>
+                      <span className="overview-meta-value">
+                        {caseData.epochs?.t1?.datetime || 'Unavailable'}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="overview-meta-label">
+                        After observation (UTC)
+                      </span>
+                      <span className="overview-meta-value">
+                        {caseData.epochs?.t2?.datetime || 'Unavailable'}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="overview-meta-label">Radar product</span>
+                      <span className="overview-meta-value">
+                        {caseData.product || 'Unavailable'}
+                      </span>
+                    </div>
+                  </m.aside>
+                </m.div>
+              </>
+            )}
+            {status === 'mock' && (
+              <p role="status" className="overview-mock">
+                <span className="status-dot" aria-hidden="true" />
+                MOCK — synthetic data for development, not scientific
+                validation.
+              </p>
+            )}
+          </div>
+        ) : view === 'story' && player.active ? (
+          <StoryView
+            player={player}
+            layers={layers}
+            dataBaseUrl={import.meta.env.VITE_DATA_BASE_URL || '/'}
+            dates={dates}
+            isMock={status === 'mock'}
+            reducedMotion={reducedMotion}
+            onLeave={player.exit}
+            onExplore={player.exit}
+          />
+        ) : (
+          <div className="hud">
+            <header className="hud-bar">
+              <div className="hud-identity">
+                <span className="h-mark" aria-hidden="true">
+                  <Activity size={15} />
+                </span>
+                <span className="hud-case">{caseData?.name ?? 'Case'}</span>
+                <span className="hud-window">
+                  {caseData?.epochs?.t1?.datetime?.slice(0, 10) ?? '-'} to{' '}
+                  {caseData?.epochs?.t2?.datetime?.slice(0, 10) ?? '-'}
+                </span>
+              </div>
+              <div className="hud-bar-actions">
+                {status === 'mock' && (
+                  <span className="hud-mock" role="status">
+                    <span className="status-dot" aria-hidden="true" />
+                    <span className="hud-mock-full">
+                      MOCK DATA - NOT SCIENTIFIC VALIDATION
+                    </span>
+                    <span className="hud-mock-short" aria-hidden="true">
+                      MOCK
+                    </span>
+                  </span>
+                )}
                 <button
                   type="button"
-                  onClick={watchStory}
-                  className="rounded border px-4 py-2 focus-visible:outline-2 focus-visible:outline-offset-2"
+                  onClick={() => {
+                    player.exit()
+                    setView('overview')
+                  }}
+                  className="hud-button"
                 >
-                  Play story
+                  <ArrowLeft size={14} aria-hidden="true" /> Overview
                 </button>
-              )
-            )}
-          </div>
-          <div className="mt-6 grid gap-4">
-            <div className="overflow-hidden rounded-lg border border-slate-300">
+                {canResume ? (
+                  <button
+                    type="button"
+                    onClick={resumeStory}
+                    className="hud-button"
+                  >
+                    <Play size={13} aria-hidden="true" /> Resume story ·{' '}
+                    {player.index + 1}/{player.count}
+                  </button>
+                ) : (
+                  player.available && (
+                    <button
+                      type="button"
+                      onClick={watchStory}
+                      className="hud-button"
+                    >
+                      <Play size={13} aria-hidden="true" /> Play story
+                    </button>
+                  )
+                )}
+              </div>
+            </header>
+            <div className="hud-stage">
               <CaseMap
                 layers={layers}
                 dates={dates}
                 dataBaseUrl={import.meta.env.VITE_DATA_BASE_URL || '/'}
                 profileSample={profileSample}
                 onCaptureReady={setCapture}
+                sidebar={
+                  <>
+                    <nav className="hud-rail" aria-label="Analysis tools">
+                      {workspacePanels.map(({ id, label, icon: Icon }) => (
+                        <button
+                          key={id}
+                          type="button"
+                          aria-pressed={activePanel === id}
+                          aria-label={label}
+                          title={label}
+                          onClick={() => setActivePanel(id)}
+                          className="hud-rail-button"
+                        >
+                          <Icon size={18} aria-hidden="true" />
+                          <span className="hud-rail-tip" aria-hidden="true">
+                            {label}
+                          </span>
+                        </button>
+                      ))}
+                    </nav>
+                    <m.section
+                      className="hud-panel"
+                      aria-label={activeToolLabel + ' panel'}
+                      initial={{ opacity: 0, x: -24 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{
+                        type: 'spring',
+                        stiffness: 320,
+                        damping: 32,
+                      }}
+                    >
+                      <div className="hud-panel-head">
+                        <span className="hud-panel-title">
+                          {activeToolLabel}
+                        </span>
+                        <button
+                          type="button"
+                          className="hud-panel-close"
+                          onClick={() => setActivePanel('layers')}
+                          aria-label="Show layers panel"
+                        >
+                          <X size={14} aria-hidden="true" />
+                        </button>
+                      </div>
+                      <div className="hud-panel-body">
+                        <div hidden={activePanel !== 'layers'}>
+                          <ComparisonControls layers={layers} dates={dates} />
+                          <LayerControls layers={layers} />
+                        </div>
+                        <div hidden={activePanel !== 'inspect'}>
+                          <Inspector caseData={caseData} />
+                        </div>
+                        <div hidden={activePanel !== 'zones'}>
+                          <ZonesPanel />
+                        </div>
+                        <div hidden={activePanel !== 'transect'}>
+                          <ProfilePanel onSample={setProfileSample} />
+                        </div>
+                        <div hidden={activePanel !== 'annotations'}>
+                          <AnnotationPanel
+                            caseData={caseData}
+                            displayStatus={status}
+                            captureMap={() => {
+                              if (!mapCapture.current)
+                                throw new Error('Map is unavailable')
+                              return mapCapture.current()
+                            }}
+                          />
+                        </div>
+                        <div hidden={activePanel !== 'results'}>
+                          <MetricsPanel />
+                          <WeatherPanel dates={dates} />
+                        </div>
+                      </div>
+                    </m.section>
+                    <div className="hud-readout" aria-label="Map readout">
+                      <span>{mapToolLabel}</span>
+                      <span>{mapSelectionLabel}</span>
+                      <span>{comparison ? 'Comparison' : 'Single view'}</span>
+                    </div>
+                  </>
+                }
               />
+              <div className="hud-boot" aria-hidden="true" />
             </div>
-            <ZonesPanel />
           </div>
-          <Inspector caseData={caseData} />
-          <ProfilePanel onSample={setProfileSample} />
-          <AnnotationPanel
-            caseData={caseData}
-            displayStatus={status}
-            captureMap={() => {
-              if (!mapCapture.current) throw new Error('Map is unavailable')
-              return mapCapture.current()
-            }}
-          />
-          <MetricsPanel />
-          <WeatherPanel dates={dates} />
-        </>
-      )}
+        )}
+      </div>{' '}
     </main>
   )
 }

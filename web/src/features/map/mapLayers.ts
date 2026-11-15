@@ -23,18 +23,46 @@ export function addMapLayers(
           url,
           coordinates: [corners[0], corners[1], corners[2], corners[3]],
         })
-        map.addLayer({ id, type: 'raster', source: id })
+        map.addLayer({
+          id,
+          type: 'raster',
+          source: id,
+          paint: {
+            // MapLibre tweens transitionable paint properties, so switching a
+            // layer dissolves it instead of popping.
+            'raster-opacity': 1,
+            // Additive compositing over the dark basemap makes the radar read
+            // as luminous data instead of a flat translucent sheet.
+            'raster-layer-blend': 'screen',
+          },
+        })
       } else {
         map.addSource(id, { type: 'geojson', data: url })
         const color =
           layer.legend.type === 'categorical'
             ? layer.legend.items[0]?.color
             : undefined
+        // A pale casing keeps the perimeter readable over both the dark
+        // basemap and the bright raster layers, without changing its colour.
+        map.addLayer({
+          id: `${id}-casing`,
+          type: 'line',
+          source: id,
+          paint: {
+            'line-color': 'rgba(226, 240, 255, 0.75)',
+            'line-width': 5,
+            'line-opacity': 0.55,
+          },
+        })
         map.addLayer({
           id,
           type: 'line',
           source: id,
-          paint: { 'line-color': color ?? '#000000', 'line-width': 2 },
+          paint: {
+            'line-color': color ?? '#000000',
+            'line-width': 2,
+            'line-opacity': 1,
+          },
         })
       }
     } catch {
@@ -57,12 +85,21 @@ export function syncMapLayers(
     const visible = comparingRaster
       ? layer.id === state.compare![side]
       : state.visible.includes(layer.id)
+    const opacity = comparingRaster
+      ? 1
+      : (state.opacity[layer.id] ?? layer.default_opacity)
     map.setLayoutProperty(id, 'visibility', visible ? 'visible' : 'none')
     map.setPaintProperty(
       id,
       layer.kind === 'raster' ? 'raster-opacity' : 'line-opacity',
-      comparingRaster ? 1 : (state.opacity[layer.id] ?? layer.default_opacity),
+      opacity,
     )
+    // The casing follows the line it frames.
+    const casing = `${id}-casing`
+    if (map.getLayer(casing)) {
+      map.setLayoutProperty(casing, 'visibility', visible ? 'visible' : 'none')
+      map.setPaintProperty(casing, 'line-opacity', opacity * 0.55)
+    }
   }
 }
 
