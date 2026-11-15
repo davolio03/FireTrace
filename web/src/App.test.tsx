@@ -4,14 +4,24 @@ import App from './App'
 
 vi.mock('./data/caseData', () => ({
   loadCaseData: vi.fn(async () => ({
-    case: { data_status: 'mock' },
+    case: {
+      data_status: 'mock',
+      epochs: {
+        t1: { datetime: '2026-08-16T02:56:39Z' },
+        t2: { datetime: '2026-10-03T02:56:38Z' },
+      },
+    },
     stats: { data_status: 'mock' },
     layers: { data_status: 'mock', layers: [] },
   })),
 }))
 
 vi.mock('./features/map/CaseMap', () => ({
-  CaseMap: () => <div role="region" aria-label="Map of Big Sur" />,
+  CaseMap: ({ dates }: { dates: { before: string; after: string } }) => (
+    <div role="region" aria-label="Map of Big Sur">
+      {dates.before} / {dates.after}
+    </div>
+  ),
 }))
 
 describe('application scaffold', () => {
@@ -23,6 +33,7 @@ describe('application scaffold', () => {
     ).toBeTruthy()
     expect(screen.getByRole('region', { name: /map of big sur/i })).toBeTruthy()
     expect(await screen.findByText(/MOCK.*synthetic/i)).toBeTruthy()
+    expect(await screen.findByText('2026-08-16 / 2026-10-03')).toBeTruthy()
   })
 
   it('reports failure when the case manifest cannot be loaded', async () => {
@@ -59,5 +70,17 @@ describe('application scaffold', () => {
     expect(
       screen.getByRole('heading', { name: /firetrace explorer/i }),
     ).toBeTruthy()
+  })
+
+  it('keeps the MOCK notice and reports missing observation dates', async () => {
+    const { loadCaseData } = await import('./data/caseData')
+    vi.mocked(loadCaseData).mockResolvedValueOnce({
+      case: { data_status: 'mock' },
+      stats: { data_status: 'mock' },
+      layers: { data_status: 'mock', layers: [] },
+    } as unknown as Awaited<ReturnType<typeof loadCaseData>>)
+    render(<App />)
+    expect(await screen.findByRole('alert')).toBeTruthy()
+    expect(screen.getByText(/MOCK.*synthetic/i)).toBeTruthy()
   })
 })

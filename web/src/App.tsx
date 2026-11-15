@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { loadCaseData } from './data/caseData'
 import { CaseMap } from './features/map/CaseMap'
+import type { ComparisonDates } from './features/map/ComparisonControls'
 import { layersAreRenderable, type Layer } from './features/map/layers'
 
 export default function App() {
@@ -8,6 +9,10 @@ export default function App() {
     'loading',
   )
   const [layers, setLayers] = useState<Layer[]>([])
+  const [dates, setDates] = useState<ComparisonDates>({
+    before: 'Date unavailable',
+    after: 'Date unavailable',
+  })
   const [manifestError, setManifestError] = useState(false)
 
   useEffect(() => {
@@ -26,7 +31,17 @@ export default function App() {
             setManifestError(true)
             return
           }
+          const before = data.case.epochs?.t1?.datetime
+          const after = data.case.epochs?.t2?.datetime
+          if (typeof before !== 'string' || typeof after !== 'string') {
+            setManifestError(true)
+            return
+          }
           setLayers(data.layers.layers)
+          setDates({
+            before: before.slice(0, 10),
+            after: after.slice(0, 10),
+          })
         }
       })
       .catch(() => {
@@ -60,6 +75,7 @@ export default function App() {
       <div className="mt-6 overflow-hidden rounded-lg border border-slate-300">
         <CaseMap
           layers={layers}
+          dates={dates}
           dataBaseUrl={import.meta.env.VITE_DATA_BASE_URL || '/'}
         />
       </div>
