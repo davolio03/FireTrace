@@ -137,7 +137,7 @@ describe('story view', () => {
     wait(stepDwellMs(steps[0]))
     expect(heading()).toBe(steps[1].title)
     expect(mapStore.getState().camera.pitch).toBe(62)
-    expect(mapStore.getState().cameraDurationMs).toBe(6000)
+    expect(mapStore.getState().cameraDurationMs).toBe(7000)
     const map = screen.getByTestId('cinematic-map')
     expect(map.getAttribute('data-spinning')).toBe('true')
     expect(map.getAttribute('data-satellite')).toBe('false')
@@ -148,11 +148,12 @@ describe('story view', () => {
       right: 'sar_t2_hv',
       position: 1,
     })
-    wait(1250)
+    const fadeMs = steps[2].camera.duration_ms ?? 0
+    wait(fadeMs / 2)
     const midway = mapStore.getState().compare!.position
     expect(midway).toBeGreaterThan(0)
     expect(midway).toBeLessThan(1)
-    wait(1500)
+    wait(fadeMs / 2 + 250)
     expect(mapStore.getState().compare!.position).toBeCloseTo(0, 6)
   })
 

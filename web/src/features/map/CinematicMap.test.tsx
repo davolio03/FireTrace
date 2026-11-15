@@ -160,7 +160,8 @@ describe('cinematic map', () => {
 
   it('crossfades a comparison through the shared store', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false }))
-    render(<CinematicMap layers={layers} frame={ring} />)
+    // Reduced motion writes opacities at once; otherwise they ease over frames.
+    render(<CinematicMap layers={layers} frame={ring} reducedMotion />)
     fire('load')
     act(() =>
       mapStore.getState().setCompare({
@@ -181,12 +182,42 @@ describe('cinematic map', () => {
     )
   })
 
-  it('spins slowly while asked to, and stops', () => {
+  it('fades layers in over several frames instead of switching them', () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false }))
+    const frames: FrameRequestCallback[] = []
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) =>
+      frames.push(callback),
+    )
+    vi.stubGlobal('cancelAnimationFrame', vi.fn())
+    render(<CinematicMap layers={layers} frame={ring} />)
+    fire('load')
+    const perimeterOpacity = () =>
+      mock.setPaintProperty.mock.calls
+        .filter(
+          ([id, property]) =>
+            id === 'firetrace-perimeter' && property === 'line-opacity',
+        )
+        .map(([, , value]) => value as number)
+    expect(perimeterOpacity()).toEqual([0])
+    for (let t = 16; frames.length > 0 && t < 5000; t += 16) frames.shift()!(t)
+    const values = perimeterOpacity()
+    expect(values.length).toBeGreaterThan(5)
+    expect(values[1]).toBeGreaterThan(0)
+    expect(values[1]).toBeLessThan(0.2)
+    expect(values.at(-1)).toBe(1)
+  })
+
+  it('spins slowly while asked to, easing in, and stops', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false }))
     const { rerender } = render(
       <CinematicMap layers={layers} frame={ring} spinning />,
     )
-    expect(mock.easeTo).toHaveBeenCalledWith(
+    // First leg ramps up from rest; the next one cruises linearly.
+    expect(mock.easeTo).toHaveBeenLastCalledWith(
+      expect.objectContaining({ bearing: 15, duration: 8_000 }),
+    )
+    fire('moveend')
+    expect(mock.easeTo).toHaveBeenLastCalledWith(
       expect.objectContaining({ bearing: 40, duration: 24_000 }),
     )
     rerender(<CinematicMap layers={layers} frame={ring} spinning={false} />)

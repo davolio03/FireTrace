@@ -198,6 +198,8 @@ export function useStoryPlayer(
     index: state.index,
     count,
     step,
+    /** Step titles, for chapter labels. */
+    titles: story?.steps.map((item) => item.title) ?? [],
     dwellMs,
     /** Changes whenever a step is (re)applied; use it to restart progress. */
     applied: state.applied,

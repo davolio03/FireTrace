@@ -8,7 +8,7 @@ import {
   RotateCcw,
   X,
 } from 'lucide-react'
-import type { LonLat } from '../../state/mapStore'
+import { useMapStore, type LonLat } from '../../state/mapStore'
 import { CinematicMap } from '../map/CinematicMap'
 import { TERRAIN_EXAGGERATION } from '../map/terrainTiles'
 import type { Layer } from '../map/layers'
@@ -20,11 +20,22 @@ const FRAME_RING = frameFeature.geometry.coordinates[0] as LonLat[]
 const CONTROLS_HIDE_MS = 2500
 
 const glass =
-  'rounded-xl border border-white/10 bg-slate-950/70 text-white shadow-2xl backdrop-blur-md'
+  'rounded-2xl border border-white/10 bg-slate-950/80 text-white shadow-2xl shadow-black/50 backdrop-blur-xl'
 const iconButton =
-  'inline-flex size-10 items-center justify-center rounded-full border border-white/20 bg-white/10 text-white hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-30 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-300'
+  'inline-flex size-11 items-center justify-center rounded-full border border-white/15 bg-slate-950/70 text-white backdrop-blur-md transition hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-30 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-300'
 
 const pad = (n: number) => String(n).padStart(2, '0')
+
+/** "2026-08-16" → "16 Aug 2026"; anything else is shown as given. */
+function formatStoryDate(value: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return value
+  return new Date(`${value}T00:00:00Z`).toLocaleDateString('en-GB', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    timeZone: 'UTC',
+  })
+}
 
 function legendFor(layers: Layer[], visible: string[]) {
   return visible
@@ -38,8 +49,52 @@ function legendFor(layers: Layer[], visible: string[]) {
 }
 
 /**
+ * Which of the two crossfaded layers dominates right now. It reads the shared
+ * comparison, so it follows the fade frame by frame.
+ */
+function CrossfadeMeter({ layers }: { layers: Layer[] }) {
+  const compare = useMapStore((state) => state.compare)
+  if (!compare) return null
+  const title = (id: string) =>
+    layers.find((layer) => layer.id === id)?.title ?? id
+  // position 1 shows the left layer, 0 the right one.
+  const toRight = 1 - compare.position
+  return (
+    <div
+      className="space-y-1.5 border-t border-white/10 pt-3"
+      aria-label="Crossfade"
+    >
+      <div className="flex justify-between gap-3 text-xs font-medium">
+        <span
+          className="transition-colors"
+          style={{ color: toRight < 0.5 ? '#fde68a' : '#94a3b8' }}
+        >
+          {title(compare.left)}
+        </span>
+        <span
+          className="text-right transition-colors"
+          style={{ color: toRight >= 0.5 ? '#fde68a' : '#94a3b8' }}
+        >
+          {title(compare.right)}
+        </span>
+      </div>
+      <div className="relative h-1 rounded-full bg-white/15">
+        <span
+          className="absolute inset-y-0 left-0 rounded-full bg-amber-300/70"
+          style={{ width: `${toRight * 100}%` }}
+        />
+        <span
+          className="absolute top-1/2 size-3 -translate-x-1/2 -translate-y-1/2 rounded-full bg-amber-200 shadow-[0_0_10px_rgba(253,230,138,0.9)]"
+          style={{ left: `${toRight * 100}%` }}
+        />
+      </div>
+    </div>
+  )
+}
+
+/**
  * Full-screen guided story: a 3D globe-to-terrain map with a documentary
- * lower third, a chapter bar and controls that hide while it plays.
+ * caption card, a titled chapter bar and controls that hide while it plays.
  */
 export function StoryView({
   player,
@@ -66,7 +121,7 @@ export function StoryView({
   const [controlsShown, setControlsShown] = useState(true)
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const caption = useRef<HTMLElement>(null)
-  const { step, status, index, count } = player
+  const { step, status, index, count, titles } = player
   const playing = status === 'playing'
 
   const revealControls = () => {
@@ -114,6 +169,7 @@ export function StoryView({
       onKeyDown={onKeyDown}
     >
       {/* Touching the map takes over the camera, so the story pauses. */}
+      <div className="story-stars pointer-events-none absolute inset-0" />
       <div
         className="absolute inset-0"
         onPointerDownCapture={playing ? player.pause : undefined}
@@ -129,28 +185,40 @@ export function StoryView({
           onTerrain={setTerrain}
         />
       </div>
-      <div className="pointer-events-none absolute inset-x-0 top-0 h-36 bg-gradient-to-b from-black/70 to-transparent" />
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-72 bg-gradient-to-t from-black/80 to-transparent" />
+      {/* Cinematic framing: vignette plus darker top and bottom bands. */}
+      <div className="story-vignette pointer-events-none absolute inset-0" />
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-32 bg-gradient-to-b from-black/75 to-transparent" />
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-80 bg-gradient-to-t from-black/85 via-black/40 to-transparent" />
 
       <header className="absolute inset-x-0 top-0 flex items-start justify-between gap-4 p-4 sm:p-6">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.3em] text-amber-300">
+          <p className="text-sm font-bold uppercase tracking-[0.35em] text-amber-300">
             FireTrace
           </p>
-          <p className="text-sm text-slate-200">
+          <p className="mt-0.5 text-sm text-slate-200">
             Plaskett Fire · NISAR L-band radar
           </p>
           {isMock && (
-            <p className="mt-2 inline-block rounded border border-amber-400 bg-amber-950/80 px-2 py-0.5 text-xs font-semibold text-amber-200">
+            <p className="mt-2 inline-block rounded-md border border-amber-400/70 bg-amber-950/80 px-2 py-0.5 text-xs font-semibold text-amber-200">
               MOCK data — not scientific evidence
             </p>
           )}
         </div>
         <div className="flex items-center gap-2">
-          <p className={`${glass} hidden px-3 py-1.5 text-sm sm:block`}>
-            <span className="text-slate-300">Before</span> {dates.before}{' '}
-            <span aria-hidden="true">→</span>{' '}
-            <span className="text-slate-300">After</span> {dates.after}
+          <p
+            className={`${glass} hidden items-center gap-2 px-4 py-2 text-sm sm:flex`}
+          >
+            <span className="text-xs uppercase tracking-wider text-slate-400">
+              Before
+            </span>
+            <span className="font-medium">{formatStoryDate(dates.before)}</span>
+            <span aria-hidden="true" className="text-amber-300">
+              →
+            </span>
+            <span className="text-xs uppercase tracking-wider text-slate-400">
+              After
+            </span>
+            <span className="font-medium">{formatStoryDate(dates.after)}</span>
           </p>
           <button
             type="button"
@@ -168,27 +236,65 @@ export function StoryView({
         tabIndex={-1}
         role="region"
         aria-label="Guided story"
-        className="absolute bottom-28 left-4 right-4 max-w-md focus:outline-none sm:left-6"
+        className="absolute bottom-32 left-4 right-4 max-w-[30rem] focus:outline-none sm:left-6 lg:bottom-36"
       >
-        <div key={step.id} className="story-caption space-y-2">
-          <p className="text-xs font-semibold tracking-[0.3em] text-amber-300">
-            {pad(index + 1)} / {pad(count)}
-            {status === 'paused' && ' · PAUSED'}
+        <div
+          key={step.id}
+          className={`${glass} story-caption relative overflow-hidden p-5 sm:p-6`}
+        >
+          <span
+            aria-hidden="true"
+            className="absolute inset-y-5 left-0 w-1 rounded-r-full bg-gradient-to-b from-amber-300 to-orange-500"
+          />
+          <p className="flex items-center gap-2 text-xs font-semibold tracking-[0.25em] text-amber-300">
+            <span>
+              {pad(index + 1)} / {pad(count)}
+            </span>
+            {status === 'paused' && (
+              <span className="rounded bg-white/10 px-1.5 py-0.5 tracking-[0.15em] text-slate-200">
+                PAUSED
+              </span>
+            )}
           </p>
           <h2
             aria-live="polite"
-            className="text-2xl font-semibold leading-tight drop-shadow sm:text-3xl"
+            className="story-caption-title mt-2 text-2xl font-semibold leading-tight tracking-tight text-white sm:text-[1.75rem]"
           >
             {step.title}
           </h2>
-          <div className="space-y-2 text-sm leading-relaxed text-slate-100 drop-shadow sm:text-base">
+          <div className="story-caption-body mt-3 space-y-2 text-[15px] leading-relaxed text-slate-200 sm:text-base [&_strong]:font-semibold [&_strong]:text-amber-100">
             {renderMarkdown(step.body_md)}
+          </div>
+          <div className="story-caption-body mt-4 space-y-3">
+            <CrossfadeMeter layers={layers} />
+            {!step.compare && legend && legendStops.length > 1 && (
+              <div className="space-y-1.5 border-t border-white/10 pt-3 text-xs text-slate-300">
+                <p className="font-medium text-slate-100">{legend.title}</p>
+                <div
+                  className="h-2 rounded-full"
+                  style={{
+                    background: `linear-gradient(to right, ${legendStops
+                      .map((stop) => stop.color)
+                      .join(', ')})`,
+                  }}
+                />
+                <p className="flex justify-between tabular-nums">
+                  <span>{legendStops[0].value}</span>
+                  <span>
+                    {legendStops[legendStops.length - 1].value}{' '}
+                    {legend.legend.type === 'continuous'
+                      ? legend.legend.units
+                      : ''}
+                  </span>
+                </p>
+              </div>
+            )}
           </div>
           {last && (
             <button
               type="button"
               onClick={onExplore}
-              className="mt-2 inline-flex items-center gap-2 rounded-full bg-amber-400 px-5 py-2 font-semibold text-slate-950 hover:bg-amber-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
+              className="mt-5 inline-flex items-center gap-2 rounded-full bg-amber-400 px-5 py-2.5 font-semibold text-slate-950 shadow-lg shadow-amber-500/30 transition hover:bg-amber-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
             >
               Explore the evidence <span aria-hidden="true">→</span>
             </button>
@@ -196,9 +302,25 @@ export function StoryView({
         </div>
       </section>
 
+      <div className="absolute bottom-32 right-4 hidden max-w-xs space-y-1 text-right text-xs text-slate-300 [text-shadow:0_1px_3px_rgba(0,0,0,0.9)] sm:right-6 sm:block lg:bottom-36">
+        {step.id === 'orbit' && (
+          <p>
+            <span className="text-orange-300">Orange</span>: real NISAR frame
+            (NASA CMR {frameFeature.properties.granule_id}).{' '}
+            <span className="text-slate-100">Dashed</span>: illustrative ground
+            track.
+          </p>
+        )}
+        {terrain && (
+          <p>Relief ×{TERRAIN_EXAGGERATION} · Copernicus DEM GLO-30</p>
+        )}
+      </div>
+
       <div
-        className={`absolute bottom-12 left-1/2 flex -translate-x-1/2 items-center gap-2 transition-opacity duration-300 ${
-          shown ? 'opacity-100' : 'pointer-events-none opacity-0'
+        className={`absolute bottom-16 left-1/2 flex -translate-x-1/2 items-center gap-2 transition-all duration-500 lg:bottom-20 ${
+          shown
+            ? 'translate-y-0 opacity-100'
+            : 'pointer-events-none translate-y-2 opacity-0'
         }`}
       >
         <button
@@ -245,80 +367,64 @@ export function StoryView({
         <button
           type="button"
           onClick={player.exit}
-          className={`${glass} hidden items-center gap-2 px-3 py-2 text-sm sm:inline-flex`}
+          className="ml-1 hidden h-11 items-center gap-2 rounded-full border border-white/15 bg-slate-950/70 px-4 text-sm text-white backdrop-blur-md transition hover:bg-white/15 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-300 sm:inline-flex"
         >
-          <Compass aria-hidden="true" className="size-4" /> Explore freely (Esc)
+          <Compass aria-hidden="true" className="size-4" /> Explore freely
+          <kbd className="rounded border border-white/20 px-1 text-[10px] text-slate-300">
+            Esc
+          </kbd>
         </button>
-      </div>
-
-      <div className="absolute bottom-24 right-4 hidden max-w-xs space-y-2 text-right text-[11px] text-slate-300 sm:right-6 sm:block">
-        {legend && legendStops.length > 1 && (
-          <div className={`${glass} p-2 text-left`}>
-            <p className="mb-1 font-semibold text-white">{legend.title}</p>
-            <div
-              className="h-2 w-40 rounded"
-              style={{
-                background: `linear-gradient(to right, ${legendStops
-                  .map((stop) => stop.color)
-                  .join(', ')})`,
-              }}
-            />
-            <p className="mt-0.5 flex justify-between">
-              <span>{legendStops[0].value}</span>
-              <span>
-                {legendStops[legendStops.length - 1].value}{' '}
-                {legend.legend.type === 'continuous' ? legend.legend.units : ''}
-              </span>
-            </p>
-          </div>
-        )}
-        {step.id === 'orbit' && (
-          <p>
-            Orange: real NISAR frame (NASA CMR{' '}
-            {frameFeature.properties.granule_id}). Dashed: illustrative ground
-            track.
-          </p>
-        )}
-        {terrain && (
-          <p>Relief ×{TERRAIN_EXAGGERATION} · Copernicus DEM GLO-30</p>
-        )}
       </div>
 
       <nav
         aria-label="Story chapters"
-        className="absolute inset-x-0 bottom-0 flex gap-1.5 pb-5 pl-4 pr-14 sm:pl-6"
+        className="absolute inset-x-0 bottom-0 flex gap-2 pb-4 pl-4 pr-14 sm:pl-6"
       >
-        {Array.from({ length: count }, (_, chapter) => (
-          <button
-            key={chapter}
-            type="button"
-            onClick={() => player.goTo(chapter)}
-            aria-label={`Go to step ${chapter + 1}`}
-            aria-current={chapter === index ? 'step' : undefined}
-            className="group relative h-6 flex-1 focus-visible:outline-2 focus-visible:outline-amber-300"
-          >
-            <span className="absolute inset-x-0 top-1/2 h-1 -translate-y-1/2 overflow-hidden rounded-full bg-white/25 group-hover:h-1.5">
-              {chapter < index && (
-                <span className="absolute inset-0 bg-amber-300" />
-              )}
-              {chapter === index && (
-                <span
-                  key={player.applied}
-                  data-testid="story-progress"
-                  className="absolute inset-0 origin-left bg-amber-300"
-                  style={
-                    reducedMotion || status === 'ended'
-                      ? undefined
-                      : {
-                          animation: `story-progress ${player.dwellMs}ms linear forwards`,
-                          animationPlayState: playing ? 'running' : 'paused',
-                        }
-                  }
-                />
-              )}
-            </span>
-          </button>
-        ))}
+        {Array.from({ length: count }, (_, chapter) => {
+          const current = chapter === index
+          return (
+            <button
+              key={chapter}
+              type="button"
+              onClick={() => player.goTo(chapter)}
+              aria-label={`Go to step ${chapter + 1}`}
+              title={titles[chapter]}
+              aria-current={current ? 'step' : undefined}
+              className="group relative flex min-w-0 flex-1 flex-col gap-1.5 pt-2 text-left focus-visible:outline-2 focus-visible:outline-amber-300"
+            >
+              <span className="relative h-1 w-full overflow-hidden rounded-full bg-white/20 transition-all group-hover:h-1.5">
+                {chapter < index && (
+                  <span className="absolute inset-0 bg-amber-300/80" />
+                )}
+                {current && (
+                  <span
+                    key={player.applied}
+                    data-testid="story-progress"
+                    className="absolute inset-0 origin-left bg-amber-300"
+                    style={
+                      reducedMotion || status === 'ended'
+                        ? undefined
+                        : {
+                            animation: `story-progress ${player.dwellMs}ms linear forwards`,
+                            animationPlayState: playing ? 'running' : 'paused',
+                          }
+                    }
+                  />
+                )}
+              </span>
+              <span
+                aria-hidden="true"
+                className={`hidden truncate text-[11px] transition-colors lg:block ${
+                  current
+                    ? 'font-medium text-white'
+                    : 'text-slate-400 group-hover:text-slate-200'
+                }`}
+              >
+                {titles[chapter]}
+              </span>
+            </button>
+          )
+        })}
       </nav>
     </div>
   )

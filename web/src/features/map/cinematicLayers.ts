@@ -50,23 +50,43 @@ export function cinematicLayerLooks(
   return looks
 }
 
-export function syncCinematicLayers(
-  map: MapLibreMap,
+/** Target opacity of every story layer; hidden layers fade to 0. */
+export function cinematicOpacityTargets(
   layers: Layer[],
   state: Pick<MapStore, 'visible' | 'opacity' | 'compare'>,
+): Map<LayerId, number> {
+  const targets = new Map<LayerId, number>()
+  for (const [id, look] of cinematicLayerLooks(layers, state))
+    targets.set(id, look.visible ? look.opacity : 0)
+  return targets
+}
+
+/** Perimeter halo strength relative to the perimeter line. */
+export const GLOW_OPACITY = 0.45
+
+/**
+ * Writes one layer's displayed opacity. A layer at 0 is hidden so MapLibre
+ * skips it; its glow (if any) follows the same fade.
+ */
+export function writeCinematicOpacity(
+  map: Pick<MapLibreMap, 'getLayer' | 'setLayoutProperty' | 'setPaintProperty'>,
+  layers: Layer[],
+  id: string,
+  opacity: number,
 ) {
-  for (const [id, look] of cinematicLayerLooks(layers, state)) {
-    const layer = layers.find((item) => item.id === id)
-    const mapId = `firetrace-${id}`
-    if (!layer || !map.getLayer(mapId)) continue
-    const visibility = look.visible ? 'visible' : 'none'
-    map.setLayoutProperty(mapId, 'visibility', visibility)
-    map.setPaintProperty(
-      mapId,
-      layer.kind === 'raster' ? 'raster-opacity' : 'line-opacity',
-      look.opacity,
-    )
-    if (map.getLayer(`${mapId}-glow`))
-      map.setLayoutProperty(`${mapId}-glow`, 'visibility', visibility)
+  const layer = layers.find((item) => item.id === id)
+  const mapId = `firetrace-${id}`
+  if (!layer || !map.getLayer(mapId)) return
+  const visibility = opacity > 0 ? 'visible' : 'none'
+  map.setLayoutProperty(mapId, 'visibility', visibility)
+  map.setPaintProperty(
+    mapId,
+    layer.kind === 'raster' ? 'raster-opacity' : 'line-opacity',
+    opacity,
+  )
+  const glow = `${mapId}-glow`
+  if (map.getLayer(glow)) {
+    map.setLayoutProperty(glow, 'visibility', visibility)
+    map.setPaintProperty(glow, 'line-opacity', opacity * GLOW_OPACITY)
   }
 }

@@ -3,7 +3,12 @@ import * as maplibregl from 'maplibre-gl'
 import mapWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url'
 import { mapStore, type LonLat } from '../../state/mapStore'
 import { readCamera, sameCamera, syncCamera } from './cameraSync'
-import { storyMapLayers, syncCinematicLayers } from './cinematicLayers'
+import {
+  cinematicOpacityTargets,
+  storyMapLayers,
+  writeCinematicOpacity,
+} from './cinematicLayers'
+import { createLayerFader, type LayerFader } from './layerFader'
 import type { Layer } from './layers'
 import { addMapLayers } from './mapLayers'
 import { createCinematicMapStyle } from './mapStyle'
@@ -13,6 +18,10 @@ import { parseTerrainTiles, TERRAIN_EXAGGERATION } from './terrainTiles'
 const SATELLITE_LAP_MS = 14_000
 const SPIN_DEGREES = 30
 const SPIN_MS = 24_000
+// The drone shot eases in: the first leg turns half as far per second on
+// average and ends exactly at the cruise speed (d/dt of t² at 1 is 2).
+const SPIN_RAMP_MS = 8_000
+const SPIN_RAMP_DEGREES = ((SPIN_DEGREES / SPIN_MS) * SPIN_RAMP_MS) / 2
 
 const zoomFade = (stops: [number, number][]) =>
   [
@@ -165,6 +174,10 @@ export function CinematicMap({
   useEffect(() => {
     reportTerrain.current = onTerrain
   }, [onTerrain])
+  const instantFades = useRef(reducedMotion)
+  useEffect(() => {
+    instantFades.current = reducedMotion
+  }, [reducedMotion])
 
   useEffect(() => {
     if (!container.current) return
@@ -185,7 +198,10 @@ export function CinematicMap({
     })
     setMap(instance)
     const stopCamera = syncCamera(instance)
-    const sync = () => syncCinematicLayers(instance, drawn, mapStore.getState())
+    // Layers dissolve between steps instead of switching on and off.
+    let fader: LayerFader | null = null
+    const sync = () =>
+      fader?.set(cinematicOpacityTargets(drawn, mapStore.getState()))
     const unsubscribe = mapStore.subscribe(sync)
     track.current = groundTrack(ringCentre(frame), 60, 160)
 
@@ -200,6 +216,13 @@ export function CinematicMap({
       addOrbitLayers(instance, frame, track.current)
       addMapLayers(instance, drawn, dataBaseUrl, () => undefined)
       stylePerimeter(instance)
+      // Everything starts transparent and fades in to the current step.
+      for (const layer of drawn)
+        writeCinematicOpacity(instance, drawn, layer.id, 0)
+      fader = createLayerFader(
+        (id, opacity) => writeCinematicOpacity(instance, drawn, id, opacity),
+        { instant: instantFades.current },
+      )
       sync()
       fetch(`${base}/terrain/tiles.json`)
         .then((response) => (response.ok ? response.json() : null))
@@ -240,8 +263,10 @@ export function CinematicMap({
               type: 'hillshade',
               source: 'terrain-shade',
               paint: {
-                'hillshade-exaggeration': 0.35,
-                'hillshade-shadow-color': '#0f172a',
+                'hillshade-exaggeration': 0.55,
+                'hillshade-shadow-color': '#020617',
+                'hillshade-highlight-color': '#cbd5e1',
+                'hillshade-accent-color': '#0f172a',
               },
             },
             firstData,
@@ -271,6 +296,7 @@ export function CinematicMap({
 
     return () => {
       cancelled = true
+      fader?.stop()
       stopCamera()
       unsubscribe()
       instance.remove()
@@ -282,13 +308,27 @@ export function CinematicMap({
   useEffect(() => {
     if (!map || !spinning || reducedMotion) return
     let active = true
+    // True while our own leg runs: when it ends, the next leg keeps the
+    // cruise speed; after any other movement (a step's flight) it ramps up.
+    let cruising = false
     const spin = () => {
+      const continuing = cruising
+      cruising = false
       if (!active || map.isMoving()) return
-      map.easeTo({
-        bearing: map.getBearing() + SPIN_DEGREES,
-        duration: SPIN_MS,
-        easing: (t) => t,
-      })
+      cruising = true
+      map.easeTo(
+        continuing
+          ? {
+              bearing: map.getBearing() + SPIN_DEGREES,
+              duration: SPIN_MS,
+              easing: (t) => t,
+            }
+          : {
+              bearing: map.getBearing() + SPIN_RAMP_DEGREES,
+              duration: SPIN_RAMP_MS,
+              easing: (t) => t * t,
+            },
+      )
     }
     map.on('moveend', spin)
     spin()
