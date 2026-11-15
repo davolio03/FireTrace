@@ -44,7 +44,7 @@ export function sameCamera(a: Camera, b: Camera) {
  * - store -> map: a new store camera animates the map over
  *   `cameraDurationMs` (MapLibre skips the animation under
  *   prefers-reduced-motion because it is not marked essential);
- * - map -> store: every finished movement writes the map camera back.
+ * - map -> store: a finished user movement writes the map camera back.
  * Both directions compare with a tolerance, so they never loop.
  */
 export function syncCamera(map: CameraMap) {
@@ -67,8 +67,12 @@ export function syncCamera(map: CameraMap) {
       applying = false
     }
   })
-  const onMoveEnd = () => {
-    if (applying) return
+  // Only the user's own movements are written back. Programmatic moves come
+  // from the store already, and MapLibre can end them early (for example when
+  // 3D terrain loads mid-flight); writing that half-way camera back would
+  // cancel the store's target.
+  const onMoveEnd = (event?: { originalEvent?: unknown }) => {
+    if (applying || !event?.originalEvent) return
     const current = readCamera(map)
     const { camera, flyTo } = mapStore.getState()
     if (!sameCamera(current, camera)) flyTo(current, 0)

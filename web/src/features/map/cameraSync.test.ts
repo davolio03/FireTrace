@@ -2,13 +2,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { initialCamera, mapStore, type Camera } from '../../state/mapStore'
 import { readCamera, sameCamera, syncCamera } from './cameraSync'
 
-type Listener = () => void
+type Listener = (event: { originalEvent?: unknown }) => void
 
 /** Minimal stand-in for the MapLibre camera API, with real moveend events. */
 function fakeMap(start: Camera) {
   let camera = { bearing: 0, pitch: 0, ...start }
   const listeners = new Set<Listener>()
-  const emitMoveEnd = () => listeners.forEach((listener) => listener())
+  const emitMoveEnd = (event: { originalEvent?: unknown } = {}) =>
+    listeners.forEach((listener) => listener(event))
   const moveTo = (next: Partial<Camera>) => {
     camera = { ...camera, ...next }
   }
@@ -31,8 +32,13 @@ function fakeMap(start: Camera) {
       listeners.delete(listener)
       return map
     }),
-    /** Simulates the user or an animation moving the map. */
+    /** Simulates the user dragging or zooming the map. */
     userMove: (next: Partial<Camera>) => {
+      moveTo(next)
+      emitMoveEnd({ originalEvent: new Event('pointerup') })
+    },
+    /** Simulates MapLibre ending an animation on its own (no user event). */
+    programmaticMove: (next: Partial<Camera>) => {
       moveTo(next)
       emitMoveEnd()
     },
@@ -96,6 +102,16 @@ describe('camera sync', () => {
     expect(mapStore.getState().cameraDurationMs).toBe(0)
     expect(map.flyTo).not.toHaveBeenCalled()
     expect(map.jumpTo).not.toHaveBeenCalled()
+    stop()
+  })
+
+  it('keeps the store target when an animation ends early by itself', () => {
+    const map = fakeMap(mapStore.getState().camera)
+    const stop = syncCamera(map as never)
+    mapStore.getState().flyTo(story, 2500)
+    // e.g. 3D terrain loading stops the flight half-way.
+    map.programmaticMove({ center: [-121.42, 35.92], zoom: 10 })
+    expect(mapStore.getState().camera).toEqual(story)
     stop()
   })
 
