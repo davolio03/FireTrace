@@ -114,7 +114,7 @@ def load_config(path: Path, base_dir: Path | None = None) -> IngestConfig:
     base = Path.cwd() if base_dir is None else base_dir
     try:
         raw = tomllib.loads(path.read_text(encoding="utf-8"))
-    except (OSError, tomllib.TOMLDecodeError) as exc:
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
         raise IngestError(f"config: cannot read {path.name}: {exc}") from exc
 
     def resolve(value: str) -> Path:

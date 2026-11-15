@@ -161,7 +161,7 @@ def load_sar(sar_dir: Path) -> dict[str, Any]:
     path = sar_dir / "sar.json"
     try:
         doc = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ChangeError(f"cannot read {path.name}: {exc}") from exc
     _expect(isinstance(doc, dict), "top level must be an object")
     version = doc.get("sar_format_version")

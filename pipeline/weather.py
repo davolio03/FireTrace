@@ -154,7 +154,7 @@ def _sha256(path: Path) -> str:
 def _load_json(path: Path) -> dict[str, Any]:
     try:
         doc = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise WeatherError(f"cannot read {path.name}: {exc}") from exc
     if not isinstance(doc, dict):
         raise WeatherError(f"{path.name}: top level must be an object")

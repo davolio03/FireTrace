@@ -115,7 +115,7 @@ def load_config(path: Path, base_dir: Path | None = None) -> OpticalConfig:
     base = Path.cwd() if base_dir is None else base_dir
     try:
         raw = tomllib.loads(path.read_text(encoding="utf-8"))
-    except (OSError, tomllib.TOMLDecodeError) as exc:
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
         raise OpticalError(f"config: cannot read {path.name}: {exc}") from exc
 
     def need(key: str, kind: type) -> Any:
@@ -192,7 +192,7 @@ def _write_json(path: Path, document: Mapping[str, Any]) -> None:
 def _load_json(path: Path) -> dict[str, Any]:
     try:
         doc = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise OpticalError(f"cannot read {path.name}: {exc}") from exc
     if not isinstance(doc, dict):
         raise OpticalError(f"{path.name}: top level must be an object")
