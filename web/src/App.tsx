@@ -1,5 +1,13 @@
 import { useEffect, useState } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import storyJson from './story/story.json'
+import { parseStory } from './features/story/story'
+import { StoryView } from './features/story/StoryView'
+import { storyDurationMs } from './features/story/timing'
+import {
+  usePrefersReducedMotion,
+  useStoryPlayer,
+} from './features/story/useStoryPlayer'
 import { loadCaseData } from './data/caseData'
 import { CaseMap } from './features/map/CaseMap'
 import { LocationMap } from './features/map/LocationMap'
@@ -7,11 +15,30 @@ import { Inspector } from './features/inspector/Inspector'
 import { MetricsPanel } from './features/metrics/MetricsPanel'
 import { WeatherPanel } from './features/weather/WeatherPanel'
 import { ProfilePanel } from './features/profile/ProfilePanel'
-import type { LonLat } from './state/mapStore'
+import { mapStore, type LonLat } from './state/mapStore'
 import type { ComparisonDates } from './features/map/ComparisonControls'
 import { layersAreRenderable, type Layer } from './features/map/layers'
 
 type CaseData = Awaited<ReturnType<typeof loadCaseData>>['case']
+
+/**
+ * Leaving the story keeps its layers and selection, but levels the camera for
+ * the 2D analysis map and keeps it on the case (the story may end on a globe).
+ */
+function levelCamera() {
+  const { camera, flyTo } = mapStore.getState()
+  flyTo({
+    center: camera.zoom < 8 ? [-121.3865, 35.916] : camera.center,
+    zoom: Math.max(camera.zoom, 10),
+    bearing: 0,
+    pitch: 0,
+  })
+}
+
+const productionStory = parseStory(storyJson)
+const storyMinutes = productionStory
+  ? Math.max(1, Math.round(storyDurationMs(productionStory.steps) / 60_000))
+  : 0
 
 function isValidSource(
   value: unknown,
@@ -49,9 +76,28 @@ function AppContent() {
   })
   const [manifestError, setManifestError] = useState(false)
   const [caseData, setCaseData] = useState<CaseData | null>(null)
-  const [view, setView] = useState<'overview' | 'analysis'>('overview')
+  const [view, setView] = useState<'overview' | 'analysis' | 'story'>(
+    'overview',
+  )
   const [profileSample, setProfileSample] = useState<LonLat | null>(null)
-
+  const reducedMotion = usePrefersReducedMotion()
+  // Only play the story written for the loaded case.
+  const story =
+    productionStory && caseData?.case_id === productionStory.case_id
+      ? productionStory
+      : null
+  const player = useStoryPlayer(story, layers, reducedMotion, levelCamera)
+  const { start, resume } = player
+  const watchStory = () => {
+    setView('story')
+    start(0)
+  }
+  const canResume =
+    player.status === 'exploring' && player.index < player.count - 1
+  const resumeStory = () => {
+    setView('story')
+    resume()
+  }
   useEffect(() => {
     let active = true
     loadCaseData(import.meta.env.VITE_DATA_BASE_URL || '/')
@@ -177,23 +223,75 @@ function AppContent() {
                 )}
             </div>
           )}
-          <button
-            type="button"
-            onClick={() => setView('analysis')}
-            className="mt-6 rounded bg-slate-900 px-4 py-2 text-white focus-visible:outline-2 focus-visible:outline-offset-2"
-          >
-            Explore analysis
-          </button>
+          <div className="mt-6 flex flex-wrap gap-3">
+            {player.available && (
+              <button
+                type="button"
+                onClick={watchStory}
+                className="rounded bg-slate-900 px-4 py-2 text-white focus-visible:outline-2 focus-visible:outline-offset-2"
+              >
+                Watch the story ({storyMinutes} min)
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setView('analysis')}
+              className={
+                player.available
+                  ? 'rounded border px-4 py-2 focus-visible:outline-2 focus-visible:outline-offset-2'
+                  : 'rounded bg-slate-900 px-4 py-2 text-white focus-visible:outline-2 focus-visible:outline-offset-2'
+              }
+            >
+              Explore analysis
+            </button>
+          </div>
         </>
+      ) : view === 'story' && player.active ? (
+        <StoryView
+          player={player}
+          layers={layers}
+          dataBaseUrl={import.meta.env.VITE_DATA_BASE_URL || '/'}
+          dates={dates}
+          isMock={status === 'mock'}
+          reducedMotion={reducedMotion}
+          onLeave={player.exit}
+          onExplore={player.exit}
+        />
       ) : (
         <>
-          <button
-            type="button"
-            onClick={() => setView('overview')}
-            className="mt-4 rounded border px-4 py-2 focus-visible:outline-2 focus-visible:outline-offset-2"
-          >
-            Back to overview
-          </button>
+          <div className="mt-4 flex flex-wrap gap-3">
+            <button
+              type="button"
+              onClick={() => {
+                player.exit()
+                setView('overview')
+              }}
+              className="rounded border px-4 py-2 focus-visible:outline-2 focus-visible:outline-offset-2"
+            >
+              Back to overview
+            </button>
+            {/* One story button: resume where the user left it mid-way,
+                otherwise (never started, or finished) play from the start. */}
+            {canResume ? (
+              <button
+                type="button"
+                onClick={resumeStory}
+                className="rounded bg-slate-900 px-4 py-2 text-white focus-visible:outline-2 focus-visible:outline-offset-2"
+              >
+                Resume story · {player.index + 1}/{player.count}
+              </button>
+            ) : (
+              player.available && (
+                <button
+                  type="button"
+                  onClick={watchStory}
+                  className="rounded border px-4 py-2 focus-visible:outline-2 focus-visible:outline-offset-2"
+                >
+                  Play story
+                </button>
+              )
+            )}
+          </div>
           <div className="mt-6 overflow-hidden rounded-lg border border-slate-300">
             <CaseMap
               layers={layers}
