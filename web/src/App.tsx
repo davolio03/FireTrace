@@ -4,6 +4,7 @@ import { loadCaseData } from './data/caseData'
 import { CaseMap } from './features/map/CaseMap'
 import { LocationMap } from './features/map/LocationMap'
 import { Inspector } from './features/inspector/Inspector'
+import { MetricsPanel } from './features/metrics/MetricsPanel'
 import type { ComparisonDates } from './features/map/ComparisonControls'
 import { layersAreRenderable, type Layer } from './features/map/layers'
 
@@ -197,6 +198,7 @@ function AppContent() {
             />
           </div>
           <Inspector caseData={caseData} />
+          <MetricsPanel />
         </>
       )}
     </main>
