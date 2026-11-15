@@ -40,7 +40,7 @@ Web configuration is `VITE_DATA_BASE_URL`, `VITE_API_BASE_URL` and `VITE_USE_MOC
 5. Layer corners, bounding boxes, perimeter geometry and `lon`/`lat` queries are **EPSG:4326**. Resolve queries back to actual analysis-grid pixels and return their center/row/column. Never calculate scientific area from Web Mercator PNGs or longitude/latitude degrees.
 6. Tie numerical values, styles, statistics and provenance to the same processing result. A successful schema check does not prove this identity or geographic correctness.
 
-The proposed real continuous baseline combines absolute HH/HV log-ratio magnitudes. The mock fixture's median/MAD description is not a validated pipeline method: normalization domain/scaling, zero-MAD behavior and parameters still require scientific agreement. Physical confounds and the dated reference must remain visible.
+The real continuous baseline combines absolute HH/HV log-ratio magnitudes. Its normalization domain, scaling and zero-MAD behaviour were agreed and are implemented as documented in [change index](methods/change-index.md) and [CONTRACTS](CONTRACTS.md). Agreement is not validation: physical confounds and the dated reference must remain visible ([LIMITATIONS](LIMITATIONS.md)).
 
 ## Service boundary
 

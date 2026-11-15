@@ -23,7 +23,7 @@ Numbers taken from the methods' real runs, rather than from the bundle, name the
 | Valid coverage of the crop | 100 % (3,109,960 px, 31,099.6 ha) | `stats.json` |
 | Change index median inside the perimeter | 0.50 (12,134.98 ha) | `stats.json` `inside_perimeter` |
 | Change index median outside | −0.22 (18,964.62 ha) | `stats.json` `outside_perimeter` |
-| Inside pixels that changed less than the typical crop pixel | about a quarter (inside p25 = −0.29 < 0) | `stats.json` |
+| Inside pixels that changed less than the typical crop pixel | 34.4 % (417,537 of 1,213,498 have an index below 0) | `change_index.tif` and `perimeter_mask.tif` (`data-interim-plaskett-f66c4d9`) |
 
 The strongest changes concentrate inside the reference perimeter, but the two distributions overlap. More change inside than outside is consistent with the fire footprint. It does not show that any given pixel burned, or that an outside pixel did not.
 
@@ -54,7 +54,7 @@ NI zones are not one dominant block. The largest is 0.59 % of the perimeter, and
 
 | Cause | Effect on the radar | What FireTrace shows on Plaskett |
 | --- | --- | --- |
-| Soil and vegetation moisture | Rain before the after scene raises backscatter, especially HH | IMERG Late shows 0.95 mm in total before 2026-10-03 and no day above 1 mm (`weather.json`), so the AOI was essentially dry. The caveat is always listed, but it is AOI-wide and not a per-pixel measurement. |
+| Soil and vegetation moisture | Rain before the after scene raises backscatter, especially HH | IMERG Late estimates 0.95 mm in total before 2026-10-03 and no day above 1 mm (`weather.json`): little rain on ~10 km cells. That does not measure soil or canopy moisture, which fog, dew, evaporation and terrain also control, so moisture effects remain unresolved. |
 | Steep terrain | Slopes distort backscatter; patterns can follow slopes and drainages | 14.4 % of crop pixels have a slope above 30° ([terrain](methods/terrain.md)); review zones have 1 % to 40 % steep pixels. Slopes come from ~30 m DEM data and are smoothed. |
 | Layover and shadow | Geometry folds or hides the signal | 0.09 % of pixels are layover and none is shadow. These are local, approximate flags that miss shadow cast by distant ridges. |
 | Open water | Wind changes sea-surface roughness between passes | About 13 % of the crop is sea and is included in the "outside" statistics; there is no water mask. |
@@ -62,7 +62,7 @@ NI zones are not one dominant block. The largest is 0.59 % of the perimeter, and
 | Speckle | Single-pixel differences are noisy | No speckle filter, so each pixel is exactly what NISAR measured; isolated high pixels deserve less trust than coherent patches. |
 | Reference timing and quality | The perimeter predates the after scene | WFIGS 58728 is dated 2026-09-14 20:44 UTC, 19 days before the after scene. It is an operational IR perimeter, not a final outline or pixel-level ground truth. Its 51 ha hole comes from topology repair and its meaning on the ground is unresolved. |
 
-The Evidence Inspector reports these as deterministic caveats computed from existing products ([caveats](methods/caveats.md)). A caveat that fires does not make the change false, and the absence of caveats does not confirm fire.
+The deterministic caveat rules for slope, layover/shadow, moisture and the perimeter edge are implemented and tested in `api/caveats.py` ([caveats](methods/caveats.md)), and the zones to review report their shares per zone. They are **not yet wired into the real point inspection**: today `GET /api/inspect/point` returns only the generic cautions, so a steep or layover pixel gets no specific warning there. A caveat that fires does not make the change false, and the absence of caveats does not confirm fire.
 
 ## Limitations
 

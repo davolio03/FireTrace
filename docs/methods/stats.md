@@ -40,4 +40,4 @@ Besides checksums and the shared 10 m grid, CH-02 refuses mixed generations and 
 
 Histogram range [-1.398, 5.286]. Above the range: 15,130 pixels inside vs 420 outside. Without the edge band the medians barely move (inside 0.52, outside -0.22). Coverage is 100 %.
 
-The inside/outside contrast is clear, and the strongest changes concentrate inside the reference. Even so, the distributions overlap: about a quarter of the inside pixels changed less than the crop's typical pixel. Confounders (speckle, open water, moisture, terrain, phenology) are described in the change index method.
+The inside/outside contrast is clear, and the strongest changes concentrate inside the reference. Even so, the distributions overlap: 34.4 % of the inside pixels (417,537 of 1,213,498, counted on `change_index.tif` of the `f66c4d9` generation) changed less than the crop's typical pixel. Confounders (speckle, open water, moisture, terrain, phenology) are described in the change index method.

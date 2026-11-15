@@ -24,7 +24,7 @@ Task state lives only in Kanvas (`python3 .agents/skills/kanvas/kanvas.py status
 
 ## Data sources and attribution
 
-| Source | Role | Identity | Terms and attribution |
+| Source | Role | Identity | Provider and attribution |
 | --- | --- | --- | --- |
 | **NASA/ASF NISAR L2 GCOV (provisional)** | Primary observation | Before: `G4284560161-ASF`, 2026-08-16 02:56:39 UTC, orbit 5504. After: `G4340499432-ASF`, 2026-10-03 02:56:38 UTC, orbit 6196. Frequency A, HHHH and HVHV, track 42, frame 70, descending ([CMR before](https://cmr.earthdata.nasa.gov/search/granules.umm_json?concept_id=G4284560161-ASF), [CMR after](https://cmr.earthdata.nasa.gov/search/granules.umm_json?concept_id=G4340499432-ASF)) | NASA Earth science data, distributed by the Alaska Satellite Facility DAAC |
 | **NASA GPM IMERG Late Run daily V07C** (`GPM_3IMERGDL`) | Precipitation context for the moisture caveat | 49 daily granules, 2026-08-16 to 2026-10-03 ([GES DISC](https://disc.gsfc.nasa.gov/datasets/GPM_3IMERGDL_07/summary)) | NASA Earth science data, distributed by NASA GES DISC |
@@ -33,7 +33,7 @@ Task state lives only in Kanvas (`python3 .agents/skills/kanvas/kanvas.py status
 | **Copernicus DEM GLO-30** | Terrain context (slope, hillshade, layover/shadow) | Tile `Copernicus_DSM_COG_10_N35_00_W122_00_DEM` ([DOI](https://doi.org/10.5270/ESA-c5d3d65)) | "Produced using Copernicus WorldDEM-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved" |
 | **Copernicus Sentinel-2 L2A** | Optical context (smoke during, clear after) | `S2A_10SFE_20260830_0_L2A`, `S2B_10SFE_20261015_0_L2A`, via Earth Search ([AWS Open Data](https://registry.opendata.aws/sentinel-2-l2a-cogs/)) | Contains modified Copernicus Sentinel data 2026 (ESA) |
 
-NISAR is the primary source. The other sources are context and never replace or validate the radar result. The web shows each layer's source with it. The scientific background is the Döweler, Leuzinger and Bader preprint on Plaskett and Timber ([SSRN](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=7553393)). Its AUC-ROC of 0.984 is their result, not FireTrace's.
+NISAR is the primary source. The other sources are context and never replace or validate the radar result. The web shows each layer's source with it. The attribution texts above are those the sources and `layers.json` carry; each source's usage terms have **not yet been checked** against the challenge rules, and that check is a human task. The scientific background is the Döweler, Leuzinger and Bader preprint on Plaskett and Timber ([SSRN](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=7553393)). Its AUC-ROC of 0.984 is their result, not FireTrace's.
 
 ## Methodology
 
@@ -51,7 +51,7 @@ All analysis runs offline on the common **10 m EPSG:32610** grid of the NISAR sc
    - the [zones to review](docs/methods/review-zones.md);
    - [3D terrain tiles](docs/methods/terrain-tiles.md).
 8. **Web export (DT-04):** contract bundle with EPSG:3857 display PNGs ([web export](docs/methods/web-export.md)).
-9. **Inspection (EV-01, EV-02, EV-05):** the API reads the numerical rasters, never the PNG colours, and adds deterministic [caveats](docs/methods/caveats.md).
+9. **Inspection (EV-01, EV-05):** the API reads the numerical rasters, never the PNG colours. The deterministic [caveat rules](docs/methods/caveats.md) (EV-02) are implemented but not yet wired into the real point inspection, which returns only generic cautions.
 
 ## Results on Plaskett
 
