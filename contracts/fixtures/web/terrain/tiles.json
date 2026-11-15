@@ -1,0 +1,96 @@
+{
+  "attribution": "Copernicus DEM GLO-30. Produced using Copernicus WorldDEM-30 \u00a9 DLR e.V. 2010-2014 and \u00a9 Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved",
+  "bounds": [
+    -121.585,
+    35.77,
+    -121.19,
+    36.06
+  ],
+  "encoding": "terrarium",
+  "firetrace": {
+    "case_id": "plaskett-2026",
+    "data_status": "real",
+    "dem": [
+      {
+        "file": "Copernicus_DSM_COG_10_N35_00_W122_00_DEM.tif",
+        "product_id": "Copernicus_DSM_COG_10_N35_00_W122_00_DEM",
+        "sha256": "197d09cd0cbc0b1647a0f98e642edc7def03095e3d6f3d8df9f9aa75a987f197",
+        "url": "https://copernicus-dem-30m.s3.amazonaws.com/Copernicus_DSM_COG_10_N35_00_W122_00_DEM/Copernicus_DSM_COG_10_N35_00_W122_00_DEM.tif"
+      },
+      {
+        "file": "Copernicus_DSM_COG_10_N36_00_W122_00_DEM.tif",
+        "product_id": "Copernicus_DSM_COG_10_N36_00_W122_00_DEM",
+        "sha256": "cd834ec6668b806843905a6898559c1cf95aeda6bc3111979b3918d61b3e4ce9",
+        "url": "https://copernicus-dem-30m.s3.amazonaws.com/Copernicus_DSM_COG_10_N36_00_W122_00_DEM/Copernicus_DSM_COG_10_N36_00_W122_00_DEM.tif"
+      }
+    ],
+    "elevation_m_at_maxzoom": {
+      "max": 1551.59,
+      "min": 0.0
+    },
+    "note": "Display context only: a 30 m digital surface model (includes canopy), sea at 0 m. Never evidence of fire, burned area or severity.",
+    "outputs": {
+      "10/166/401.png": "67433525686ae5283861af0ef8561502888022c64e570be2a5b728e051d7b4f1",
+      "10/166/402.png": "a5def07d9b89181bf61937ad9f3c632d7531e8311513180bb69dbb66f84816fb",
+      "10/167/401.png": "dbf9cd52bfd688c331c2f53a610e86aca12ed72bfdb9136fe948264d9e46e77b",
+      "10/167/402.png": "ce6f3dbcee03efff71ad14da8efbb6a9e1a391c8741dd66fec0747e1a6ad7e19",
+      "11/332/803.png": "f6bea4c98745455c3b8babd3e77fb2b2bd5277a077a5ad1b018956617b2fabbd",
+      "11/332/804.png": "03932429d2e6c04ce6ad5e438c2987cf1d68b93c10e821890336591de1452b56",
+      "11/332/805.png": "83e9f2f1edef2926b1eac49d5160b3f7e4893706f6f6a86197e75f8891854350",
+      "11/333/803.png": "67187abb7940b3f60a2a9564ca101a28c1457f023a9de2c0ba814e741658d76d",
+      "11/333/804.png": "ea0b42b32e2fb121ce2cb4e266b175b95df368c16756e3d52c12cb89f01e0e18",
+      "11/333/805.png": "41f613ba119306f9ac8461832326198a4147ffd26b8b917db5636eb569cc2907",
+      "11/334/803.png": "66dc5478d81d74ccae410513a72daeae8da9854569fa46864f768d2da1a20f75",
+      "11/334/804.png": "cd1fe5e65c59d0b62a95ab1322dc3156bc1e7b635428ebf4d6a049751ae716a4",
+      "11/334/805.png": "47e281d797bf4f98eea30516ec9f5f5fadd0aa7c180ce69d1b75dbe3a82891ba",
+      "12/664/1607.png": "0d19572c216daf0cee607d8d6af50839f0c8b8c88708ae602ab3192bab2cb425",
+      "12/664/1608.png": "aed61db23265fc666bc1f73e05d8149053fd49f8abdaeaaa8018a2afd2290043",
+      "12/664/1609.png": "83e9f2f1edef2926b1eac49d5160b3f7e4893706f6f6a86197e75f8891854350",
+      "12/664/1610.png": "83e9f2f1edef2926b1eac49d5160b3f7e4893706f6f6a86197e75f8891854350",
+      "12/664/1611.png": "83e9f2f1edef2926b1eac49d5160b3f7e4893706f6f6a86197e75f8891854350",
+      "12/665/1607.png": "9a9736d30c99399134616387732327e257727dc63d54080380a6536de47df9a6",
+      "12/665/1608.png": "8f1b551abda13f1678339b647d7ce5dbc559f7e44d9c7ce3e11b497f5226635a",
+      "12/665/1609.png": "ee9c0930c4ddd3c88b54e0d93229f27876e045e9e1d45a600d7c9b8c6aade1b4",
+      "12/665/1610.png": "7f0304dd2bcf6dae18f3df00a281ede21a9e439e0404b6a36d28ca3d8ff626f1",
+      "12/665/1611.png": "83e9f2f1edef2926b1eac49d5160b3f7e4893706f6f6a86197e75f8891854350",
+      "12/666/1607.png": "2a3372c002e62010f4d28ff8e97ed410a192d96fbc30d57e2836ec9f459683e7",
+      "12/666/1608.png": "222a5ffac1890eff0c20dd470edc0ccebf625ddf2773e0acd01a001c57f995ba",
+      "12/666/1609.png": "79600ac845bf039c39f673f80b3c08177602cc84d0d1c64b44aad0b95b32943d",
+      "12/666/1610.png": "9d9f4ef55c51f25e424085f730a24b88416a75ef11f5a3589e8ead15d9e26d85",
+      "12/666/1611.png": "a03873c4048fd458237965b58f8dd439386a5653d9ff2238bc802bbbdea72aa5",
+      "12/667/1607.png": "2f604153176b713b965a3987b9904cdd33f4aad5fc1e0a60ee413e03427c7047",
+      "12/667/1608.png": "022d98d85f88f90ba26bf467a0393467f4de6a2d1be7bace5d94e67ac08a1576",
+      "12/667/1609.png": "a50f5654dd3ae2fef5816c9fc635e689b2eb868dff47df7e856b1fff9829215d",
+      "12/667/1610.png": "e0d0bb126be7077d2e9ef875e360e90cd960e2465ccdbc93557da7060f0a0caf",
+      "12/667/1611.png": "8c859bfd9ca0521776170b6c40b7072be330939e6cb72bfe67860a00eaf076e5",
+      "12/668/1607.png": "78440878304121e8b2ecca83910b5ffee8564ff2d258b9647a306f6b175ba3e3",
+      "12/668/1608.png": "4fd3240d18dbbfbf9484172f47ef0663bbf2731f4f1f73981af28e274a713c44",
+      "12/668/1609.png": "3aafc9bf517906600d61561eab698f0a47e6365d2ae1ba3bf3a45fd32ac500e0",
+      "12/668/1610.png": "0a4f86ad226967c6de0e693e3ee0cde037309607559be9d39aadb0d8ffe83345",
+      "12/668/1611.png": "0bd3afd57dbb8b847e084e6c12157c00de1471ee005255f188986f57ff47620a",
+      "12/669/1607.png": "9801133b88f82a25fa841f0e5d4efe3b8f2a3eece341a0c8978553a09fce5cbc",
+      "12/669/1608.png": "c38bdb1dcc7f8c005228f4e6c4a90c5cfafe64edad0e12c53f498c2a08cc5ec0",
+      "12/669/1609.png": "5f6642bd05fb3b23b7b792e21c017af93ed1a969f5149bf5a7a7cd2a5cd1795d",
+      "12/669/1610.png": "43a63bf655281df624c84a779c19ee7703f4e51124e364f8d110561e0eca3e25",
+      "12/669/1611.png": "52ff45bcfdc63f3179772b8fdbc0141f1677ae04565c62e0005c0b0d5036b7c3",
+      "8/41/100.png": "f9c76947434ddc9f46146b1bd74350ccd76b7d363ec7850f8c9c47ecd050bada",
+      "9/83/200.png": "8aa416490bb9e70f9eac3d9d861796d29d9a5752fe5664d3dd816c6da4978993",
+      "9/83/201.png": "3ab7be9ea4d9d8be5370b4cdfe28630dcf67b7d738e053e5118c067cfe0d7b7b"
+    },
+    "precision_m": 1.0,
+    "resampling": "bilinear",
+    "source_url": "https://doi.org/10.5270/ESA-c5d3d65",
+    "surface_model": "DSM",
+    "tile_count": 46,
+    "tiles_format_version": 1,
+    "vertical_datum": "EGM2008"
+  },
+  "maxzoom": 12,
+  "minzoom": 8,
+  "name": "FireTrace terrain (Copernicus GLO-30)",
+  "tileSize": 256,
+  "tilejson": "3.0.0",
+  "tiles": [
+    "{z}/{x}/{y}.png"
+  ]
+}

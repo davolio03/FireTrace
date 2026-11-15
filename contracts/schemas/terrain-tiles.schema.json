@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://firetrace.local/contracts/terrain-tiles.schema.json",
+  "title": "Terrain tiles manifest",
+  "description": "Optional 3D relief for the guided story (AP-07): terrain/tiles.json is a TileJSON 3.0 document for Terrarium raster-dem tiles at terrain/{z}/{x}/{y}.png, plus a firetrace provenance block. Like perimeter.geojson and the layer PNGs it is an external format without a contract_version envelope. Display context only (non-NISAR): never evidence of fire. Produced by pipeline/terrain_tiles.py.",
+  "type": "object",
+  "required": [
+    "tilejson",
+    "tiles",
+    "encoding",
+    "tileSize",
+    "minzoom",
+    "maxzoom",
+    "bounds",
+    "attribution",
+    "firetrace"
+  ],
+  "properties": {
+    "tilejson": { "const": "3.0.0" },
+    "name": { "type": "string" },
+    "tiles": {
+      "description": "Template relative to terrain/; the web resolves it against its data base URL.",
+      "type": "array",
+      "prefixItems": [{ "const": "{z}/{x}/{y}.png" }],
+      "minItems": 1,
+      "maxItems": 1
+    },
+    "encoding": { "const": "terrarium" },
+    "tileSize": { "enum": [256, 512] },
+    "minzoom": { "type": "integer", "minimum": 0, "maximum": 15 },
+    "maxzoom": { "type": "integer", "minimum": 0, "maximum": 15 },
+    "bounds": {
+      "description": "[west, south, east, north] in WGS84; MapLibre requests no tiles outside.",
+      "type": "array",
+      "items": { "type": "number" },
+      "minItems": 4,
+      "maxItems": 4
+    },
+    "attribution": { "type": "string", "minLength": 1 },
+    "firetrace": {
+      "type": "object",
+      "required": [
+        "tiles_format_version",
+        "case_id",
+        "data_status",
+        "vertical_datum",
+        "surface_model",
+        "dem",
+        "outputs"
+      ],
+      "properties": {
+        "tiles_format_version": { "const": 1 },
+        "case_id": { "type": "string" },
+        "data_status": { "enum": ["mock", "real"] },
+        "note": { "type": "string" },
+        "source_url": { "type": "string" },
+        "vertical_datum": { "type": "string" },
+        "surface_model": { "enum": ["DSM", "DTM"] },
+        "resampling": { "type": "string" },
+        "precision_m": { "type": "number", "exclusiveMinimum": 0 },
+        "dem": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["product_id", "sha256"],
+            "properties": {
+              "file": { "type": "string" },
+              "product_id": { "type": "string" },
+              "url": { "type": "string" },
+              "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+            }
+          }
+        },
+        "elevation_m_at_maxzoom": {
+          "type": "object",
+          "properties": { "min": { "type": "number" }, "max": { "type": "number" } }
+        },
+        "tile_count": { "type": "integer", "minimum": 1 },
+        "outputs": {
+          "description": "sha256 of every tile, keyed by its z/x/y.png path.",
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": { "pattern": "^[0-9]+/[0-9]+/[0-9]+\\.png$" },
+          "additionalProperties": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+        }
+      }
+    }
+  }
+}

@@ -39,3 +39,5 @@ jobs:
         run: python3 -m unittest discover -s tests -p test_quality_commands.py
       - name: Validate existing contract fixtures
         run: uv run contracts/tools/validate.py
+      - name: Validate the production guided story
+        run: uv run contracts/tools/validate.py --story web/src/story/story.json

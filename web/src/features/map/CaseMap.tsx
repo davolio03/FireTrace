@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
 import * as maplibregl from 'maplibre-gl'
 import mapWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url'
-import { mapStore, useMapStore } from '../../state/mapStore'
+import { isInitialCamera, mapStore, useMapStore } from '../../state/mapStore'
+import { syncCamera } from './cameraSync'
 import { ComparisonControls, type ComparisonDates } from './ComparisonControls'
 import { ComparisonOverlay } from './ComparisonOverlay'
 import { comparisonLabel, isSupportedComparison } from './comparison'
@@ -20,12 +21,15 @@ export function CaseMap({
   dates = { before: 'Date unavailable', after: 'Date unavailable' },
   profileSample = null,
   onCaptureReady,
+  overlay = null,
 }: {
   layers?: Layer[]
   dataBaseUrl?: string
   dates?: ComparisonDates
   profileSample?: LonLat | null
   onCaptureReady?: (capture: (() => string) | null) => void
+  /** Content drawn over the map (for example the guided story card). */
+  overlay?: ReactNode
 }) {
   const container = useRef<HTMLDivElement>(null)
   const [primary, setPrimary] = useState<maplibregl.Map | null>(null)
@@ -57,10 +61,15 @@ export function CaseMap({
     }
 
     maplibregl.setWorkerUrl(mapWorkerUrl)
+    // The map is recreated when the manifest arrives; start from the shared
+    // camera so a camera set by the user or the story is not lost.
+    const { center, zoom, bearing, pitch } = mapStore.getState().camera
     const map = new maplibregl.Map({
       container: container.current,
-      center: [-121.47, 35.92],
-      zoom: 9,
+      center,
+      zoom,
+      bearing: bearing ?? 0,
+      pitch: pitch ?? 0,
       canvasContextAttributes: { preserveDrawingBuffer: true },
       style: createBaseMapStyle(),
     })
@@ -68,6 +77,7 @@ export function CaseMap({
       if (!map.loaded() || errorRef.current) throw new Error('Map is not ready')
       return map.getCanvas().toDataURL('image/png')
     })
+    const stopCameraSync = syncCamera(map)
     setPrimary(map)
     map.addControl(new maplibregl.NavigationControl())
     map.on('click', (event) => {
@@ -94,7 +104,8 @@ export function CaseMap({
       const footprint = displayed.find(
         (layer) => layer.kind === 'raster' && layer.coordinates?.length === 4,
       )?.coordinates
-      if (footprint) {
+      // Fit the data only on first view; afterwards keep the shared camera.
+      if (footprint && isInitialCamera(mapStore.getState().camera)) {
         const longitudes = footprint.map(([lon]) => lon)
         const latitudes = footprint.map(([, lat]) => lat)
         map.fitBounds(
@@ -109,6 +120,7 @@ export function CaseMap({
       syncLayers()
     })
     return () => {
+      stopCameraSync()
       unsubscribe()
       onCaptureReady?.(null)
       map.remove()
@@ -185,6 +197,7 @@ export function CaseMap({
               sample={profileSample}
             />
           )}
+          {overlay}
         </div>
         {layers.length > 0 && (
           <div className="space-y-4">

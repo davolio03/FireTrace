@@ -17,6 +17,9 @@ to real data by changing ``VITE_DATA_BASE_URL`` only:
   When the optional XP-01 stage was run (``highlight_meta.json`` exists), ``stats.json``
   gets its ``highlight`` block and ``layers/highlight_mask.png`` is added (P1, hidden by
   default); otherwise ``stats.json`` stays byte-identical to the CH-02 file.
+- ``review_zones.geojson`` byte for byte when the optional XP-04 stage was run
+  (``review_zones_meta.json`` exists) from this bundle's inputs, XP-01 highlight and DT-05
+  terrain; it is listed as the P1 ``review_zones`` vector layer, hidden by default.
 - ``export.json``: input/output checksums, resampling and stretch rules (not a contract file).
 
 The PNGs are for viewing only; nothing is ever measured from them. Every input is checked
@@ -80,7 +83,15 @@ RASTER_IDS: tuple[str, ...] = (
     "valid_mask",
 )
 TOP_FILES: frozenset[str] = frozenset(
-    {"case.json", "layers.json", "stats.json", "perimeter.geojson", "weather.json", "export.json"}
+    {
+        "case.json",
+        "layers.json",
+        "stats.json",
+        "perimeter.geojson",
+        "weather.json",
+        "review_zones.geojson",
+        "export.json",
+    }
 )
 LAYER_FILES: frozenset[str] = frozenset(
     f"{lid}.png" for lid in (*RASTER_IDS, HIGHLIGHT_ID, *TERRAIN_IDS, *OPTICAL_IDS)
@@ -119,6 +130,17 @@ HIGHLIGHT_NOTE = (
     "smoothed change is below the threshold, where it is above but its region was removed by "
     "the minimum region size, or where the pixel is invalid."
 )
+ZONES_ID = "review_zones"
+ZONE_LEGEND: tuple[tuple[str, str, str], ...] = (  # contract fixture labels and colours
+    ("change_outside_perimeter", "Radar change outside the perimeter", "#e66101"),
+    ("no_change_inside_perimeter", "Little radar change inside the perimeter", "#5e3c99"),
+    ("change_inside_perimeter", "Radar change inside the perimeter (agreement)", "#1b7837"),
+)
+ZONES_NOTE = (
+    "Derived from an exploratory threshold. Discrepancies are prompts to investigate, not "
+    "errors of the radar or the perimeter; no zone means burned or unburned ground. A kind "
+    "with no zone above the minimum area is listed empty."
+)
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _CASE_ID = re.compile(r"^[a-z0-9-]+$")
 
@@ -147,6 +169,7 @@ class ExportConfig:
     output_dir: Path
     optical_dir: Path | None = None  # DT-07; optional, merged only when its manifest exists
     highlight_dir: Path | None = None  # XP-01 (P1); optional, merged only when its manifest exists
+    review_zones_dir: Path | None = None  # XP-04 (P1); optional, needs the highlight and terrain
 
     def input_dirs(self) -> list[Path]:
         dirs = [
@@ -158,7 +181,7 @@ class ExportConfig:
             self.terrain_dir,
             self.weather_dir,
         ]
-        optional = (self.optical_dir, self.highlight_dir)
+        optional = (self.optical_dir, self.highlight_dir, self.review_zones_dir)
         return [*dirs, *(d for d in optional if d is not None)]
 
 
@@ -218,6 +241,7 @@ def load_config(path: Path, base_dir: Path | None = None) -> ExportConfig:
         output_dir=resolve("output_dir"),
         optical_dir=resolve("optical_dir") if "optical_dir" in raw else None,
         highlight_dir=resolve("highlight_dir") if "highlight_dir" in raw else None,
+        review_zones_dir=resolve("review_zones_dir") if "review_zones_dir" in raw else None,
     )
 
 
@@ -753,6 +777,73 @@ def _highlight_layer(
     )
 
 
+def load_review_zones(
+    config: ExportConfig,
+    inputs: Inputs,
+    highlight: Highlight | None,
+    terrain: Terrain | None,
+) -> tuple[bytes, str] | None:
+    """XP-04 ``review_zones.geojson`` bytes and manifest sha, or None when not built.
+
+    The zones must come from this bundle's upstream set, from the very XP-01 highlight and
+    DT-05 terrain merged here, so the list never disagrees with the layers beside it.
+    """
+    directory = config.review_zones_dir
+    if directory is None or not (directory / "review_zones_meta.json").exists():
+        return None
+    meta, sha = _manifest(directory / "review_zones_meta.json")
+    _version(meta, "review_zones_format_version", "review_zones_meta.json")
+    if highlight is None:
+        raise ExportError("review_zones_meta.json needs the XP-01 highlight it was built from")
+    if terrain is None:
+        raise ExportError("review_zones_meta.json needs the DT-05 terrain it was built from")
+    expected = {k: inputs.shas[k] for k in ("change.json", "sar.json", "perimeter.json")}
+    expected |= {"highlight_meta.json": highlight.sha, "terrain.json": terrain.sha}
+    _chain(
+        _get(meta, ("inputs",), "review_zones_meta.json"),
+        expected,
+        "review_zones_meta.json",
+        "upstream set",
+    )
+    _same_grid(meta.get("grid"), inputs.crop, "review_zones_meta.json")
+    file, file_sha = _record(meta, ("outputs", "review_zones.geojson"), "review_zones_meta.json")
+    payload = _verified(directory / file, file_sha, "review_zones_meta.json")
+    doc = _parse(payload, "review_zones.geojson")
+    if not isinstance(doc, dict) or doc.get("type") != "FeatureCollection":
+        raise ExportError("review_zones.geojson: must be a FeatureCollection")
+    _real(doc, "review_zones.geojson")
+    method = doc.get("method")
+    if (
+        not isinstance(method, dict)
+        or method.get("change_threshold") != highlight.block["threshold"]
+    ):
+        raise ExportError(
+            "review_zones.geojson: method.change_threshold differs from the XP-01 highlight"
+        )
+    return payload, sha
+
+
+def _zones_layer() -> dict[str, Any]:
+    return {
+        "id": ZONES_ID,
+        "title": "Zones to review",
+        "kind": "vector",
+        "group": "highlighted_change",
+        "url": "review_zones.geojson",
+        "default_visible": False,
+        "default_opacity": 1.0,
+        "p1": True,
+        "legend": {
+            "type": "categorical",
+            "items": [
+                {"value": value, "label": label, "color": color}
+                for value, label, color in ZONE_LEGEND
+            ],
+            "note": ZONES_NOTE,
+        },
+    }
+
+
 # --------------------------------------------------------------------------- build
 
 
@@ -1013,6 +1104,7 @@ def run_export(config: ExportConfig, environ: Mapping[str, str] | None = None) -
     optical = load_optical(config, inputs.shas["ingest.json"], inputs.crop)
     weather = load_weather(config, inputs.shas["ingest.json"])
     highlight = load_highlight(config, inputs)
+    zones = load_review_zones(config, inputs, highlight, terrain)
 
     staging, _ = staging_dirs(config.output_dir)
     try:
@@ -1036,6 +1128,9 @@ def run_export(config: ExportConfig, environ: Mapping[str, str] | None = None) -
                 (staging / "layers" / f"{lid}.png").write_bytes(extra.pngs[lid])
             layers += extra.layers
         layers.append(_perimeter_layer(_get(inputs.perimeter, ("reference",), "perimeter.json")))
+        if zones is not None:
+            layers.append(_zones_layer())
+            (staging / "review_zones.geojson").write_bytes(zones[0])
         _write_json(
             staging / "layers.json",
             {"contract_version": CONTRACT_VERSION, "data_status": "real", "layers": layers},
@@ -1053,6 +1148,8 @@ def run_export(config: ExportConfig, environ: Mapping[str, str] | None = None) -
             input_shas["optical.json"] = optical.sha
         if highlight is not None:
             input_shas["highlight_meta.json"] = highlight.sha
+        if zones is not None:
+            input_shas["review_zones_meta.json"] = zones[1]
         if weather is not None:
             (staging / "weather.json").write_bytes(weather[0])
             input_shas["weather_meta.json"] = weather[1]
@@ -1072,6 +1169,7 @@ def run_export(config: ExportConfig, environ: Mapping[str, str] | None = None) -
                 "optical": optical is not None,
                 "weather": weather is not None,
                 "highlight": highlight is not None,
+                "review_zones": zones is not None,
             },
             "display": {
                 "crs": "EPSG:3857",

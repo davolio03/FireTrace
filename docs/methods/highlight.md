@@ -55,4 +55,4 @@ Almost everything highlighted lies inside the perimeter, but it covers only abou
 - The reference is the WFIGS perimeter dated 2026-09-14, **before** the after scene (2026-10-03), and it is an operational outline, not pixel-level ground truth. IoU measures agreement with it, not accuracy.
 - One case and one image pair: nothing here establishes a general threshold.
 - Moisture, terrain (slope, layover, shadow), viewing geometry and vegetation can raise or hide the index; see the EV-02 caveats. The patch pattern along slopes is a reason for caution, not a finding.
-- The 2.0 threshold and the 3 × 3 / 1 ha cleaning are documented choices, not calibrated ones.
+- The 2.0 threshold and the 3 × 3 / 1 ha cleaning are documented choices, not calibrated ones. Their sensitivity is described in [XP-02](sensitivity.md).

@@ -1,13 +1,20 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import storyFixture from '../../../contracts/fixtures/web/story.json'
-import { createMapStore, type StoryStep } from './mapStore'
+import { createMapStore, isInitialCamera, type StoryStep } from './mapStore'
 
 describe('shared map state', () => {
-  it('stores camera updates without controlling MapLibre', () => {
+  it('stores camera updates and their animation duration for the map', () => {
     const store = createMapStore()
+    expect(isInitialCamera(store.getState().camera)).toBe(true)
     const camera = { center: [-121.4, 35.9] as [number, number], zoom: 12 }
     store.getState().flyTo(camera, 500)
     expect(store.getState().camera).toEqual(camera)
+    expect(store.getState().cameraDurationMs).toBe(500)
+    expect(isInitialCamera(store.getState().camera)).toBe(false)
+    store.getState().flyTo(camera)
+    expect(store.getState().cameraDurationMs).toBe(0)
+    store.getState().flyTo(camera, -20)
+    expect(store.getState().cameraDurationMs).toBe(0)
   })
 
   it('sets and toggles visible layers without duplicates and stores opacity', () => {
@@ -21,16 +28,84 @@ describe('shared map state', () => {
     expect(store.getState().opacity.sar_t2_hh).toBe(0.4)
   })
 
-  it('sets, animates as a stub, and disables comparison', () => {
+  it('sets, jumps with no duration, and disables comparison', () => {
     const store = createMapStore()
     store
       .getState()
       .setCompare({ left: 'sar_t1_hh', right: 'sar_t2_hh', position: 0.5 })
-    store.getState().animateCompare(0.2, 1000)
+    store.getState().animateCompare(0.2, 0)
     expect(store.getState().compare?.position).toBe(0.2)
     store.getState().setCompare(null)
     store.getState().animateCompare(0.7, 1000)
     expect(store.getState().compare).toBeNull()
+  })
+
+  describe('animated swipe', () => {
+    const pair = { left: 'sar_t1_hv', right: 'sar_t2_hv' } as const
+    beforeEach(() => {
+      vi.useFakeTimers({
+        toFake: [
+          'requestAnimationFrame',
+          'cancelAnimationFrame',
+          'performance',
+          'setTimeout',
+          'Date',
+        ],
+      })
+    })
+    afterEach(() => {
+      vi.useRealTimers()
+      vi.unstubAllGlobals()
+    })
+
+    it('eases the position over the requested duration', () => {
+      const store = createMapStore()
+      store.getState().setCompare({ ...pair, position: 0.5 })
+      store.getState().animateCompare(0.1, 1000)
+      expect(store.getState().compare?.position).toBe(0.5)
+      vi.advanceTimersByTime(500)
+      const halfway = store.getState().compare!.position
+      expect(halfway).toBeLessThan(0.5)
+      expect(halfway).toBeGreaterThan(0.1)
+      vi.advanceTimersByTime(600)
+      expect(store.getState().compare?.position).toBeCloseTo(0.1, 6)
+      expect(store.getState().compare).toMatchObject(pair)
+    })
+
+    it('stops when the comparison is replaced or removed', () => {
+      const store = createMapStore()
+      store.getState().setCompare({ ...pair, position: 0.5 })
+      store.getState().animateCompare(0.1, 1000)
+      vi.advanceTimersByTime(300)
+      store.getState().setCompare({ ...pair, position: 0.8 })
+      vi.advanceTimersByTime(1000)
+      expect(store.getState().compare?.position).toBe(0.8)
+      store.getState().animateCompare(0.2, 1000)
+      vi.advanceTimersByTime(300)
+      store.getState().setCompare(null)
+      vi.advanceTimersByTime(1000)
+      expect(store.getState().compare).toBeNull()
+    })
+
+    it('restarts from the current position when animated again', () => {
+      const store = createMapStore()
+      store.getState().setCompare({ ...pair, position: 0.9 })
+      store.getState().animateCompare(0.1, 1000)
+      vi.advanceTimersByTime(400)
+      store.getState().animateCompare(0.6, 1000)
+      vi.advanceTimersByTime(1100)
+      expect(store.getState().compare?.position).toBeCloseTo(0.6, 6)
+    })
+
+    it('jumps to the target under reduced motion and clamps it', () => {
+      vi.stubGlobal('matchMedia', (query: string) => ({
+        matches: query.includes('reduce'),
+      }))
+      const store = createMapStore()
+      store.getState().setCompare({ ...pair, position: 0.5 })
+      store.getState().animateCompare(1.4, 1000)
+      expect(store.getState().compare?.position).toBe(1)
+    })
   })
 
   it('selects the matching panel and switches tools', () => {

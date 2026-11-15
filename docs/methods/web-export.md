@@ -16,6 +16,7 @@ The PNGs are **for viewing only**. Every number the product shows (inspector, me
 | `terrain.json`, `terrain_layers.json`, `{hillshade,slope}.png` | DT-05, optional | only when `terrain_dir` exists; built from this `ingest.json`; same grid; sha256 of each file; `data_status: real`; corners and size identical to the radar layers |
 | `weather_meta.json`, `weather.json` | DT-06, optional | only when `weather_dir` exists; built from this `ingest.json`; sha256; `data_status: real` |
 | `highlight_meta.json`, `highlight.json`, `highlight_mask.tif` | XP-01, optional (P1) | only when `highlight_dir` has `highlight_meta.json`; built from exactly these `change.json`, `sar.json` and `perimeter.json`; same grid; sha256 of each file; contract `highlight` block (keys, finite non-negative numbers, IoU in [0, 1], inside + outside = area); mask values 0/1/255 with 255 exactly where the DT-02 mask is 0; `stats.json` must still have `highlight: null` |
+| `review_zones_meta.json`, `review_zones.geojson` | XP-04, optional (P1) | only when `review_zones_dir` has `review_zones_meta.json`; requires the XP-01 highlight and DT-05 terrain in the same bundle; built from exactly these `change.json`, `sar.json`, `perimeter.json`, `highlight_meta.json` and `terrain.json`; same grid; GeoJSON sha256; a `FeatureCollection` with `contract_version` 1.2.0, `data_status: real` and `method.change_threshold` equal to the highlight threshold |
 | `case_plaskett.toml` | config | `name`, `location`, `fire_start` and `sources`, which no stage produces (from [PRODUCT](../PRODUCT.md) and the CAL FIRE incident page) |
 
 Each raster is decoded from the same in-memory bytes whose sha256 was verified, so a file replaced after hashing cannot slip in. Each radar layer must be finite wherever the DT-02 common mask is 1.
@@ -74,4 +75,6 @@ Command: `uv run python -m pipeline.export --config pipeline/configs/case_plaske
 
 When the XP-01 result is merged, `stats.json` is re-serialized with only `highlight` filled, and `layers/highlight_mask.png` is warped with nearest neighbour from the mask (orange where highlighted, transparent elsewhere) as a hidden-by-default `p1` layer ([highlight](highlight.md)).
 
-Out of scope: the `review_zones` P1 layer (XP-04) and computing statistics, terrain, weather or the highlight mask.
+When the XP-04 result is merged, `review_zones.geojson` is copied byte for byte and the hidden-by-default `p1` vector layer `review_zones` (group `highlighted_change`) is listed after the perimeter with the contract legend ([review zones](review-zones.md)).
+
+Out of scope: computing statistics, terrain, weather, the highlight mask or the review zones.

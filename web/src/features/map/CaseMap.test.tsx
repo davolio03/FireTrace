@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import manifest from '../../../../contracts/fixtures/web/layers.json'
 import type { components } from '../../generated/api'
-import { mapStore } from '../../state/mapStore'
+import { initialCamera, mapStore } from '../../state/mapStore'
 import { CaseMap } from './CaseMap'
 
 const map = vi.hoisted(() => ({
@@ -69,6 +69,8 @@ describe('case map', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mapStore.setState({
+      camera: { center: [...initialCamera.center], zoom: initialCamera.zoom },
+      cameraDurationMs: 0,
       visible: [],
       opacity: {},
       tool: 'pan',
@@ -132,6 +134,39 @@ describe('case map', () => {
     })
     unmount()
     expect(capture).toBeNull()
+  })
+  it('captures with a story overlay and shared camera and cleans up', () => {
+    mapStore.setState({
+      camera: { center: [-121.38, 35.95], zoom: 12, bearing: 10, pitch: 20 },
+      cameraDurationMs: 0,
+      visible: [],
+      opacity: {},
+      selection: { type: 'none' },
+      tool: 'pan',
+    })
+    let capture: (() => string) | null = null
+    const { unmount } = render(
+      <CaseMap
+        overlay={<p>Story overlay</p>}
+        onCaptureReady={(value) => {
+          capture = value
+        }}
+      />,
+    )
+    expect(screen.getByText('Story overlay')).toBeTruthy()
+    expect(map.create).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        center: [-121.38, 35.95],
+        zoom: 12,
+        bearing: 10,
+        pitch: 20,
+        canvasContextAttributes: { preserveDrawingBuffer: true },
+      }),
+    )
+    expect(capture!()).toBe('data:image/png;base64,AAAA')
+    unmount()
+    expect(capture).toBeNull()
+    expect(map.off).toHaveBeenCalledWith('moveend', expect.any(Function))
   })
 
   it('selects map points only in inspect mode', () => {
@@ -247,6 +282,31 @@ describe('case map', () => {
       'raster-opacity',
       0.35,
     )
+  })
+
+  it('starts from the shared camera and keeps it instead of refitting', () => {
+    const layers = manifest.layers as components['schemas']['layer'][]
+    mapStore.setState({
+      camera: { center: [-121.38, 35.95], zoom: 12, bearing: 10, pitch: 20 },
+    })
+    render(<CaseMap layers={layers} dataBaseUrl="/" />)
+    expect(map.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        center: [-121.38, 35.95],
+        zoom: 12,
+        bearing: 10,
+        pitch: 20,
+      }),
+    )
+    const load = map.on.mock.calls.find(([event]) => event === 'load')?.[1]
+    act(() => load())
+    expect(map.fitBounds).not.toHaveBeenCalled()
+    expect(map.on).toHaveBeenCalledWith('moveend', expect.any(Function))
+  })
+
+  it('draws overlay content on top of the map', () => {
+    render(<CaseMap overlay={<p>Story card</p>} />)
+    expect(screen.getByText('Story card')).toBeTruthy()
   })
 
   it('does not fit bounds when the manifest contains no raster', () => {
