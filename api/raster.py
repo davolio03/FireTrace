@@ -6,7 +6,8 @@ import hashlib
 import json
 import math
 import os
-from collections.abc import Mapping
+from bisect import bisect_right
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -28,6 +29,8 @@ FORMAT_VERSIONS = {
 }
 ANALYSIS_CRS = CRS.from_epsg(32610)
 ANALYSIS_PIXEL_SIZE_M = 10.0
+MAX_PROFILE_SAMPLES = 2000
+CROSSING_TOLERANCE_M = 1.0
 
 
 @dataclass(frozen=True)
@@ -479,3 +482,206 @@ class FireTraceRasterService:
             }
         )
         return response
+
+    @staticmethod
+    def _pixel_at(layer: RasterLayer, x: float, y: float) -> tuple[int, int] | None:
+        """Return the analysis pixel containing an EPSG:32610 position, if any."""
+        row_value, col_value = rowcol(layer.transform, x, y)
+        row, col = int(row_value), int(col_value)
+        if row < 0 or col < 0 or row >= layer.height or col >= layer.width:
+            return None
+        return row, col
+
+    @staticmethod
+    def _profile_distances(length_m: float, spacing_m: float) -> tuple[list[float], bool]:
+        """Build arc-length sample positions, cut to the contract sample limit.
+
+        Samples start at the line origin, repeat every ``spacing_m`` and include the final
+        ``length_m`` once when it is not already a regular sample. ``truncated`` is true
+        when that sequence would exceed :data:`MAX_PROFILE_SAMPLES`.
+        """
+        ratio = length_m / spacing_m
+        regular = (
+            MAX_PROFILE_SAMPLES + 1 if not math.isfinite(ratio) else int(math.floor(ratio)) + 1
+        )
+        truncated = regular > MAX_PROFILE_SAMPLES
+        distances = [index * spacing_m for index in range(min(regular, MAX_PROFILE_SAMPLES))]
+        if not truncated and length_m - distances[-1] > 1e-6:
+            if len(distances) == MAX_PROFILE_SAMPLES:
+                truncated = True
+            else:
+                distances.append(length_m)
+        return distances, truncated
+
+    @staticmethod
+    def _polyline_position(
+        vertices: list[tuple[float, float]],
+        cumulative: list[float],
+        distance: float,
+    ) -> tuple[float, float]:
+        """Interpolate the analysis-grid position at an arc-length distance."""
+        index = min(max(bisect_right(cumulative, distance) - 1, 0), len(vertices) - 2)
+        start, end = vertices[index], vertices[index + 1]
+        segment_length = cumulative[index + 1] - cumulative[index]
+        fraction = 0.0 if segment_length <= 0.0 else (distance - cumulative[index]) / segment_length
+        fraction = min(max(fraction, 0.0), 1.0)
+        return (
+            start[0] + (end[0] - start[0]) * fraction,
+            start[1] + (end[1] - start[1]) * fraction,
+        )
+
+    @staticmethod
+    def _perimeter_crossings(
+        mask: RasterLayer,
+        vertices: list[tuple[float, float]],
+        cumulative: list[float],
+        distances: list[float],
+        inside: list[bool | None],
+    ) -> list[float]:
+        """Refine inside/outside changes between samples to within one metre."""
+
+        def classify(distance: float) -> bool | None:
+            row_col = FireTraceRasterService._pixel_at(
+                mask,
+                *FireTraceRasterService._polyline_position(vertices, cumulative, distance),
+            )
+            if row_col is None:
+                return None
+            return int(mask.data[row_col]) == 1
+
+        crossings: list[float] = []
+        for index in range(1, len(distances)):
+            before, after = inside[index - 1], inside[index]
+            if before is None or after is None or before == after:
+                continue
+            low, high = distances[index - 1], distances[index]
+            while high - low > CROSSING_TOLERANCE_M:
+                middle = (low + high) / 2.0
+                state = classify(middle)
+                if state is None or state == before:
+                    low = middle
+                else:
+                    high = middle
+            crossings.append((low + high) / 2.0)
+        return crossings
+
+    def inspect_profile(self, line: Sequence[Sequence[float]], spacing_m: float) -> dict[str, Any]:
+        """Sample verified numerical products along a WGS84 polyline.
+
+        Distances are arc length on the EPSG:32610 analysis grid; each sample selects the
+        pixel containing the sampled position without interpolation, so a spacing below the
+        10 m grid repeats pixels. Invalid or masked positions keep their distance and WGS84
+        coordinates with null values. ``perimeter_crossings_m`` lists inside/outside changes
+        between consecutive samples, refined by bisection to within one metre; a perimeter
+        crossed twice inside one spacing interval is not resolved. The perimeter is an
+        operational reference, not ground truth.
+        """
+        if not math.isfinite(spacing_m) or spacing_m <= 0.0:
+            raise HTTPException(
+                status_code=422, detail="spacing_m must be a positive finite number"
+            )
+        case = self.get_case()
+        products = self._load_products()
+        reference = products.layers["t1_hh"]
+        try:
+            projected = transform_coordinates(
+                "EPSG:4326",
+                reference.crs,
+                [float(point[0]) for point in line],
+                [float(point[1]) for point in line],
+            )
+        except (CRSError, TransformError, OverflowError, TypeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=422, detail="Line cannot be projected onto the analysis grid"
+            ) from exc
+        if not all(math.isfinite(value) for value in (*projected[0], *projected[1])):
+            raise HTTPException(
+                status_code=422, detail="Line cannot be projected onto the analysis grid"
+            )
+        vertices = list(zip(projected[0], projected[1], strict=True))
+        segment_lengths = [
+            math.dist(start, end) for start, end in zip(vertices, vertices[1:], strict=False)
+        ]
+        length_m = math.fsum(segment_lengths)
+        if length_m <= 0.0:
+            raise HTTPException(status_code=422, detail="Line must have a positive length")
+        cumulative = [0.0]
+        for segment_length in segment_lengths:
+            cumulative.append(cumulative[-1] + segment_length)
+
+        distances, truncated = self._profile_distances(length_m, spacing_m)
+        positions = [
+            self._polyline_position(vertices, cumulative, distance) for distance in distances
+        ]
+        lons, lats = transform_coordinates(
+            reference.crs,
+            "EPSG:4326",
+            [x for x, _ in positions],
+            [y for _, y in positions],
+        )
+
+        perimeter = products.layers["perimeter_mask.tif"]
+        terrain = products.layers.get("elevation")
+        value_layers = (
+            "t1_hh",
+            "t1_hv",
+            "t2_hh",
+            "t2_hv",
+            "change_hh_db",
+            "change_hv_db",
+            "change_index",
+        )
+        samples: list[dict[str, Any]] = []
+        inside: list[bool | None] = []
+        for index, distance in enumerate(distances):
+            x, y = positions[index]
+            row_col = self._pixel_at(reference, x, y)
+            sample: dict[str, Any] = {
+                "distance_m": distance,
+                "lon": float(lons[index]),
+                "lat": float(lats[index]),
+                "valid": False,
+                "hh_t1": None,
+                "hh_t2": None,
+                "hv_t1": None,
+                "hv_t2": None,
+                "change_index": None,
+                "inside_perimeter": None,
+                "elevation_m": None,
+            }
+            if row_col is not None:
+                row, col = row_col
+                sample["inside_perimeter"] = int(perimeter.data[row, col]) == 1
+                if terrain is not None:
+                    elevation = float(terrain.data[row, col])
+                    sample["elevation_m"] = elevation if math.isfinite(elevation) else None
+                if int(products.layers["valid_mask"].data[row, col]) == 1:
+                    values = {
+                        name: float(products.layers[name].data[row, col]) for name in value_layers
+                    }
+                    if all(math.isfinite(value) for value in values.values()):
+                        sample.update(
+                            {
+                                "valid": True,
+                                "hh_t1": values["t1_hh"],
+                                "hh_t2": values["t2_hh"],
+                                "hv_t1": values["t1_hv"],
+                                "hv_t2": values["t2_hv"],
+                                "change_index": values["change_index"],
+                            }
+                        )
+            inside.append(sample["inside_perimeter"])
+            samples.append(sample)
+
+        return {
+            "contract_version": CONTRACT_VERSION,
+            "data_status": case["data_status"],
+            "line": [[float(point[0]), float(point[1])] for point in line],
+            "length_m": length_m,
+            "spacing_m": float(spacing_m),
+            "truncated": truncated,
+            "samples": samples,
+            "perimeter_crossings_m": self._perimeter_crossings(
+                perimeter, vertices, cumulative, distances, inside
+            ),
+        }
