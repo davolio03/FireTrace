@@ -73,7 +73,9 @@ export function ZonesPanel() {
                               }`}
                             >
                               {zone.zone_id} · {zone.area_ha} ha
-                              {selected ? ' · selected' : ''}
+                              {selected && (
+                                <span aria-hidden="true"> · selected</span>
+                              )}
                             </button>
                           </li>
                         )

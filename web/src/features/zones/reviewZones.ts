@@ -32,7 +32,7 @@ export interface ZoneProps {
 export interface Zone {
   type: 'Feature'
   id: string
-  geometry: { type: string; coordinates: unknown[] }
+  geometry: { type: 'Polygon' | 'MultiPolygon'; coordinates: unknown[] }
   properties: ZoneProps
 }
 export interface ReviewZones {
@@ -48,6 +48,16 @@ export interface ReviewZones {
   }
   features: Zone[]
 }
+
+export const caveatIds = [
+  'steep_slope',
+  'radar_shadow_layover',
+  'soil_moisture_change',
+  'vegetation_structure',
+  'near_perimeter_edge',
+  'low_backscatter',
+  'other_disturbance',
+]
 
 export const kindOrder: ZoneKind[] = [
   'change_outside_perimeter',
@@ -78,11 +88,12 @@ function isZone(f: unknown): f is Zone {
   const p = f.properties
   return (
     isRec(f.geometry) &&
+    (f.geometry.type === 'Polygon' || f.geometry.type === 'MultiPolygon') &&
     isRec(p) &&
     typeof p.zone_id === 'string' &&
     /^(CO|NI|CI)-[0-9]{2,}$/.test(p.zone_id) &&
     kindOrder.includes(p.kind as ZoneKind) &&
-    num(p.rank) &&
+    Number.isInteger(p.rank) &&
     num(p.area_ha) &&
     nums(p.centroid, 2) &&
     nums(p.bbox, 4) &&
@@ -98,6 +109,7 @@ function isZone(f: unknown): f is Zone {
       (c) =>
         isRec(c) &&
         typeof c.id === 'string' &&
+        caveatIds.includes(c.id) &&
         typeof c.label === 'string' &&
         num(c.fraction),
     )
@@ -137,10 +149,21 @@ export function groupZones(
   }))
 }
 
-// shortcut: assumes a ~640px-wide viewport and 512px tiles; MapLibre fitBounds would be exact.
-export function cameraForBbox(bbox: [number, number, number, number]): Camera {
+const mercY = (lat: number) =>
+  0.5 - Math.log(Math.tan(Math.PI / 4 + (lat * Math.PI) / 360)) / (2 * Math.PI)
+
+// Web-Mercator fit (512px tiles) of the bbox inside a viewport minus padding.
+// shortcut: default viewport is a fixed size, not the real map container; pass the real one if exposed.
+export function cameraForBbox(
+  bbox: [number, number, number, number],
+  viewport: { width: number; height: number } = { width: 640, height: 480 },
+  padding = 48,
+): Camera {
   const [w, s, e, n] = bbox
-  const span = Math.max(e - w, (n - s) * 2, 1e-6)
-  const zoom = Math.min(16, Math.max(0, Math.log2(450 / span)))
+  const fx = Math.max((e - w) / 360, 1e-9)
+  const fy = Math.max(mercY(s) - mercY(n), 1e-9)
+  const zx = Math.log2(Math.max(viewport.width - 2 * padding, 1) / (512 * fx))
+  const zy = Math.log2(Math.max(viewport.height - 2 * padding, 1) / (512 * fy))
+  const zoom = Math.min(16, Math.max(0, Math.min(zx, zy)))
   return { center: [(w + e) / 2, (s + n) / 2], zoom }
 }

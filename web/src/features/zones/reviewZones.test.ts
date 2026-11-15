@@ -46,6 +46,22 @@ describe('review zones guard', () => {
   })
 })
 
+describe('review zones guard, strict fields', () => {
+  it('rejects bad geometry type, non-integer rank and unknown caveat id', () => {
+    const geom = valid()
+    ;(geom.features[0].geometry as { type: string }).type = 'Point'
+    expect(isReviewZones(geom)).toBe(false)
+    const rank = valid()
+    rank.features[0].properties.rank = 1.5
+    expect(isReviewZones(rank)).toBe(false)
+    const caveat = valid()
+    caveat.features[0].properties.caveats = [
+      { id: 'made_up', label: 'x', fraction: 0.1 },
+    ]
+    expect(isReviewZones(caveat)).toBe(false)
+  })
+})
+
 describe('groupZones', () => {
   it('orders groups CO, NI, CI and sorts by rank then area', () => {
     const groups = groupZones(valid())
@@ -97,5 +113,17 @@ describe('cameraForBbox', () => {
     const large = cameraForBbox([-122, 35, -121, 36])
     expect(small.zoom).toBeGreaterThan(large.zoom)
     expect(Number.isFinite(cameraForBbox([1, 1, 1, 1]).zoom)).toBe(true)
+  })
+
+  it('pads the fit and respects the viewport', () => {
+    const box: [number, number, number, number] = [-121.5, 35.8, -121.4, 35.9]
+    const wide = { width: 1280, height: 960 }
+    expect(cameraForBbox(box, wide, 0).zoom).toBeGreaterThan(
+      cameraForBbox(box, wide, 100).zoom,
+    )
+    expect(cameraForBbox(box, wide).zoom).toBeGreaterThan(
+      cameraForBbox(box).zoom,
+    )
+    expect(cameraForBbox([-180, -80, 180, 80]).zoom).toBe(0)
   })
 })

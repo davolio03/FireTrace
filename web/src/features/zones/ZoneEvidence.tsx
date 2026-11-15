@@ -1,11 +1,21 @@
-import { kindLabels } from './reviewZones'
+import { kindLabels, type ZoneKind } from './reviewZones'
 import { useReviewZones } from './useReviewZones'
+
+const legends: Record<ZoneKind, string> = {
+  change_outside_perimeter:
+    'Observed radar changes; to investigate, not errors.',
+  no_change_inside_perimeter:
+    'Little radar change inside the reference perimeter; discrepancy to investigate, not an error.',
+  change_inside_perimeter:
+    'Radar change inside the reference perimeter; agreement example.',
+}
 
 export function ZoneEvidence({ zoneId }: { zoneId: string }) {
   const { data, isPending, isError } = useReviewZones()
   const zone = data?.features.find(
     (f) => f.properties.zone_id === zoneId,
   )?.properties
+  const db = (n: number) => `${n.toFixed(1)} dB`
   const pct = (n: number) => `${Math.round(n * 100)}%`
 
   return (
@@ -25,7 +35,7 @@ export function ZoneEvidence({ zoneId }: { zoneId: string }) {
       {zone && (
         <>
           <p>{kindLabels[zone.kind]}</p>
-          <p>Observed radar changes; to investigate, not errors.</p>
+          <p>{legends[zone.kind]}</p>
           <table className="w-full text-left">
             <caption className="sr-only">Zone radar backscatter</caption>
             <thead>
@@ -45,18 +55,20 @@ export function ZoneEvidence({ zoneId }: { zoneId: string }) {
               ).map(([name, stats]) => (
                 <tr key={name}>
                   <th>{name}</th>
-                  <td>{stats.t1_median}</td>
-                  <td>{stats.t2_median}</td>
-                  <td>{stats.delta_median}</td>
+                  <td>{db(stats.t1_median)}</td>
+                  <td>{db(stats.t2_median)}</td>
+                  <td>{db(stats.delta_median)}</td>
                 </tr>
               ))}
             </tbody>
           </table>
           <p>
-            Change index: median {zone.change_index.median}, P90{' '}
-            {zone.change_index.p90}
+            Change index: median {zone.change_index.median.toFixed(2)}, P90{' '}
+            {zone.change_index.p90.toFixed(2)}
           </p>
-          <p>Distance to perimeter: {zone.distance_to_perimeter_m} m</p>
+          <p>
+            Distance to perimeter: {Math.round(zone.distance_to_perimeter_m)} m
+          </p>
           <p>Valid data: {pct(zone.valid_fraction)}</p>
           {zone.caveats.map((caveat) => (
             <p key={caveat.id}>
