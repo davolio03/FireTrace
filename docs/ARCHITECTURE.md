@@ -46,6 +46,8 @@ The real continuous baseline combines absolute HH/HV log-ratio magnitudes. Its n
 
 [Executable contracts](../contracts/README.md) define `/api/health`, `/api/case`, `/api/stats`, `/api/layers`, `/api/inspect/point` and `POST /api/inspect/profile`. A point outside the AOI returns 200 with `valid=false`, `pixel=null` and null values; invalid query parameters use 422. The transect samples the same verified grid at a positive `spacing_m`, keeps masked or out-of-grid positions with null values, includes the final endpoint once, caps the response at 2,000 samples and reports perimeter crossings; malformed bodies use 422. No region endpoint or authentication/deployment design is implemented.
 
+Locally, the API reads `data/processed/web` plus `data/interim/{sar,change,perimeter[,terrain]}` from one verified generation (`FIRETRACE_DATA_ROOT` selects another local root). The web dev/preview server proxies `/api` to the API and `/data` to a static server for the bundle, so local real-data mode shares one browser origin and the API configures no CORS; a hosted deployment remains DL-01.
+
 COG names in current board proposals are implementation intentions, not a complete internal storage manifest. Record the numerical artifact layout, input integrity identifiers, crop/configuration and code/dependency versions during pipeline implementation. Extend shared metadata only through the contract process.
 
 ### Numerical artifact layout (implemented)

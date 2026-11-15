@@ -144,6 +144,57 @@ describe('point inspector', () => {
     })
   })
 
+  it('shows the sampled pixel, terrain and contract version', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({ ok: true, json: async () => inside }),
+    )
+    renderInspector()
+    act(() =>
+      mapStore
+        .getState()
+        .select({ type: 'point', point: [-121.380849, 35.965833] }),
+    )
+    expect(await screen.findByText(/row 71, col 252/)).toBeTruthy()
+    expect(screen.getByText(/602520, 3974290 m/)).toBeTruthy()
+    expect(screen.getByText('579.5 m')).toBeTruthy()
+    expect(screen.getByText('22.6°')).toBeTruthy()
+    expect(screen.getByText('242.4°')).toBeTruthy()
+    expect(screen.getByText('1.2.0')).toBeTruthy()
+  })
+
+  it('distinguishes an invalid query from unavailable products', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 422,
+          json: async () => ({ detail: 'Invalid coordinates' }),
+        })
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 503,
+          json: async () => ({
+            detail: 'Cannot read /private/data/interim/sar/sar.json',
+          }),
+        }),
+    )
+    renderInspector()
+    act(() =>
+      mapStore.getState().select({ type: 'point', point: [-121.45, 35.89] }),
+    )
+    expect(await screen.findByText(/rejected as invalid \(422\)/i)).toBeTruthy()
+    act(() =>
+      mapStore.getState().select({ type: 'point', point: [-121.38, 35.96] }),
+    )
+    expect(
+      await screen.findByText(/unavailable or incompatible on the server/i),
+    ).toBeTruthy()
+    expect(screen.queryByText(/private/)).toBeNull()
+  })
+
   it('keeps the newest selection when requests resolve out of order', async () => {
     let resolveFirst!: (response: unknown) => void
     const first = new Promise((resolve) => {
