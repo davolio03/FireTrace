@@ -362,3 +362,69 @@ def test_filesystem_errors_become_publish_errors(tmp_path: Path, monkeypatch: py
         check_output_dir(out, OWNED)
     with pytest.raises(PublishError, match="access denied"):
         remove_owned(out, OWNED)
+
+
+# --------------------------------------------------------------------------- review round 3
+
+
+def test_directory_swapped_for_a_junction_mid_removal_stops_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    winapi = pytest.importorskip("_winapi")
+    out = _set(tmp_path / "out", "x")
+    elsewhere = _set(tmp_path / "elsewhere", "precious")
+    real = Path.unlink
+    swapped: list[Path] = []
+
+    def swap_after_first(self: Path, *args: Any, **kwargs: Any) -> None:
+        real(self, *args, **kwargs)
+        if not swapped:  # after deleting a.json, replace "out" by a junction
+            swapped.append(self)
+            out.rename(tmp_path / "out_moved")
+            winapi.CreateJunction(str(elsewhere), str(out))
+
+    monkeypatch.setattr(Path, "unlink", swap_after_first)
+    with pytest.raises(PublishError, match="changed during removal"):
+        remove_owned(out, OWNED)
+    assert swapped
+    assert (elsewhere / "a.json").read_text(encoding="utf-8") == "precious"
+    assert (elsewhere / "b.tif").read_bytes() == b"precious"
+
+
+def test_backup_is_restored_when_the_output_is_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    out = tmp_path / "out"
+    staging, previous = staging_dirs(out)
+    _set(previous, "last complete")  # an interrupted swap left only the backup
+    real = Path.rename
+
+    def blocked(self: Path, target: Any) -> Any:
+        if self.name == staging.name:
+            raise OSError("rename blocked")
+        return real(self, target)
+
+    _set(staging, "new")
+    with monkeypatch.context() as mp:
+        mp.setattr(Path, "rename", blocked)
+        with pytest.raises(PublishError, match="rename blocked"):
+            publish(staging, out, OWNED)
+    assert (out / "a.json").read_text(encoding="utf-8") == "last complete", "nothing lost"
+    assert not previous.exists()
+    assert publish(staging, out, OWNED) is None
+    assert (out / "a.json").read_text(encoding="utf-8") == "new"
+    assert not previous.exists()
+
+
+def test_permission_error_on_an_input_is_a_publish_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    path = tmp_path / "x.tif"
+    path.write_bytes(b"x")
+
+    def denied(self: Path) -> bool:
+        raise PermissionError("access denied")
+
+    monkeypatch.setattr(Path, "is_file", denied)
+    with pytest.raises(PublishError, match="access denied"):
+        read_verified(path, _sha(path), "m.json")

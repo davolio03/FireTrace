@@ -136,36 +136,74 @@ def check_output_dir(output_dir: Path, owned: Iterable[str], subdirs: Subdirs = 
             )
 
 
+def _identity(path: Path) -> tuple[int, int]:
+    """``(st_dev, st_ino)`` of a plain directory, never following links or junctions."""
+    try:
+        st = os.lstat(path)
+    except OSError as exc:
+        raise PublishError(f"cannot inspect {path.name}: {exc}") from exc
+    if (
+        not stat.S_ISDIR(st.st_mode)
+        or stat.S_ISLNK(st.st_mode)
+        or getattr(st, "st_file_attributes", 0) & _REPARSE_POINT
+    ):
+        raise PublishError(f"{path.name} is not a plain directory")
+    return st.st_dev, st.st_ino
+
+
+def _still(path: Path, identity: tuple[int, int]) -> None:
+    """Fail closed if ``path`` is no longer the directory first inspected."""
+    try:
+        same = _identity(path) == identity
+    except PublishError as exc:
+        raise PublishError(
+            f"{path.name} changed during removal ({exc}); nothing more was deleted"
+        ) from exc
+    if not same:
+        raise PublishError(f"{path.name} changed during removal; nothing more was deleted")
+
+
 def remove_owned(directory: Path, owned: Iterable[str], subdirs: Subdirs = None) -> None:
     """Delete an owned set without recursion: unlink owned files, then ``rmdir``.
 
     Any entry that is not an owned regular file (or owned subdirectory of owned files)
     stops the removal with :class:`PublishError` and is left untouched. ``unlink`` never
-    deletes a directory tree and removes a link itself, never its target.
+    deletes a directory tree and removes a link itself, never its target. The identity
+    (device, inode) of each directory is pinned when first inspected and re-checked before
+    every deletion inside it, so a directory replaced by a link or junction mid-removal
+    stops the removal. Windows Python has no ``dir_fd`` deletion, so a hostile process of the
+    same user racing between that re-check and the deletion is outside the threat model
+    (one publisher per output directory, nobody else editing it).
     """
     if not _exists(directory):
         return
-    if entry_kind(directory) != "dir":
-        raise PublishError(f"{directory.name} is not a plain directory")
+    root = _identity(directory)
     files, dirs = frozenset(owned), _subdirs(subdirs)
     try:
         for entry in _listing(directory):
             kind = entry_kind(entry)
             if entry.name in dirs and kind == "dir":
+                sub = _identity(entry)
                 for p in _listing(entry):
                     if p.name not in dirs[entry.name] or entry_kind(p) != "file":
                         raise PublishError(
                             f"{directory.name} holds files this stage does not own: "
                             f"['{entry.name}/{p.name}']"
                         )
+                    _still(directory, root)
+                    _still(entry, sub)
                     p.unlink()
+                _still(directory, root)
+                _still(entry, sub)
                 entry.rmdir()
             elif entry.name in files and kind == "file":
+                _still(directory, root)
                 entry.unlink()
             else:
                 raise PublishError(
                     f"{directory.name} holds files this stage does not own: ['{entry.name}']"
                 )
+        _still(directory, root)
         directory.rmdir()
     except OSError as exc:
         raise PublishError(f"cannot remove {directory.name}: {exc}") from exc
@@ -245,6 +283,15 @@ def publish(
     kept for the next run to remove after its ownership check.
     """
     _, previous = staging_dirs(output_dir)
+    if _exists(previous) and not _exists(output_dir):
+        # An interrupted swap (or a failed rollback) left the last complete set only in the
+        # backup: restore it first, so it is never removed before a replacement commits.
+        try:
+            previous.rename(output_dir)
+        except OSError as exc:
+            raise PublishError(
+                f"cannot restore {previous.name} to {output_dir.name}: {exc}"
+            ) from exc
     remove_owned(previous, owned, subdirs)
     try:
         if _exists(output_dir):
@@ -278,9 +325,9 @@ def report(message: str | None, stage: str) -> None:
 
 def read_verified(path: Path, sha256: str, manifest: str, hint: str = "") -> bytes:
     """The bytes of ``path`` if their sha256 matches the manifest record."""
-    if not path.is_file():
-        raise PublishError(f"input not found: {path.name}")
     try:
+        if not path.is_file():
+            raise PublishError(f"input not found: {path.name}")
         payload = path.read_bytes()
     except OSError as exc:
         raise PublishError(f"{path.name}: cannot read: {exc}") from exc

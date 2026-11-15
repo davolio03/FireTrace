@@ -306,14 +306,18 @@ def write_quicklook(path: Path, index: np.ndarray) -> None:
 
 def check_quicklook_path(quicklook: Path, sar_dir: Path, output_dir: Path) -> None:
     """The preview must be a .png outside the input and product directories."""
-    target = quicklook.resolve()
+    try:
+        target = quicklook.resolve()
+        staging, previous = _staging_dirs(output_dir)
+        protected = [(d, d.resolve()) for d in (sar_dir, output_dir, staging, previous)]
+    except OSError as exc:
+        raise ChangeError(f"cannot check quicklook {quicklook.name}: {exc}") from exc
     if target.suffix.lower() != ".png":
         raise ChangeError(f"quicklook must be a .png file, got {quicklook.name}")
-    staging, previous = _staging_dirs(output_dir)
-    for protected in (sar_dir, output_dir, staging, previous):
-        if target.is_relative_to(protected.resolve()):
+    for directory, resolved in protected:
+        if target.is_relative_to(resolved):
             raise ChangeError(
-                f"quicklook {quicklook.name} must be outside {protected.name}: it is review "
+                f"quicklook {quicklook.name} must be outside {directory.name}: it is review "
                 "evidence and must never overwrite inputs or products"
             )
 

@@ -370,3 +370,21 @@ def test_rasters_are_decoded_from_the_hashed_bytes(
     assert hits, "the raster was read through the verified bytes"
     clean = (tmp_path / "clean" / "change_index.tif").read_bytes()
     assert (tmp_path / "raced" / "change_index.tif").read_bytes() == clean
+
+
+def test_quicklook_check_errors_exit_with_code_2(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    sar = write_sar_dir(tmp_path / "sar", *known_case())
+    real = Path.resolve
+
+    def denied(self: Path, *args: Any, **kwargs: Any) -> Path:
+        if self.name == "look.png":
+            raise PermissionError("access denied")
+        return real(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", denied)
+    argv = ["--sar-dir", str(sar), "--output-dir", str(tmp_path / "change")]
+    code = main([*argv, "--quicklook", str(tmp_path / "look.png")])
+    assert code == 2
+    assert "access denied" in capsys.readouterr().err
