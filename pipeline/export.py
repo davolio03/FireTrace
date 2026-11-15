@@ -33,11 +33,8 @@ import json
 import math
 import os
 import re
-import shutil
-import stat
 import sys
 import tomllib
-import warnings
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
@@ -46,10 +43,10 @@ from typing import Any
 
 import numpy as np
 from affine import Affine
-from rasterio.errors import NotGeoreferencedWarning, RasterioError
-from rasterio.io import MemoryFile
 
-from pipeline.sar import ANALYSIS_CRS, ANALYSIS_PIXEL_SIZE_M, SarError, _staging_dirs
+from pipeline import publishing
+from pipeline.publishing import PublishError, decode_raster, staging_dirs
+from pipeline.sar import ANALYSIS_CRS, ANALYSIS_PIXEL_SIZE_M, SarError
 from pipeline.webexport import WebExportError, WebRaster, colorize, warp_to_web, write_png
 
 EXPORT_FORMAT_VERSION = 1
@@ -73,6 +70,7 @@ TOP_FILES: frozenset[str] = frozenset(
     {"case.json", "layers.json", "stats.json", "perimeter.geojson", "weather.json", "export.json"}
 )
 LAYER_FILES: frozenset[str] = frozenset(f"{lid}.png" for lid in (*RASTER_IDS, *TERRAIN_IDS))
+LAYER_SUBDIRS: dict[str, frozenset[str]] = {"layers": LAYER_FILES}
 
 GREY = ("#000000", "#ffffff")
 RDBU = ("#2166ac", "#92c5de", "#f7f7f7", "#f4a582", "#b2182b")  # contract fixture stops
@@ -384,14 +382,12 @@ def _raster(
     name = record[0]
     payload = _verified(directory / name, record[1], manifest)
     try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", NotGeoreferencedWarning)
-            with MemoryFile(payload) as mem, mem.open() as ds:
-                data = ds.read(1)
-                meta = (ds.count, ds.dtypes[0], ds.crs, ds.transform, ds.height, ds.width)
-    except (RasterioError, OSError) as exc:
-        raise ExportError(f"{name}: cannot read raster: {exc}") from exc
-    count, actual_dtype, crs, transform, height, width = meta
+        raster = decode_raster(payload, name)
+    except PublishError as exc:
+        raise ExportError(str(exc)) from exc
+    data = raster.data
+    count, actual_dtype, crs = raster.count, raster.dtype, raster.crs
+    transform, height, width = raster.transform, raster.height, raster.width
     if count != 1 or actual_dtype != dtype:
         raise ExportError(f"{name}: expected 1 {dtype} band, got {count} {actual_dtype}")
     if crs != ANALYSIS_CRS:
@@ -785,90 +781,29 @@ def _write_json(path: Path, document: Mapping[str, Any]) -> None:
     path.write_text(text + "\n", encoding="utf-8", newline="\n")
 
 
-_REPARSE_POINT = 0x400  # Windows FILE_ATTRIBUTE_REPARSE_POINT (symlinks and junctions)
-
-
-def _kind(path: Path) -> str:
-    """'file', 'dir', 'link' or 'other', without following symlinks or junctions."""
-    st = os.lstat(path)
-    if stat.S_ISLNK(st.st_mode) or getattr(st, "st_file_attributes", 0) & _REPARSE_POINT:
-        return "link"
-    if stat.S_ISDIR(st.st_mode):
-        return "dir"
-    return "file" if stat.S_ISREG(st.st_mode) else "other"
-
-
-def check_owned(directory: Path) -> None:
-    """Only a missing directory, or a plain one holding exactly our files, may be replaced.
-
-    Applies to the output directory and to its staging/backup siblings, which are deleted
-    with ``shutil.rmtree``: allowed names must be regular files (``layers`` a plain
-    directory), so no foreign directory, symlink or junction is ever removed.
-    """
-    if not os.path.lexists(directory):
-        return
-    if _kind(directory) != "dir":
-        raise ExportError(f"{directory.name} is not a plain directory")
-    foreign: list[str] = []
-    for entry in directory.iterdir():
-        kind = _kind(entry)
-        if entry.name == "layers" and kind == "dir":
-            foreign += [
-                f"layers/{p.name}"
-                for p in entry.iterdir()
-                if p.name not in LAYER_FILES or _kind(p) != "file"
-            ]
-        elif entry.name not in TOP_FILES or kind != "file":
-            foreign.append(entry.name)
-    if foreign:
-        raise ExportError(
-            f"{directory.name} holds files this stage does not own: {sorted(foreign)}"
-        )
-
-
 def check_output_dir(output_dir: Path) -> None:
-    """The output directory and its staging/backup siblings must hold only our files."""
-    for path in (output_dir, *_staging_dirs(output_dir)):
-        check_owned(path)
+    """The output directory and its staging/backup siblings must hold only our files.
+
+    Owned names must be regular files and ``layers`` a plain directory of owned PNGs; any
+    other directory, symlink or junction is foreign (``pipeline.publishing``).
+    """
+    try:
+        publishing.check_output_dir(output_dir, TOP_FILES, LAYER_SUBDIRS)
+    except PublishError as exc:
+        raise ExportError(str(exc)) from exc
 
 
 def _check_separate(config: ExportConfig) -> None:
-    """No input directory may overlap the output or its staging/backup siblings."""
-    targets = [p.resolve() for p in (config.output_dir, *_staging_dirs(config.output_dir))]
-    for directory in config.input_dirs():
-        d = directory.resolve()
-        for t in targets:
-            if t == d or t.is_relative_to(d) or d.is_relative_to(t):
-                raise ExportError(
-                    "output_dir and its staging/backup siblings must be separate from every "
-                    f"input directory ({directory.name})"
-                )
-
-
-def publish(staging: Path, output_dir: Path) -> str | None:
-    """Swap the staging set into place; return a warning if only the backup cleanup failed.
-
-    The rename of ``staging`` to ``output_dir`` is the commit point: before it, any failure
-    restores the previous bundle and raises; after it the new bundle is published, and a
-    failure to delete the backup is only reported (the backup is kept).
-    """
-    _, previous = _staging_dirs(output_dir)
-    if os.path.lexists(previous):
-        shutil.rmtree(previous)  # ownership checked by check_output_dir
-    if os.path.lexists(output_dir):
-        output_dir.rename(previous)
+    """No input directory may be, or lie inside, the output or its staging/backup siblings."""
     try:
-        staging.rename(output_dir)
-    except OSError:
-        if os.path.lexists(previous) and not os.path.lexists(output_dir):
-            previous.rename(output_dir)
-        raise
-    if os.path.lexists(previous):
-        try:
-            shutil.rmtree(previous)
-        except OSError as exc:
-            return f"new bundle published, but the backup {previous.name} was kept: {exc}"
-    return None
+        clash = publishing.overlapping_input(config.output_dir, config.input_dirs())
+    except PublishError as exc:
+        raise ExportError(str(exc)) from exc
+    if clash is not None:
+        raise ExportError(
+            "output_dir and its staging/backup siblings must be separate from every "
+            f"input directory ({clash.name})"
+        )
 
 
 def run_export(config: ExportConfig, environ: Mapping[str, str] | None = None) -> dict[str, Any]:
@@ -881,10 +816,9 @@ def run_export(config: ExportConfig, environ: Mapping[str, str] | None = None) -
     terrain = load_terrain(config, inputs.shas["ingest.json"], inputs.crop)
     weather = load_weather(config, inputs.shas["ingest.json"])
 
-    staging, _ = _staging_dirs(config.output_dir)
+    staging, _ = staging_dirs(config.output_dir)
     try:
-        if os.path.lexists(staging):
-            shutil.rmtree(staging)  # ownership checked by check_output_dir
+        publishing.remove_owned(staging, TOP_FILES, LAYER_SUBDIRS)
         (staging / "layers").mkdir(parents=True)
         layers, grid, domains = _render(staging, inputs)
         if terrain is not None:
@@ -950,16 +884,14 @@ def run_export(config: ExportConfig, environ: Mapping[str, str] | None = None) -
             "outputs": outputs,
         }
         _write_json(staging / "export.json", document)
-        warning = publish(staging, config.output_dir)
-    except (SarError, WebExportError) as exc:
+        warning = publishing.publish(staging, config.output_dir, TOP_FILES, LAYER_SUBDIRS)
+    except (SarError, WebExportError, PublishError) as exc:
         raise ExportError(str(exc)) from exc
     except OSError as exc:
         raise ExportError(f"cannot write outputs: {exc}") from exc
     finally:
-        if staging.exists():
-            shutil.rmtree(staging, ignore_errors=True)
-    if warning is not None:
-        print(f"export warning: {warning}", file=sys.stderr)
+        publishing.discard_staging(staging, TOP_FILES, LAYER_SUBDIRS)
+    publishing.report(warning, "export")
     return document
 
 

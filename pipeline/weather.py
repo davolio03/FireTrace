@@ -31,7 +31,6 @@ import json
 import math
 import os
 import re
-import shutil
 import sys
 import urllib.error
 import urllib.parse
@@ -44,7 +43,16 @@ from typing import Any
 import numpy as np
 import xarray as xr
 
-from pipeline.sar import SarError, _staging_dirs, publish
+from pipeline import publishing
+from pipeline.publishing import PublishError
+from pipeline.sar import (
+    SarError,
+    _staging_dirs,
+    clear_staging,
+    discard_staging,
+    overlapping_input,
+    publish,
+)
 
 WEATHER_FORMAT_VERSION = 1
 MANIFEST_VERSION = 1
@@ -206,15 +214,20 @@ def load_granules(raw_dir: Path) -> tuple[dict[str, Any], dict[date, Path]]:
 # --------------------------------------------------------------------------- build
 
 
+def _overlaps(output_dir: Path, inputs: Sequence[Path]) -> bool:
+    """True if publishing to ``output_dir`` could move or delete one of ``inputs``."""
+    try:
+        return overlapping_input(output_dir, inputs) is not None
+    except SarError as exc:
+        raise WeatherError(str(exc)) from exc
+
+
 def check_output_dir(output_dir: Path) -> None:
-    if output_dir.exists():
-        if not output_dir.is_dir():
-            raise WeatherError(f"output_dir {output_dir.name} is not a directory")
-        foreign = sorted(p.name for p in output_dir.iterdir() if p.name not in OUTPUT_FILES)
-        if foreign:
-            raise WeatherError(
-                f"output_dir {output_dir.name} holds files this stage does not own: {foreign}"
-            )
+    """Only missing or fully owned output, staging and backup directories may be replaced."""
+    try:
+        publishing.check_output_dir(output_dir, OUTPUT_FILES)
+    except PublishError as exc:
+        raise WeatherError(str(exc)) from exc
 
 
 def _write_json(path: Path, document: Mapping[str, Any]) -> None:
@@ -224,7 +237,7 @@ def _write_json(path: Path, document: Mapping[str, Any]) -> None:
 
 def run_build(raw_dir: Path, ingest_dir: Path, output_dir: Path) -> dict[str, Any]:
     """Build ``weather.json`` from verified local granules; never uses the network."""
-    if output_dir.resolve() in (raw_dir.resolve(), ingest_dir.resolve()):
+    if _overlaps(output_dir, (raw_dir, ingest_dir)):
         raise WeatherError("output_dir must differ from the raw and ingest directories")
     check_output_dir(output_dir)
     t1, t2, bbox = load_case(ingest_dir)
@@ -309,20 +322,18 @@ def run_build(raw_dir: Path, ingest_dir: Path, output_dir: Path) -> dict[str, An
 
     staging, _ = _staging_dirs(output_dir)
     try:
-        if staging.exists():
-            shutil.rmtree(staging)
+        clear_staging(staging, OUTPUT_FILES)
         staging.mkdir(parents=True)
         _write_json(staging / "weather.json", document)
         meta["outputs"] = {"weather.json": _sha256(staging / "weather.json")}
         _write_json(staging / "weather_meta.json", meta)
-        publish(staging, output_dir)
+        publish(staging, output_dir, OUTPUT_FILES, "weather")
     except SarError as exc:
         raise WeatherError(str(exc)) from exc
     except OSError as exc:
         raise WeatherError(f"cannot write outputs: {exc}") from exc
     finally:
-        if staging.exists():
-            shutil.rmtree(staging, ignore_errors=True)
+        discard_staging(staging, OUTPUT_FILES)
     return document
 
 

@@ -24,7 +24,6 @@ from __future__ import annotations
 import argparse
 import json
 import math
-import shutil
 import sys
 import tomllib
 from collections.abc import Mapping, Sequence
@@ -43,11 +42,16 @@ from shapely.geometry import LineString, MultiPolygon, Polygon, mapping, shape
 from shapely.geometry.base import BaseGeometry
 from shapely.validation import explain_validity, make_valid
 
+from pipeline import publishing
+from pipeline.publishing import PublishError
 from pipeline.sar import (
     ANALYSIS_CRS,
     ANALYSIS_PIXEL_SIZE_M,
     SarError,
     _staging_dirs,
+    clear_staging,
+    discard_staging,
+    overlapping_input,
     publish,
     sha256_file,
     write_cog,
@@ -333,15 +337,20 @@ def _write_json(path: Path, document: Mapping[str, Any]) -> None:
     path.write_text(text + "\n", encoding="utf-8", newline="\n")
 
 
+def _overlaps(output_dir: Path, inputs: Sequence[Path]) -> bool:
+    """True if publishing to ``output_dir`` could move or delete one of ``inputs``."""
+    try:
+        return overlapping_input(output_dir, inputs) is not None
+    except SarError as exc:
+        raise PerimeterError(str(exc)) from exc
+
+
 def check_output_dir(output_dir: Path) -> None:
-    if output_dir.exists():
-        if not output_dir.is_dir():
-            raise PerimeterError(f"output_dir {output_dir.name} is not a directory")
-        foreign = sorted(p.name for p in output_dir.iterdir() if p.name not in OUTPUT_FILES)
-        if foreign:
-            raise PerimeterError(
-                f"output_dir {output_dir.name} holds files this stage does not own: {foreign}"
-            )
+    """Only missing or fully owned output, staging and backup directories may be replaced."""
+    try:
+        publishing.check_output_dir(output_dir, OUTPUT_FILES)
+    except PublishError as exc:
+        raise PerimeterError(str(exc)) from exc
 
 
 # --------------------------------------------------------------------------- run
@@ -349,7 +358,7 @@ def check_output_dir(output_dir: Path) -> None:
 
 def run_perimeter(config: PerimeterConfig) -> dict[str, Any]:
     """Build the perimeter products and return the ``perimeter.json`` document written."""
-    if config.output_dir.resolve() in (config.ingest_dir.resolve(), config.raw.parent.resolve()):
+    if _overlaps(config.output_dir, (config.ingest_dir, config.raw)):
         raise PerimeterError("output_dir must differ from the raw and ingest directories")
     check_output_dir(config.output_dir)
     ref = read_reference(config)
@@ -367,8 +376,7 @@ def run_perimeter(config: PerimeterConfig) -> dict[str, Any]:
 
     staging, _ = _staging_dirs(config.output_dir)
     try:
-        if staging.exists():
-            shutil.rmtree(staging)
+        clear_staging(staging, OUTPUT_FILES)
         staging.mkdir(parents=True)
         _write_json(staging / "perimeter.geojson", web_feature_collection(ref, config))
         write_cog(
@@ -434,14 +442,13 @@ def run_perimeter(config: PerimeterConfig) -> dict[str, Any]:
             },
         }
         _write_json(staging / "perimeter.json", document)
-        publish(staging, config.output_dir)
+        publish(staging, config.output_dir, OUTPUT_FILES, "perimeter")
     except SarError as exc:
         raise PerimeterError(str(exc)) from exc
     except OSError as exc:
         raise PerimeterError(f"cannot write outputs: {exc}") from exc
     finally:
-        if staging.exists():
-            shutil.rmtree(staging, ignore_errors=True)
+        discard_staging(staging, OUTPUT_FILES)
     return document
 
 

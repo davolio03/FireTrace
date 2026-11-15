@@ -24,7 +24,6 @@ from __future__ import annotations
 import argparse
 import json
 import math
-import shutil
 import sys
 import warnings
 from collections.abc import Mapping, Sequence
@@ -36,12 +35,18 @@ import rasterio
 from affine import Affine
 from rasterio.errors import NotGeoreferencedWarning
 
+from pipeline import publishing
+from pipeline.publishing import PublishError, read_verified_raster
 from pipeline.sar import (
     _RASTER_IO_ERRORS,
     ANALYSIS_CRS,
     ANALYSIS_PIXEL_SIZE_M,
     SarError,
     _staging_dirs,
+    clear_staging,
+    discard_staging,
+    input_file,
+    overlapping_input,
     publish,
     sha256_file,
     write_cog,
@@ -192,26 +197,27 @@ def load_sar(sar_dir: Path) -> dict[str, Any]:
     return doc
 
 
-def read_checked(path: Path, sha256: str, grid: Mapping[str, Any], dtype: str) -> np.ndarray:
-    """Read a single-band raster after checking checksum, dtype, CRS and grid."""
-    if not path.is_file():
-        raise ChangeError(f"input not found: {path.name}")
+def read_checked(
+    path: Path,
+    sha256: str,
+    grid: Mapping[str, Any],
+    dtype: str,
+    manifest: str = "sar.json",
+) -> np.ndarray:
+    """Read a single-band raster after checking checksum, dtype, CRS and grid.
+
+    The raster is decoded from the same bytes whose sha256 was checked, so a file replaced
+    after hashing is never read unverified.
+    """
     try:
-        actual = sha256_file(path)
-    except SarError as exc:
-        raise ChangeError(str(exc)) from exc
-    if actual != sha256:
-        raise ChangeError(
-            f"{path.name}: sha256 {actual[:12]}... differs from sar.json {sha256[:12]}...; "
-            "re-run the DT-02 conversion"
+        raster = read_verified_raster(
+            path, sha256, manifest, f"re-run the stage that wrote {manifest}"
         )
-    try:
-        with rasterio.open(path) as ds:
-            data = ds.read(1)
-            meta = (ds.count, ds.dtypes[0], ds.crs, ds.transform, ds.height, ds.width)
-    except _RASTER_IO_ERRORS as exc:
-        raise ChangeError(f"{path.name}: cannot read raster: {exc}") from exc
-    count, actual_dtype, crs, transform, height, width = meta
+    except PublishError as exc:
+        raise ChangeError(str(exc)) from exc
+    data = raster.data
+    count, actual_dtype, crs = raster.count, raster.dtype, raster.crs
+    transform, height, width = raster.transform, raster.height, raster.width
     if count != 1 or actual_dtype != dtype:
         raise ChangeError(f"{path.name}: expected 1 {dtype} band, got {count} {actual_dtype}")
     if crs != ANALYSIS_CRS:
@@ -230,22 +236,33 @@ def read_checked(path: Path, sha256: str, grid: Mapping[str, Any], dtype: str) -
     ):
         raise ChangeError(f"{path.name}: not the north-up 10 m analysis grid: {coeffs}")
     if [float(v) for v in tuple(transform)[:6]] != [float(v) for v in grid["transform"]]:
-        raise ChangeError(f"{path.name}: transform differs from sar.json")
+        raise ChangeError(f"{path.name}: transform differs from {manifest}")
     if (height, width) != (grid["height"], grid["width"]):
-        raise ChangeError(f"{path.name}: shape {(height, width)} differs from sar.json")
+        raise ChangeError(f"{path.name}: shape {(height, width)} differs from {manifest}")
     return data
 
 
+def _input(directory: Path, name: object) -> Path:
+    try:
+        return input_file(directory, name, "sar.json")
+    except SarError as exc:
+        raise ChangeError(str(exc)) from exc
+
+
+def _overlaps(output_dir: Path, inputs: Sequence[Path]) -> bool:
+    """True if publishing to ``output_dir`` could move or delete one of ``inputs``."""
+    try:
+        return overlapping_input(output_dir, inputs) is not None
+    except SarError as exc:
+        raise ChangeError(str(exc)) from exc
+
+
 def check_output_dir(output_dir: Path) -> None:
-    """Only a missing directory or one holding exactly our products may be replaced."""
-    if output_dir.exists():
-        if not output_dir.is_dir():
-            raise ChangeError(f"output_dir {output_dir.name} is not a directory")
-        foreign = sorted(p.name for p in output_dir.iterdir() if p.name not in OUTPUT_FILES)
-        if foreign:
-            raise ChangeError(
-                f"output_dir {output_dir.name} holds files this stage does not own: {foreign}"
-            )
+    """Only missing or fully owned output, staging and backup directories may be replaced."""
+    try:
+        publishing.check_output_dir(output_dir, OUTPUT_FILES)
+    except PublishError as exc:
+        raise ChangeError(str(exc)) from exc
 
 
 # --------------------------------------------------------------------------- quicklook
@@ -289,14 +306,18 @@ def write_quicklook(path: Path, index: np.ndarray) -> None:
 
 def check_quicklook_path(quicklook: Path, sar_dir: Path, output_dir: Path) -> None:
     """The preview must be a .png outside the input and product directories."""
-    target = quicklook.resolve()
+    try:
+        target = quicklook.resolve()
+        staging, previous = _staging_dirs(output_dir)
+        protected = [(d, d.resolve()) for d in (sar_dir, output_dir, staging, previous)]
+    except OSError as exc:
+        raise ChangeError(f"cannot check quicklook {quicklook.name}: {exc}") from exc
     if target.suffix.lower() != ".png":
         raise ChangeError(f"quicklook must be a .png file, got {quicklook.name}")
-    staging, previous = _staging_dirs(output_dir)
-    for protected in (sar_dir, output_dir, staging, previous):
-        if target.is_relative_to(protected.resolve()):
+    for directory, resolved in protected:
+        if target.is_relative_to(resolved):
             raise ChangeError(
-                f"quicklook {quicklook.name} must be outside {protected.name}: it is review "
+                f"quicklook {quicklook.name} must be outside {directory.name}: it is review "
                 "evidence and must never overwrite inputs or products"
             )
 
@@ -306,7 +327,7 @@ def check_quicklook_path(quicklook: Path, sar_dir: Path, output_dir: Path) -> No
 
 def run_change(sar_dir: Path, output_dir: Path, quicklook: Path | None = None) -> dict[str, Any]:
     """Compute the change products from ``sar_dir`` and return the ``change.json`` written."""
-    if output_dir.resolve() == sar_dir.resolve():
+    if _overlaps(output_dir, [sar_dir]):
         raise ChangeError("output_dir must differ from sar_dir")
     if quicklook is not None:
         check_quicklook_path(quicklook, sar_dir, output_dir)
@@ -315,11 +336,13 @@ def run_change(sar_dir: Path, output_dir: Path, quicklook: Path | None = None) -
     grid = sar["grid"]
     layers = sar["db"]["layers"]
     db = {
-        name: read_checked(sar_dir / layers[name]["file"], layers[name]["sha256"], grid, "float32")
+        name: read_checked(
+            _input(sar_dir, layers[name]["file"]), layers[name]["sha256"], grid, "float32"
+        )
         for name in INPUT_NAMES
     }
     mask = read_checked(
-        sar_dir / sar["valid_mask"]["file"], sar["valid_mask"]["sha256"], grid, "uint8"
+        _input(sar_dir, sar["valid_mask"]["file"]), sar["valid_mask"]["sha256"], grid, "uint8"
     )
     if not np.isin(mask, (0, 1)).all():
         raise ChangeError(f"{sar['valid_mask']['file']}: values must be 0 or 1")
@@ -347,8 +370,7 @@ def run_change(sar_dir: Path, output_dir: Path, quicklook: Path | None = None) -
 
     staging, _ = _staging_dirs(output_dir)
     try:
-        if staging.exists():
-            shutil.rmtree(staging)
+        clear_staging(staging, OUTPUT_FILES)
         for name, data in products.items():
             write_cog(staging / name, data, crs=ANALYSIS_CRS, transform=transform, nodata=np.nan)
         document = {
@@ -387,14 +409,13 @@ def run_change(sar_dir: Path, output_dir: Path, quicklook: Path | None = None) -
         if quicklook is not None:
             # Rendered before publication: a failing preview never replaces the previous set.
             write_quicklook(quicklook, products["change_index.tif"])
-        publish(staging, output_dir)
+        publish(staging, output_dir, OUTPUT_FILES, "change")
     except SarError as exc:
         raise ChangeError(str(exc)) from exc
     except OSError as exc:
         raise ChangeError(f"cannot write outputs: {exc}") from exc
     finally:
-        if staging.exists():
-            shutil.rmtree(staging, ignore_errors=True)
+        discard_staging(staging, OUTPUT_FILES)
     return document
 
 

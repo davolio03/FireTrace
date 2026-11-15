@@ -27,7 +27,6 @@ from __future__ import annotations
 import argparse
 import json
 import math
-import shutil
 import sys
 import tomllib
 import warnings
@@ -45,12 +44,17 @@ from rasterio.warp import Resampling, reproject
 from rasterio.warp import transform as warp_transform
 from rasterio.windows import Window
 
+from pipeline import publishing
 from pipeline.perimeter import PerimeterError, load_crop_grid
+from pipeline.publishing import PublishError
 from pipeline.sar import (
     ANALYSIS_CRS,
     ANALYSIS_PIXEL_SIZE_M,
     SarError,
     _staging_dirs,
+    clear_staging,
+    discard_staging,
+    overlapping_input,
     publish,
     sha256_file,
     write_cog,
@@ -589,15 +593,20 @@ def _write_json(path: Path, document: Mapping[str, Any]) -> None:
     path.write_text(text + "\n", encoding="utf-8", newline="\n")
 
 
+def _overlaps(output_dir: Path, inputs: Sequence[Path]) -> bool:
+    """True if publishing to ``output_dir`` could move or delete one of ``inputs``."""
+    try:
+        return overlapping_input(output_dir, inputs) is not None
+    except SarError as exc:
+        raise TerrainError(str(exc)) from exc
+
+
 def check_output_dir(output_dir: Path) -> None:
-    if output_dir.exists():
-        if not output_dir.is_dir():
-            raise TerrainError(f"output_dir {output_dir.name} is not a directory")
-        foreign = sorted(p.name for p in output_dir.iterdir() if p.name not in OUTPUT_FILES)
-        if foreign:
-            raise TerrainError(
-                f"output_dir {output_dir.name} holds files this stage does not own: {foreign}"
-            )
+    """Only missing or fully owned output, staging and backup directories may be replaced."""
+    try:
+        publishing.check_output_dir(output_dir, OUTPUT_FILES)
+    except PublishError as exc:
+        raise TerrainError(str(exc)) from exc
 
 
 def layer_entries(config: TerrainConfig, web: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -650,12 +659,8 @@ def layer_entries(config: TerrainConfig, web: Mapping[str, Any]) -> list[dict[st
 
 def run_terrain(config: TerrainConfig) -> dict[str, Any]:
     """Build the terrain products and return the ``terrain.json`` document written."""
-    protected = {
-        config.ingest_dir.resolve(),
-        config.dem.raw.parent.resolve(),
-        config.geometry.h5.parent.resolve(),
-    }
-    if config.output_dir.resolve() in protected:
+    protected = (config.ingest_dir, config.dem.raw, config.geometry.h5)
+    if _overlaps(config.output_dir, protected):
         raise TerrainError("output_dir must differ from the ingest and raw input directories")
     check_output_dir(config.output_dir)
     ingest, transform, width, height = load_ingest(config.ingest_dir)
@@ -704,8 +709,7 @@ def run_terrain(config: TerrainConfig) -> dict[str, Any]:
     }
     staging, _ = _staging_dirs(config.output_dir)
     try:
-        if staging.exists():
-            shutil.rmtree(staging)
+        clear_staging(staging, OUTPUT_FILES)
         staging.mkdir(parents=True)
         for name, data in floats.items():
             write_cog(staging / name, data, crs=ANALYSIS_CRS, transform=transform, nodata=np.nan)
@@ -826,14 +830,13 @@ def run_terrain(config: TerrainConfig) -> dict[str, Any]:
             },
         }
         _write_json(staging / "terrain.json", document)
-        publish(staging, config.output_dir)
+        publish(staging, config.output_dir, OUTPUT_FILES, "terrain")
     except (SarError, WebExportError) as exc:
         raise TerrainError(str(exc)) from exc
     except OSError as exc:
         raise TerrainError(f"cannot write outputs: {exc}") from exc
     finally:
-        if staging.exists():
-            shutil.rmtree(staging, ignore_errors=True)
+        discard_staging(staging, OUTPUT_FILES)
     return document
 
 

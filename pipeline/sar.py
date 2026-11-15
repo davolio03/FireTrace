@@ -21,21 +21,22 @@ import argparse
 import hashlib
 import json
 import math
-import shutil
 import sys
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import numpy as np
-import rasterio
 from affine import Affine
 from rasterio.crs import CRS
 from rasterio.errors import RasterioError
 from rasterio.io import MemoryFile
 from rio_cogeo.cogeo import cog_translate, cog_validate
 from rio_cogeo.profiles import cog_profiles
+
+from pipeline import publishing
+from pipeline.publishing import PublishError, read_verified_raster
 
 SAR_FORMAT_VERSION = 1
 SUPPORTED_INGEST_FORMAT_VERSION = 1
@@ -197,22 +198,16 @@ class Layer:
 
 def read_layer(path: Path, record: Mapping[str, Any], crop: Mapping[str, Any]) -> Layer:
     """Read one crop after checking it is the exact file and grid DT-01 recorded."""
-    if not path.is_file():
-        raise SarError(f"input not found: {path.name}")
-    actual = sha256_file(path)
-    if actual != record["sha256"]:
-        raise SarError(
-            f"{path.name}: sha256 {actual[:12]}... differs from ingest.json "
-            f"{record['sha256'][:12]}...; re-run the DT-01 ingest"
-        )
     try:
-        with rasterio.open(path) as ds:
-            if ds.count != 1 or ds.dtypes[0] != "float32":
-                raise SarError(f"{path.name}: expected 1 float32 band")
-            layer = Layer(ds.read(1), ds.nodata, ds.crs, ds.transform)
-            shape = (ds.height, ds.width)
-    except _RASTER_IO_ERRORS as exc:
-        raise SarError(f"{path.name}: cannot read raster: {exc}") from exc
+        raster = read_verified_raster(
+            path, record["sha256"], "ingest.json", "re-run the DT-01 ingest"
+        )
+    except PublishError as exc:
+        raise SarError(str(exc)) from exc
+    if raster.count != 1 or raster.dtype != "float32":
+        raise SarError(f"{path.name}: expected 1 float32 band")
+    layer = Layer(raster.data, raster.nodata, raster.crs, raster.transform)
+    shape = (raster.height, raster.width)
     if layer.crs != ANALYSIS_CRS:
         raise SarError(f"{path.name}: CRS {layer.crs} is not the analysis CRS EPSG:32610")
     t = layer.transform
@@ -286,42 +281,57 @@ def write_json(path: Path, document: Mapping[str, Any]) -> None:
 
 
 def _staging_dirs(output_dir: Path) -> tuple[Path, Path]:
-    return (
-        output_dir.with_name(f".{output_dir.name}.staging"),
-        output_dir.with_name(f".{output_dir.name}.previous"),
-    )
+    return publishing.staging_dirs(output_dir)
 
 
 def check_output_dir(output_dir: Path) -> None:
-    """Only a missing directory or one holding exactly our products may be replaced."""
-    if output_dir.exists():
-        if not output_dir.is_dir():
-            raise SarError(f"output_dir {output_dir.name} is not a directory")
-        foreign = sorted(p.name for p in output_dir.iterdir() if p.name not in OUTPUT_FILES)
-        if foreign:
-            raise SarError(
-                f"output_dir {output_dir.name} holds files this stage does not own: {foreign}"
-            )
-
-
-def publish(staging: Path, output_dir: Path) -> None:
-    """Swap a complete staging set into place; the previous set survives a failed swap."""
-    _, previous = _staging_dirs(output_dir)
+    """Only missing or fully owned output, staging and backup directories may be replaced."""
     try:
-        if previous.exists():
-            shutil.rmtree(previous)
-        if output_dir.exists():
-            output_dir.rename(previous)
-        try:
-            staging.rename(output_dir)
-        except OSError:
-            if previous.exists() and not output_dir.exists():
-                previous.rename(output_dir)
-            raise
-        if previous.exists():
-            shutil.rmtree(previous)
-    except OSError as exc:
-        raise SarError(f"cannot publish outputs to {output_dir.name}: {exc}") from exc
+        publishing.check_output_dir(output_dir, OUTPUT_FILES)
+    except PublishError as exc:
+        raise SarError(str(exc)) from exc
+
+
+def publish(staging: Path, output_dir: Path, owned: Iterable[str], stage: str = "pipeline") -> None:
+    """Swap a complete staging set into place (see :func:`pipeline.publishing.publish`).
+
+    The rename is the commit point: an earlier failure restores the previous set and raises
+    ``SarError``; a later backup-cleanup failure is only printed as ``<stage> warning``.
+    """
+    try:
+        message = publishing.publish(staging, output_dir, owned)
+    except PublishError as exc:
+        raise SarError(str(exc)) from exc
+    publishing.report(message, stage)
+
+
+def clear_staging(staging: Path, owned: Iterable[str]) -> None:
+    """Remove a stale owned staging set without recursion (``SarError`` on foreign entries)."""
+    try:
+        publishing.remove_owned(staging, owned)
+    except PublishError as exc:
+        raise SarError(str(exc)) from exc
+
+
+def discard_staging(staging: Path, owned: Iterable[str]) -> None:
+    """Best-effort, non-recursive cleanup of an unpublished staging set; never raises."""
+    publishing.discard_staging(staging, owned)
+
+
+def input_file(directory: Path, name: object, manifest: str) -> Path:
+    """A bare manifest-recorded file name inside ``directory`` (``SarError`` otherwise)."""
+    try:
+        return publishing.input_file(directory, name, manifest)
+    except PublishError as exc:
+        raise SarError(str(exc)) from exc
+
+
+def overlapping_input(output_dir: Path, inputs: Iterable[Path]) -> Path | None:
+    """:func:`pipeline.publishing.overlapping_input` raising ``SarError`` on I/O failure."""
+    try:
+        return publishing.overlapping_input(output_dir, inputs)
+    except PublishError as exc:
+        raise SarError(str(exc)) from exc
 
 
 # --------------------------------------------------------------------------- run
@@ -329,14 +339,16 @@ def publish(staging: Path, output_dir: Path) -> None:
 
 def run_sar(ingest_dir: Path, output_dir: Path) -> dict[str, Any]:
     """Convert the crops in ``ingest_dir`` and return the ``sar.json`` document written."""
-    if output_dir.resolve() == ingest_dir.resolve():
+    if overlapping_input(output_dir, [ingest_dir]) is not None:
         raise SarError("output_dir must differ from ingest_dir")
     check_output_dir(output_dir)
     ingest = load_ingest(ingest_dir)
     crop = ingest["grid"]["crop"]
     layers = {
         name: read_layer(
-            ingest_dir / ingest["outputs"][name]["file"], ingest["outputs"][name], crop
+            input_file(ingest_dir, ingest["outputs"][name]["file"], "ingest.json"),
+            ingest["outputs"][name],
+            crop,
         )
         for name in NAMES
     }
@@ -346,14 +358,12 @@ def run_sar(ingest_dir: Path, output_dir: Path) -> dict[str, Any]:
     # Build the complete set in a staging directory, then publish it in one swap, so a
     # failed run never leaves mixed-generation files or a stale sar.json behind.
     staging, _ = _staging_dirs(output_dir)
-    if staging.exists():
-        shutil.rmtree(staging)
+    clear_staging(staging, OUTPUT_FILES)
     try:
         document = _build(staging, ingest_dir, ingest, crop, layers, mask)
-        publish(staging, output_dir)
+        publish(staging, output_dir, OUTPUT_FILES, "sar")
     finally:
-        if staging.exists():
-            shutil.rmtree(staging, ignore_errors=True)
+        discard_staging(staging, OUTPUT_FILES)
     return document
 
 

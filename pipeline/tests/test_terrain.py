@@ -672,3 +672,26 @@ def test_failure_after_staging_keeps_previous_outputs(case, monkeypatch, stage):
     assert main(["--config", str(case["config"])]) == 2
     assert {p.name: p.read_bytes() for p in case["out"].iterdir()} == before
     assert not (case["out"].parent / f".{case['out'].name}.staging").exists()
+
+
+# --------------------------------------------------------------------------- DT-08
+
+
+def test_input_on_the_staging_sibling_is_rejected(case) -> None:
+    moved = case["ingest"].rename(case["out"].with_name(".terrain.staging"))
+    text = case["config"].read_text(encoding="utf-8")
+    case["config"].write_text(
+        text.replace(case["ingest"].as_posix(), moved.as_posix()), encoding="utf-8"
+    )
+    with pytest.raises(TerrainError, match="must differ"):
+        run_terrain(load_config(case["config"]))
+    assert (moved / "ingest.json").is_file(), "the input must never be deleted"
+
+
+def test_directory_under_an_owned_name_is_refused(case) -> None:
+    trap = case["out"] / "terrain.json"
+    trap.mkdir(parents=True)
+    (trap / "keep.txt").write_text("mine", encoding="utf-8")
+    with pytest.raises(TerrainError, match="does not own"):
+        run_terrain(load_config(case["config"]))
+    assert (trap / "keep.txt").is_file()
