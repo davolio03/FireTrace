@@ -102,7 +102,7 @@ git diff --check
 
 ## Use of AI
 
-AI coding agents (Claude Code, OpenCode, Codex) helped write and review code and documentation. People made the scientific decisions, approved every task and reviewed and merged every change. The product runs no AI and shows no AI-generated evidence. See [AI_USE](docs/AI_USE.md).
+AI coding agents (Claude Code and Codex through T3 Code, and OpenCode) helped write and review code and documentation. People made the scientific decisions, approved every task and reviewed and merged every change. The product runs no AI and shows no AI-generated evidence. See [AI_USE](docs/AI_USE.md).
 
 ## Team navigation
 

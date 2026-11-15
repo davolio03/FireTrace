@@ -13,8 +13,9 @@ This page answers proposal §11, criterion 10: it declares how the team used AI 
 
 | Tool | Provider | Used for |
 | --- | --- | --- |
+| T3 Code | desktop app that runs and orchestrates coding agents | Running Claude Code and Codex sessions and delegating reviews between them |
 | Claude Code | Anthropic (Claude models) | Writing pipeline, API and web code with tests, documentation and Kanvas board notes |
-| OpenCode | open-source coding agent; the models used were not recorded | Writing web and integration code, tests and board notes |
+| OpenCode | open-source coding agent, used with models from Chinese providers; the exact models were not recorded | Writing web and integration code, tests and board notes |
 | Codex (gpt-6.1-sol) | OpenAI | Independent, read-only code reviews before pull requests; its findings were fixed and re-tested before a person reviewed the pull request |
 | Engram | open-source memory for coding agents | Shared memory of the team's agreed decisions; it stores text and generates nothing |
 
@@ -31,8 +32,8 @@ The tool list comes from the agent signatures recorded on the Kanvas board (for 
 
 | Member | AI tools | Used for |
 | --- | --- | --- |
-| David | Claude Code; Codex (gpt-6.1-sol) for reviews; Engram | NISAR data pipeline, change products, P1 experiments, documentation |
-| Gabriel | *to be confirmed* | Application and frontend |
-| Other members | *to be confirmed* | |
+| David | T3 Code with Claude Code and Codex (gpt-6.1-sol for reviews); Engram | NISAR data pipeline, change products, P1 experiments, documentation |
+| Gabriel | OpenCode with models from Chinese providers | Application and frontend |
+| Other members | T3 Code with Claude Code and Codex | Their Kanvas tasks |
 
-Each member confirms or completes their own row before the delivery.
+Reported by David on 2026-11-15. The exact model versions behind OpenCode were not recorded.

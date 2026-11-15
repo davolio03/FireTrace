@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 640" width="720" height="640" role="img" aria-labelledby="t d">
+<title id="t">XP-02 highlight sensitivity, Plaskett</title>
+<desc id="d">IoU with the WFIGS perimeter and highlighted area outside it against the threshold, window 3, for the combined, HH-only and HV-only indices. Values are in docs/methods/sensitivity.md and sensitivity.csv.</desc>
+<style>
+svg{--surface:#fcfcfb;--ink:#0b0b0b;--ink2:#52514e;--grid:#e4e3df;--combined:#2a78d6;--hh:#eb6834;--hv:#1baf7a;}
+@media (prefers-color-scheme: dark){svg{--surface:#1a1a19;--ink:#f0efec;--ink2:#c3c2b7;--grid:#3a3936;--combined:#3987e5;--hh:#d95926;--hv:#199e70;}}
+text{font-family:system-ui,-apple-system,'Segoe UI',sans-serif;fill:var(--ink2);font-size:12px}
+.head{fill:var(--ink);font-size:16px;font-weight:600}.title{fill:var(--ink);font-size:13px;font-weight:600}
+.label{fill:var(--ink);font-size:12px}.note{font-size:11px}
+.grid{stroke:var(--grid);stroke-width:1}.rule{stroke:var(--ink2);stroke-width:1;stroke-dasharray:2 3}
+.chance{fill:none;stroke:var(--ink2);stroke-width:1.5;stroke-dasharray:5 4}
+.s-combined{fill:none;stroke:var(--combined);stroke-width:2;stroke-linejoin:round}.s-hh{fill:none;stroke:var(--hh);stroke-width:2;stroke-linejoin:round}.s-hv{fill:none;stroke:var(--hv);stroke-width:2;stroke-linejoin:round}
+</style>
+<rect width="720" height="640" fill="var(--surface)"/>
+<text class="head" x="64" y="28">Highlight sensitivity (XP-02, window 3)</text>
+<text x="64" y="46">Agreement with the dated WFIGS perimeter, not accuracy. Highlighted change is not burned area.</text>
+<line class="s-combined" x1="64" x2="82" y1="64" y2="64"/>
+<text class="label" x="88" y="68">Combined</text>
+<line class="s-hh" x1="168" x2="186" y1="64" y2="64"/>
+<text class="label" x="192" y="68">HH only</text>
+<line class="s-hv" x1="265" x2="283" y1="64" y2="64"/>
+<text class="label" x="289" y="68">HV only</text>
+<line class="chance" x1="362" x2="380" y1="64" y2="64"/>
+<text class="label" x="386" y="68">Chance baseline (combined)</text>
+<text class="title" x="64" y="88">IoU with the perimeter</text>
+<line class="grid" x1="64" x2="696" y1="300.0" y2="300.0"/>
+<text class="tick" x="56" y="304.0" text-anchor="end">0.0</text>
+<line class="grid" x1="64" x2="696" y1="262.0" y2="262.0"/>
+<text class="tick" x="56" y="266.0" text-anchor="end">0.1</text>
+<line class="grid" x1="64" x2="696" y1="224.0" y2="224.0"/>
+<text class="tick" x="56" y="228.0" text-anchor="end">0.2</text>
+<line class="grid" x1="64" x2="696" y1="186.0" y2="186.0"/>
+<text class="tick" x="56" y="190.0" text-anchor="end">0.3</text>
+<line class="grid" x1="64" x2="696" y1="148.0" y2="148.0"/>
+<text class="tick" x="56" y="152.0" text-anchor="end">0.4</text>
+<line class="grid" x1="64" x2="696" y1="110.0" y2="110.0"/>
+<text class="tick" x="56" y="114.0" text-anchor="end">0.5</text>
+<text class="tick" x="64.0" y="318" text-anchor="middle">0.5</text>
+<text class="tick" x="134.2" y="318" text-anchor="middle">1</text>
+<text class="tick" x="274.7" y="318" text-anchor="middle">2</text>
+<text class="tick" x="415.1" y="318" text-anchor="middle">3</text>
+<text class="tick" x="555.6" y="318" text-anchor="middle">4</text>
+<text class="tick" x="696.0" y="318" text-anchor="middle">5</text>
+<line class="rule" x1="274.7" x2="274.7" y1="110" y2="300"/>
+<text class="note" x="280.7" y="122">XP-01 threshold 2.0</text>
+<polyline class="chance" points="64.0,242.1 99.1,256.9 134.2,266.0 169.3,272.9 204.4,278.6 239.6,283.4 274.7,287.8 309.8,291.2 344.9,294.1 380.0,295.9 415.1,297.2 450.2,298.1 485.3,298.8 520.4,299.4 555.6,299.6 590.7,299.9 625.8,299.9 660.9,300.0 696.0,300.0"/>
+<polyline class="s-combined" points="64.0,128.7 99.1,169.3 134.2,199.3 169.3,221.9 204.4,239.9 239.6,254.5 274.7,267.1 309.8,276.6 344.9,284.4 380.0,289.2 415.1,292.7 450.2,295.1 485.3,297.0 520.4,298.4 555.6,299.1 590.7,299.6 625.8,299.9 660.9,300.0 696.0,300.0"/>
+<polyline class="s-hh" points="64.0,156.1 99.1,202.9 134.2,238.5 169.3,260.7 204.4,276.1 239.6,284.9 274.7,290.8 309.8,294.7 344.9,296.8 380.0,298.7 415.1,299.5 450.2,299.9 485.3,300.0 520.4,300.0 555.6,300.0 590.7,300.0 625.8,300.0 660.9,300.0 696.0,300.0"/>
+<polyline class="s-hv" points="64.0,129.2 99.1,174.9 134.2,202.5 169.3,223.5 204.4,241.6 239.6,255.8 274.7,269.0 309.8,278.5 344.9,287.0 380.0,291.8 415.1,295.0 450.2,297.4 485.3,298.7 520.4,299.6 555.6,299.9 590.7,300.0 625.8,300.0 660.9,300.0 696.0,300.0"/>
+<text class="title" x="64" y="368">Highlighted area outside the perimeter (ha)</text>
+<line class="grid" x1="64" x2="696" y1="580.0" y2="580.0"/>
+<text class="tick" x="56" y="584.0" text-anchor="end">0</text>
+<line class="grid" x1="64" x2="696" y1="532.5" y2="532.5"/>
+<text class="tick" x="56" y="536.5" text-anchor="end">350</text>
+<line class="grid" x1="64" x2="696" y1="485.0" y2="485.0"/>
+<text class="tick" x="56" y="489.0" text-anchor="end">700</text>
+<line class="grid" x1="64" x2="696" y1="437.5" y2="437.5"/>
+<text class="tick" x="56" y="441.5" text-anchor="end">1,050</text>
+<line class="grid" x1="64" x2="696" y1="390.0" y2="390.0"/>
+<text class="tick" x="56" y="394.0" text-anchor="end">1,400</text>
+<text class="tick" x="64.0" y="598" text-anchor="middle">0.5</text>
+<text class="tick" x="134.2" y="598" text-anchor="middle">1</text>
+<text class="tick" x="274.7" y="598" text-anchor="middle">2</text>
+<text class="tick" x="415.1" y="598" text-anchor="middle">3</text>
+<text class="tick" x="555.6" y="598" text-anchor="middle">4</text>
+<text class="tick" x="696.0" y="598" text-anchor="middle">5</text>
+<line class="rule" x1="274.7" x2="274.7" y1="390" y2="580"/>
+<text class="note" x="280.7" y="402">XP-01 threshold 2.0</text>
+<polyline class="s-combined" points="64.0,510.6 99.1,568.8 134.2,578.1 169.3,579.4 204.4,579.8 239.6,579.9 274.7,579.9 309.8,579.9 344.9,580.0 380.0,580.0 415.1,580.0 450.2,580.0 485.3,580.0 520.4,580.0 555.6,580.0 590.7,580.0 625.8,580.0 660.9,580.0 696.0,580.0"/>
+<polyline class="s-hh" points="64.0,398.5 99.1,531.1 134.2,566.9 169.3,576.8 204.4,579.3 239.6,580.0 274.7,580.0 309.8,580.0 344.9,580.0 380.0,580.0 415.1,580.0 450.2,580.0 485.3,580.0 520.4,580.0 555.6,580.0 590.7,580.0 625.8,580.0 660.9,580.0 696.0,580.0"/>
+<polyline class="s-hv" points="64.0,561.2 99.1,576.6 134.2,579.1 169.3,579.8 204.4,579.9 239.6,579.9 274.7,579.9 309.8,580.0 344.9,580.0 380.0,580.0 415.1,580.0 450.2,580.0 485.3,580.0 520.4,580.0 555.6,580.0 590.7,580.0 625.8,580.0 660.9,580.0 696.0,580.0"/>
+<text class="tick" x="380.0" y="628" text-anchor="middle">Threshold (robust z-score of the smoothed index)</text>
+</svg>

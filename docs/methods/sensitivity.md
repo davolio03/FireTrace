@@ -1,6 +1,6 @@
 # Highlight sensitivity: threshold, smoothing and polarization (XP-02, P1)
 
-Producer: `pipeline/sensitivity.py`, configured by `pipeline/configs/sensitivity_plaskett.toml`. Inputs: the CH-01 `change_index.tif`, `change_hh_db.tif` and `change_hv_db.tif`, the DT-02 common valid mask and the DT-03 perimeter mask and 50 m edge band, checked exactly as in [XP-01](highlight.md). Outputs in `data/interim/sensitivity/`: `sensitivity.json` (inputs, normalization, parameters, every point) and `sensitivity.csv` (one row per point, for plots in DL-02).
+Producer: `pipeline/sensitivity.py`, configured by `pipeline/configs/sensitivity_plaskett.toml`. Inputs: the CH-01 `change_index.tif`, `change_hh_db.tif` and `change_hv_db.tif`, the DT-02 common valid mask and the DT-03 perimeter mask and 50 m edge band, checked exactly as in [XP-01](highlight.md). Outputs in `data/interim/sensitivity/`: `sensitivity.json` (inputs, normalization, parameters, every point) and `sensitivity.csv` (one row per point; the figure below is drawn from it).
 
 **What it is.** XP-01 reports one operating point of the exploratory "Highlighted radar changes" mask. XP-02 repeats the same rules over a grid of settings to show whether that picture is robust. It **describes** sensitivity: it never chooses a "best" threshold and never changes the XP-01 operating point (combined index, 3 × 3, threshold 2.0, fixed a priori). IoU is agreement with the WFIGS perimeter dated 2026-09-14, not accuracy, and highlighted change is not burned area.
 
@@ -12,7 +12,7 @@ Producer: `pipeline/sensitivity.py`, configured by `pipeline/configs/sensitivity
 | B. Thresholds | 0.50 to 5.00 in steps of 0.25 (19 values), always including 2.0 |
 | C. Smoothing | Valid-only window mean of 1 (none), 3 and 5, each followed by the 1 ha (100 px, 8-connected) region filter |
 | D. Baselines | Per point, `iou_upper_bound = min(H, P) / max(H, P)` (perfect overlap for these two areas) and `iou_chance = I / (H + P − I)` with `I = H × P / N` (a ratio-of-expectations baseline for a same-area mask placed uniformly at random over the N valid pixels; a reference value, neither a lower bound nor the exact expected IoU) |
-| E. Outputs | JSON and CSV only; no plotting dependency. The curves are drawn in DL-02. |
+| E. Outputs | JSON and CSV only; no plotting dependency. The curves are drawn from the CSV by a standard-library script (DL-02, below). |
 
 That gives 3 indices × 3 windows × 19 thresholds = 171 points. Each point reports area, inside/outside area, IoU, the two baselines, the share of the highlight inside the perimeter, the share of the perimeter covered, the region count and the IoU without the edge band. Every point uses `pipeline.highlight` functions, and the XP-01 point is checked to reproduce `highlight.json` exactly.
 
@@ -41,6 +41,12 @@ How to read it:
 - **Edge band.** Removing the 50 m band never lowers the IoU and raises it by at most 0.011, so the result does not hinge on the perimeter edge.
 
 Two identical runs produce byte-identical outputs.
+
+## Figure
+
+![IoU with the perimeter and highlighted area outside it against the threshold, window 3, for the combined, HH-only and HV-only indices, with the chance baseline of the combined index](figures/sensitivity.svg)
+
+`figures/sensitivity.svg` shows every window-3 point of the sweep (the table above lists a subset): IoU with the perimeter (with the chance baseline of the combined index, dashed) and the highlighted area outside it. It was drawn by `python scripts/plot_sensitivity.py data/interim/sensitivity/sensitivity.csv docs/methods/figures/sensitivity.svg` (standard library only, deterministic) from the `sensitivity.csv` of the `f66c4d9` generation (sha256 `698bef3cf538ed3be38f29cd74b485a07fbe9b36b94d546a5fed29bdfbead9ba`), whose `sensitivity.json` records the same `change.json`, `sar.json` and `perimeter.json` hashes as the web bundle of the `data-web-plaskett-f66c4d9` release. The CSV itself is not in a release; regenerate it with the XP-02 command. The exact values are in that CSV and, for the listed thresholds, in the table above.
 
 ## Limitations
 
