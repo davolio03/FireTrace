@@ -1,0 +1,16 @@
+# XP-01 exploratory highlight mask (P1, F05) for the Plaskett Fire case.
+# Run from the repository root:
+#   uv run python -m pipeline.highlight --config pipeline/configs/highlight_plaskett.toml
+# Parameters were fixed a priori with David on 2026-11-15 (decisions A1, B2) and must not be
+# tuned on the IoU against the perimeter; the threshold sweep belongs to XP-02.
+# Relative paths resolve against the current working directory.
+
+threshold = 2.0          # smoothed robust z-score of the CH-01 index, inclusive (>=)
+smoothing_window = 3     # 3 x 3 mean over valid pixels only (30 m)
+min_region_px = 100      # connected regions under 100 px (1 ha) are removed
+connectivity = 8
+
+change_dir = "data/interim/change"
+sar_dir = "data/interim/sar"
+perimeter_dir = "data/interim/perimeter"
+output_dir = "data/interim/highlight"

@@ -518,7 +518,12 @@ def test_optional_inputs_are_merged_only_when_present(tmp_path: Path):
     assert "hillshade" not in _layers(bare.output_dir)
     assert not (bare.output_dir / "weather.json").exists()
     manifest = _load(bare.output_dir / "export.json")
-    assert manifest["optional"] == {"terrain": False, "optical": False, "weather": False}
+    assert manifest["optional"] == {
+        "terrain": False,
+        "optical": False,
+        "weather": False,
+        "highlight": False,
+    }
 
     full = write_inputs(tmp_path / "full", terrain=True, weather=True)
     run_export(full)
@@ -531,6 +536,7 @@ def test_optional_inputs_are_merged_only_when_present(tmp_path: Path):
         "terrain": True,
         "optical": False,
         "weather": True,
+        "highlight": False,
     }
 
 
@@ -1064,3 +1070,166 @@ def test_contract_invalid_optical_metadata_keeps_the_previous_bundle(
         if p.is_file()
     }
     assert after == before
+
+
+# --------------------------------------------------------------------------- XP-01 highlight
+
+HIGHLIGHTED = np.zeros((H, W), dtype=bool)
+HIGHLIGHTED[0:2, 0:3] = True  # 6 px, all valid
+HIGHLIGHT_BLOCK = {
+    "threshold": 2.0,
+    "smoothing": "3x3 mean over valid pixels; 8-connected regions under 100 px (1 ha) removed",
+    "area_ha": 0.06,
+    "inside_ha": 0.04,
+    "outside_ha": 0.02,
+    "iou_vs_perimeter": 0.25,
+}
+
+
+def write_highlight(
+    directory: Path,
+    config: ExportConfig,
+    *,
+    block: dict[str, Any] | None = None,
+    mask: np.ndarray | None = None,
+    inputs: dict[str, str] | None = None,
+) -> None:
+    """Mimic the XP-01 output directory for the synthetic upstream set."""
+    directory.mkdir(parents=True, exist_ok=True)
+    if mask is None:
+        mask = np.where(MASK == 1, HIGHLIGHTED.astype(np.uint8), 255).astype(np.uint8)
+    write_cog(directory / "highlight_mask.tif", mask, crs=UTM10N, transform=TRANSFORM, nodata=255)
+    _json(directory / "highlight.json", HIGHLIGHT_BLOCK if block is None else block)
+    meta = {
+        "highlight_format_version": 1,
+        "inputs": inputs
+        or {
+            "change.json": _sha(config.change_dir / "change.json"),
+            "sar.json": _sha(config.sar_dir / "sar.json"),
+            "perimeter.json": _sha(config.perimeter_dir / "perimeter.json"),
+        },
+        "grid": GRID,
+        "outputs": {
+            name: {"file": name, "sha256": _sha(directory / name)}
+            for name in ("highlight.json", "highlight_mask.tif")
+        },
+    }
+    _json(directory / "highlight_meta.json", meta)
+
+
+def _with_highlight(tmp_path: Path, **kwargs: Any) -> ExportConfig:
+    config = write_inputs(tmp_path)
+    highlight_dir = tmp_path / "highlight"
+    write_highlight(highlight_dir, config, **kwargs)
+    return replace(config, highlight_dir=highlight_dir)
+
+
+def test_highlight_is_merged_into_stats_and_layers(tmp_path: Path):
+    config = _with_highlight(tmp_path)
+    run_export(config)
+    web = config.output_dir
+    stats_doc = _load(web / "stats.json")
+    assert stats_doc["highlight"] == HIGHLIGHT_BLOCK
+    source = _load(config.stats_dir / "stats.json")
+    source["highlight"] = HIGHLIGHT_BLOCK
+    assert stats_doc == source, "only the highlight block changes"
+    layer = _layers(web)["highlight_mask"]
+    assert layer["group"] == "highlighted_change" and layer["p1"] is True
+    assert layer["default_visible"] is False
+    assert layer["legend"]["type"] == "categorical"
+    assert layer["legend"]["items"][0]["value"] == 1
+    assert "not a validated burned-area mask" in layer["legend"]["note"]
+    # Pixels above the threshold in regions removed by the size filter are transparent too.
+    assert "removed by the minimum region size" in layer["legend"]["note"]
+    assert layer["coordinates"] == _layers(web)["change_index"]["coordinates"]
+    manifest = _load(web / "export.json")
+    assert manifest["optional"]["highlight"] is True
+    assert manifest["inputs"]["highlight_meta.json"] == _sha(
+        config.highlight_dir / "highlight_meta.json"
+    )
+    spec = importlib.util.spec_from_file_location("validate", ROOT / "contracts/tools/validate.py")
+    assert spec and spec.loader
+    validate = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(validate)
+    errors: list[str] = []
+    validate.check_web_dir(web, errors)
+    assert errors == []
+
+
+def test_highlight_png_is_opaque_only_on_highlighted_pixels(tmp_path: Path):
+    config = _with_highlight(tmp_path)
+    run_export(config)
+    png = _png(config.output_dir / "layers/highlight_mask.png")
+    layer = _layers(config.output_dir)["highlight_mask"]
+    opaque = png[..., 3] == 255
+    assert opaque.any() and set(np.unique(png[..., 3])) <= {0, 255}
+    assert (png[opaque][:, :3] == [0xE6, 0x61, 0x01]).all()
+    rows, cols, clear = _source_pixels(layer)
+    inside = (rows >= 0) & (rows < H) & (cols >= 0) & (cols < W)
+    expected = np.zeros(rows.shape, dtype=bool)
+    expected[inside] = HIGHLIGHTED[rows[inside], cols[inside]]
+    assert (clear & expected).sum() >= 3 and (clear & inside & ~expected).sum() >= 10
+    assert (opaque[clear] == expected[clear]).all()
+
+
+def test_without_highlight_stats_stay_byte_identical(tmp_path: Path):
+    config = write_inputs(tmp_path)
+    (tmp_path / "highlight").mkdir()
+    run_export(replace(config, highlight_dir=tmp_path / "highlight"))
+    web = config.output_dir
+    assert (web / "stats.json").read_bytes() == (config.stats_dir / "stats.json").read_bytes()
+    assert not (web / "layers/highlight_mask.png").exists()
+    assert "highlight_mask" not in _layers(web)
+    assert _load(web / "export.json")["optional"]["highlight"] is False
+
+
+def test_highlight_from_another_generation_is_rejected(tmp_path: Path):
+    config = _with_highlight(
+        tmp_path, inputs={"change.json": "0" * 64, "sar.json": "0" * 64, "perimeter.json": "0" * 64}
+    )
+    _fails_without_writing(config, "highlight_meta.json was built from another")
+
+
+def test_highlight_mask_must_match_the_valid_mask(tmp_path: Path):
+    mask = np.where(MASK == 1, HIGHLIGHTED.astype(np.uint8), 255).astype(np.uint8)
+    mask[5, 7] = 255  # a valid pixel marked invalid
+    _fails_without_writing(_with_highlight(tmp_path, mask=mask), "255 exactly where")
+
+
+def test_highlight_mask_values_are_checked(tmp_path: Path):
+    mask = np.where(MASK == 1, HIGHLIGHTED.astype(np.uint8), 255).astype(np.uint8)
+    mask[5, 7] = 2
+    _fails_without_writing(_with_highlight(tmp_path, mask=mask), "0, 1 or 255")
+
+
+@pytest.mark.parametrize(
+    ("override", "message"),
+    [
+        ({"iou_vs_perimeter": 1.5}, "iou_vs_perimeter"),
+        ({"area_ha": -1.0}, "area_ha"),
+        ({"threshold": "2"}, "threshold"),
+        ({"extra": 1}, "keys"),
+        ({"outside_ha": 0.5}, r"inside_ha \+ outside_ha"),
+    ],
+    ids=["iou", "negative", "type", "extra_key", "sum"],
+)
+def test_invalid_highlight_block_is_rejected(
+    tmp_path: Path, override: dict[str, Any], message: str
+) -> None:
+    config = _with_highlight(tmp_path, block={**HIGHLIGHT_BLOCK, **override})
+    _fails_without_writing(config, message)
+
+
+def test_stats_with_a_highlight_already_set_is_rejected(tmp_path: Path):
+    config = _with_highlight(tmp_path)
+    _rewrite_json(config.stats_dir / "stats.json", lambda d: d.update(highlight=HIGHLIGHT_BLOCK))
+    _rewrite_json(
+        config.stats_dir / "stats_meta.json",
+        lambda d: d["outputs"].update({"stats.json": _sha(config.stats_dir / "stats.json")}),
+    )
+    _fails_without_writing(config, "already has a highlight")
+
+
+def test_highlight_dir_is_optional_in_the_config(tmp_path: Path):
+    config = load_config(ROOT / "pipeline/configs/case_plaskett.toml", base_dir=tmp_path)
+    assert config.highlight_dir == tmp_path / "data/interim/highlight"

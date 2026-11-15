@@ -14,7 +14,7 @@ These numbers summarise **observed radar change** ([change index](change-index.m
 | Outside | Valid and perimeter mask = 0. **Open water is included** (decision F1): there is no land mask yet; revisit with DT-05 terrain data. |
 | Area | `area_ha = valid pixels × 100 m² / 10,000` (`pixel_area_m2 = 100`, the 10 m analysis grid; never Web Mercator pixels). |
 
-`highlight` is `null`: thresholds, highlighted areas and IoU are P1 (XP-01).
+`highlight` is `null` here: thresholds, highlighted areas and IoU are P1. The optional XP-01 stage computes them ([highlight](highlight.md)) and DT-04 fills this block in the web copy only when that stage was run.
 
 ## Distributions
 
