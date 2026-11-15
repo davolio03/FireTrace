@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -726,3 +727,142 @@ def test_replacing_export_json_invalidates_cached_products(tmp_path: Path) -> No
     _write_json(export_path, export)
 
     _assert_503(service.inspect_point, lon, lat, match="different pipeline runs")
+
+
+# ------------------------------------------------------- EV-01 one export snapshot per request
+
+
+def _publish_generation_b(root: Path) -> None:
+    """Republish the bundle as a later run: real case metadata and recorded terrain.
+
+    The SAR, change and perimeter manifests keep their bytes, so a response built from
+    generation A's export is still fully consistent with generation A.
+    """
+    web_dir = root / "processed" / "web"
+    case_bytes = _write_json(
+        web_dir / "case.json",
+        {
+            "contract_version": "1.2.0",
+            "data_status": "real",
+            "method": {"id": "generation-b-method"},
+        },
+    )
+    export_path = web_dir / "export.json"
+    export = json.loads(export_path.read_text(encoding="utf-8"))
+    export["outputs"]["case.json"] = hashlib.sha256(case_bytes).hexdigest()
+    _write_json(export_path, export)
+    _write_terrain(root)
+    _record_inputs(root, (*GENERATION_MANIFESTS, "terrain.json"))
+
+
+def _publish_b_after_case_is_read(monkeypatch: pytest.MonkeyPatch, root: Path) -> None:
+    """Republish generation B right after the request has read case.json once."""
+    import api.raster as raster_module
+
+    original = raster_module.read_verified
+    published: list[bool] = []
+
+    def read_then_publish(path: Path, *args: Any, **kwargs: Any) -> bytes:
+        payload = original(path, *args, **kwargs)
+        if path.name == "case.json" and not published:
+            published.append(True)
+            _publish_generation_b(root)
+        return payload
+
+    monkeypatch.setattr(raster_module, "read_verified", read_then_publish)
+
+
+def _assert_one_generation(data_status: str, method_id: str | None, has_terrain: bool) -> None:
+    if data_status == "mock":
+        assert (method_id, has_terrain) in {("abs-logratio-hhhv-v1", False), (None, False)}
+    else:
+        assert (data_status, has_terrain) == ("real", True)
+        assert method_id in {"generation-b-method", None}
+
+
+def test_point_inspection_uses_one_export_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, lon, lat = _case_data(tmp_path)
+    _publish_b_after_case_is_read(monkeypatch, root)
+
+    try:
+        result = FireTraceRasterService(root).inspect_point(lon, lat)
+    except HTTPException as error:
+        assert error.status_code == 503
+        return
+    _assert_one_generation(result["data_status"], result["method_id"], "terrain" in result)
+
+
+def test_profile_inspection_uses_one_export_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, _, _ = _case_data(tmp_path)
+    _publish_b_after_case_is_read(monkeypatch, root)
+    line = [_wgs84(600000.0, 3974995.0), _wgs84(600010.0, 3974995.0)]
+
+    try:
+        result = FireTraceRasterService(root).inspect_profile(line, spacing_m=10.0)
+    except HTTPException as error:
+        assert error.status_code == 503
+        return
+    elevations = {sample["elevation_m"] for sample in result["samples"]}
+    _assert_one_generation(result["data_status"], None, elevations != {None})
+
+
+def test_restored_generation_never_serves_products_cached_from_another(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Generation B lands while a request is checking A; A is then restored byte-for-byte.
+
+    A stat-sampled cache key would still describe A while the products were parsed from
+    B, so the restored A would serve B's terrain.
+    """
+    root, lon, lat = _case_data(tmp_path)
+    _write_terrain(root)  # on disk but not recorded by generation A
+    web_dir = root / "processed" / "web"
+    terrain_manifest = _manifest_path(root, "terrain.json")
+    restore = {
+        path: (path.read_bytes(), path.stat())
+        for path in (web_dir / "export.json", web_dir / "case.json", terrain_manifest)
+    }
+    original_stat = Path.stat
+    original_read_json = FireTraceRasterService._read_json
+    published: list[bool] = []
+
+    def publish_once() -> None:
+        if not published:
+            published.append(True)
+            _publish_generation_b(root)
+
+    def stat_then_publish(self: Path, *args: Any, **kwargs: Any) -> Any:
+        try:
+            return original_stat(self, *args, **kwargs)
+        finally:
+            if self.name == "terrain.json":
+                publish_once()
+
+    def publish_then_read(path: Path, source: str) -> tuple[dict[str, Any], str]:
+        if path.name == "sar.json":
+            publish_once()
+        return original_read_json(path, source)
+
+    monkeypatch.setattr(Path, "stat", stat_then_publish)
+    monkeypatch.setattr(FireTraceRasterService, "_read_json", staticmethod(publish_then_read))
+    service = FireTraceRasterService(root)
+    try:
+        service.inspect_point(lon, lat)
+    except HTTPException as error:
+        assert error.status_code == 503
+    assert published
+    monkeypatch.undo()
+
+    for path, (payload, stat) in restore.items():
+        path.write_bytes(payload)
+        os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+
+    result = service.inspect_point(lon, lat)
+
+    assert result["data_status"] == "mock"
+    assert result["valid"] is True
+    assert "terrain" not in result

@@ -74,8 +74,9 @@ class FireTraceRasterService:
         self.change_dir = self.data_root / "interim" / "change"
         self.perimeter_dir = self.data_root / "interim" / "perimeter"
         self.terrain_dir = self.data_root / "interim" / "terrain"
-        self._products: InspectionProducts | None = None
-        self._products_manifest_key: tuple[tuple[int, int], ...] | None = None
+        # (sha256 of each verified manifest, products parsed from exactly those bytes),
+        # replaced as one tuple so the key never describes another generation's arrays.
+        self._products_cache: tuple[tuple[tuple[str, str], ...], InspectionProducts] | None = None
 
     @staticmethod
     def _read_json(path: Path, source: str) -> tuple[dict[str, Any], str]:
@@ -89,14 +90,18 @@ class FireTraceRasterService:
             raise HTTPException(status_code=503, detail=f"{source} must contain a JSON object")
         return document, hashlib.sha256(payload).hexdigest()
 
-    @staticmethod
-    def _json_bytes(path: Path, source: str) -> dict[str, Any]:
-        return FireTraceRasterService._read_json(path, source)[0]
+    def _export(self) -> dict[str, Any]:
+        """Read export.json once: the snapshot that pins one published generation."""
+        return self._read_json(self.web_dir / "export.json", "export.json")[0]
 
-    def _web_json(self, name: str) -> dict[str, Any]:
-        """Read a published web document only when export.json records its exact bytes."""
-        export_path = self.web_dir / "export.json"
-        export = self._json_bytes(export_path, "export.json")
+    def _web_json(self, name: str, export: Mapping[str, Any] | None = None) -> dict[str, Any]:
+        """Read a published web document only when export.json records its exact bytes.
+
+        Pass the ``export`` snapshot already read by the request so every document in one
+        response is verified against the same generation.
+        """
+        if export is None:
+            export = self._export()
         outputs = export.get("outputs")
         expected = outputs.get(name) if isinstance(outputs, dict) else None
         if not isinstance(expected, str) or len(expected) != 64:
@@ -134,11 +139,12 @@ class FireTraceRasterService:
         return {"status": "ok", "data_status": data_status}
 
     @staticmethod
-    def _manifest(path: Path, recorded: Mapping[str, Any]) -> dict[str, Any]:
+    def _manifest(path: Path, recorded: Mapping[str, Any]) -> tuple[dict[str, Any], str]:
         """Read a pipeline manifest and require the exact bytes the web bundle was built from.
 
         ``recorded`` is ``export.json.inputs``: the sha256 of each upstream manifest the
-        published bundle used. The checksum is taken from the same bytes that are parsed.
+        published bundle used. The checksum is taken from the same bytes that are parsed and
+        is returned with the document.
         """
         document, checksum = FireTraceRasterService._read_json(path, path.name)
         expected = recorded.get(path.name)
@@ -158,7 +164,7 @@ class FireTraceRasterService:
                     f"runs: {path.name} differs from the one recorded in export.json"
                 ),
             )
-        return document
+        return document, checksum
 
     @staticmethod
     def _grid(document: Mapping[str, Any], manifest: str) -> dict[str, Any]:
@@ -258,40 +264,45 @@ class FireTraceRasterService:
             dtype=decoded.dtype,
         )
 
-    def _load_products(self) -> InspectionProducts:
-        export_path = self.web_dir / "export.json"
-        manifest_paths = (
-            export_path,
-            self.sar_dir / "sar.json",
-            self.change_dir / "change.json",
-            self.perimeter_dir / "perimeter.json",
-        )
-        try:
-            key = tuple((path.stat().st_mtime_ns, path.stat().st_size) for path in manifest_paths)
-        except OSError as exc:
-            raise HTTPException(
-                status_code=503, detail=f"Pipeline manifests are unavailable: {exc}"
-            ) from exc
-        terrain_manifest = self.terrain_dir / "terrain.json"
-        try:
-            terrain_key = (terrain_manifest.stat().st_mtime_ns, terrain_manifest.stat().st_size)
-        except FileNotFoundError:
-            terrain_key = (-1, -1)
-        except OSError as exc:
-            raise HTTPException(
-                status_code=503, detail=f"Terrain manifest is unavailable: {exc}"
-            ) from exc
-        key += (terrain_key,)
-        if self._products is not None and self._products_manifest_key == key:
-            return self._products
+    def _load_products(self, export: Mapping[str, Any] | None = None) -> InspectionProducts:
+        """Load the numerical products recorded by one ``export.json`` snapshot.
 
-        export = self._json_bytes(export_path, "export.json")
+        Every request re-reads and hashes the small interim manifests named by
+        ``export.inputs``. Cached arrays are reused only when those exact manifest bytes
+        were the ones parsed to build them; the manifests pin each raster's sha256.
+        """
+        if export is None:
+            export = self._export()
         recorded = export.get("inputs")
         if not isinstance(recorded, Mapping):
             raise HTTPException(
                 status_code=503, detail="export.json does not record its pipeline inputs"
             )
-        sar, change, perimeter = (self._manifest(path, recorded) for path in manifest_paths[1:])
+        manifest_paths: tuple[Path, ...] = (
+            self.sar_dir / "sar.json",
+            self.change_dir / "change.json",
+            self.perimeter_dir / "perimeter.json",
+        )
+        terrain_manifest = self.terrain_dir / "terrain.json"
+        # Terrain is optional; serve it only when this bundle was built with it.
+        if "terrain.json" in recorded:
+            if not terrain_manifest.is_file():
+                raise HTTPException(
+                    status_code=503,
+                    detail="export.json records terrain.json but the interim terrain.json "
+                    "is missing",
+                )
+            manifest_paths += (terrain_manifest,)
+        verified = [self._manifest(path, recorded) for path in manifest_paths]
+        key = tuple(
+            (path.name, checksum)
+            for path, (_, checksum) in zip(manifest_paths, verified, strict=True)
+        )
+        cached = self._products_cache
+        if cached is not None and cached[0] == key:
+            return cached[1]
+
+        sar, change, perimeter = (document for document, _ in verified[:3])
         expected_versions = (
             "sar_format_version",
             "change_format_version",
@@ -357,15 +368,8 @@ class FireTraceRasterService:
                     status_code=503, detail=f"{name} contains values other than 0 or 1"
                 )
 
-        # Terrain is optional; serve it only when this bundle was built with it.
-        if "terrain.json" in recorded:
-            if terrain_key == (-1, -1):
-                raise HTTPException(
-                    status_code=503,
-                    detail="export.json records terrain.json but the interim terrain.json "
-                    "is missing",
-                )
-            terrain = self._manifest(terrain_manifest, recorded)
+        if len(verified) == 4:
+            terrain = verified[3][0]
             if terrain.get("terrain_format_version") != 1:
                 raise HTTPException(status_code=503, detail="Unsupported terrain_format_version")
             terrain_grid = self._grid(terrain, "terrain.json")
@@ -380,8 +384,7 @@ class FireTraceRasterService:
                 )
 
         products = InspectionProducts(grid, sar, change, perimeter, layers)
-        self._products = products
-        self._products_manifest_key = key
+        self._products_cache = (key, products)
         return products
 
     @staticmethod
@@ -412,8 +415,9 @@ class FireTraceRasterService:
 
     def inspect_point(self, lon: float, lat: float) -> dict[str, Any]:
         """Sample verified numerical products at the analysis-grid pixel under WGS84."""
-        case = self.get_case()
-        products = self._load_products()
+        export = self._export()
+        case = self._web_json("case.json", export)
+        products = self._load_products(export)
         reference = products.layers["t1_hh"]
         response: dict[str, Any] = {
             "contract_version": CONTRACT_VERSION,
@@ -614,8 +618,9 @@ class FireTraceRasterService:
             raise HTTPException(
                 status_code=422, detail="spacing_m must be a positive finite number"
             )
-        case = self.get_case()
-        products = self._load_products()
+        export = self._export()
+        case = self._web_json("case.json", export)
+        products = self._load_products(export)
         reference = products.layers["t1_hh"]
         try:
             projected = transform_coordinates(
