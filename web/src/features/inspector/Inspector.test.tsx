@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import {
   act,
@@ -144,6 +146,57 @@ describe('point inspector', () => {
     })
   })
 
+  it('shows the sampled pixel, terrain and contract version', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({ ok: true, json: async () => inside }),
+    )
+    renderInspector()
+    act(() =>
+      mapStore
+        .getState()
+        .select({ type: 'point', point: [-121.380849, 35.965833] }),
+    )
+    expect(await screen.findByText(/row 71, col 252/)).toBeTruthy()
+    expect(screen.getByText(/602520, 3974290 m/)).toBeTruthy()
+    expect(screen.getByText('579.5 m')).toBeTruthy()
+    expect(screen.getByText('22.6°')).toBeTruthy()
+    expect(screen.getByText('242.4°')).toBeTruthy()
+    expect(screen.getByText('1.2.0')).toBeTruthy()
+  })
+
+  it('distinguishes an invalid query from unavailable products', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 422,
+          json: async () => ({ detail: 'Invalid coordinates' }),
+        })
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 503,
+          json: async () => ({
+            detail: 'Cannot read /private/data/interim/sar/sar.json',
+          }),
+        }),
+    )
+    renderInspector()
+    act(() =>
+      mapStore.getState().select({ type: 'point', point: [-121.45, 35.89] }),
+    )
+    expect(await screen.findByText(/rejected as invalid \(422\)/i)).toBeTruthy()
+    act(() =>
+      mapStore.getState().select({ type: 'point', point: [-121.38, 35.96] }),
+    )
+    expect(
+      await screen.findByText(/unavailable or incompatible on the server/i),
+    ).toBeTruthy()
+    expect(screen.queryByText(/private/)).toBeNull()
+  })
+
   it('keeps the newest selection when requests resolve out of order', async () => {
     let resolveFirst!: (response: unknown) => void
     const first = new Promise((resolve) => {
@@ -173,5 +226,42 @@ describe('point inspector', () => {
     await act(async () => resolveFirst({ ok: true, json: async () => inside }))
     expect(screen.getByText('-42')).toBeTruthy()
     expect(screen.queryByText('-11.61')).toBeNull()
+  })
+
+  it('shows zone evidence from the review zones file', async () => {
+    const zones: unknown = JSON.parse(
+      readFileSync(
+        resolve(
+          __dirname,
+          '../../../../contracts/fixtures/web/review_zones.geojson',
+        ),
+        'utf8',
+      ),
+    )
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({ ok: true, json: async () => zones }),
+    )
+    renderInspector()
+    act(() => mapStore.getState().select({ type: 'zone', zoneId: 'CO-01' }))
+    expect(await screen.findByText(/Zone evidence: CO-01/)).toBeTruthy()
+    expect(await screen.findByText('-11.8 dB')).toBeTruthy()
+    expect(screen.getByText('Steep slope: 12%')).toBeTruthy()
+    expect(screen.getByText(/to investigate, not errors/)).toBeTruthy()
+    expect(screen.getByText('Change index: median 3.91, P90 5.25')).toBeTruthy()
+    expect(screen.getByText('Distance to perimeter: 3182 m')).toBeTruthy()
+    for (const [id, text] of [
+      [
+        'NI-01',
+        /Little radar change inside the reference perimeter; discrepancy to investigate, not an error/,
+      ],
+      [
+        'CI-01',
+        /Radar change inside the reference perimeter; agreement example/,
+      ],
+    ] as const) {
+      act(() => mapStore.getState().select({ type: 'zone', zoneId: id }))
+      expect(await screen.findByText(text)).toBeTruthy()
+    }
   })
 })

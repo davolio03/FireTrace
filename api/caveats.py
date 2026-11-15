@@ -16,7 +16,7 @@ import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal, TypedDict, cast
 
 SLOPE_THRESHOLD_DEG = 30.0
 """Slope above which the steep_slope caveat fires (strictly greater)."""
@@ -104,14 +104,29 @@ def weather_summary_from_json(doc: Mapping[str, Any]) -> WeatherSummary | None:
 
     Returns ``None`` when the optional ``last_rain_before_t2`` field is absent, because the
     rain record is then unknown. An explicit ``null`` means no rain day before t2.
+
+    Field types are checked before any value is used, so a malformed document raises
+    ``ValueError`` (or ``KeyError`` for a missing required field), never ``TypeError``.
     """
+    data_status = doc.get("data_status")
+    if not isinstance(data_status, str) or data_status not in ("mock", "real"):
+        raise ValueError(f"weather.json data_status must be 'mock' or 'real', got {data_status!r}")
+    period = doc.get("period")
+    if not isinstance(period, Mapping):
+        raise ValueError(f"weather.json period must be an object, got {period!r}")
+    for key in ("start", "end"):
+        if not isinstance(period.get(key), str):
+            raise ValueError(f"weather.json period.{key} must be a date string")
+    t2_date = date.fromisoformat(period["end"])
     if "last_rain_before_t2" not in doc:
         return None
     last = doc["last_rain_before_t2"]
+    if last is not None and not isinstance(last, str):
+        raise ValueError("weather.json last_rain_before_t2 must be a date string or null")
     return WeatherSummary(
-        t2_date=date.fromisoformat(doc["period"]["end"]),
+        t2_date=t2_date,
         last_rain_before_t2=date.fromisoformat(last) if last is not None else None,
-        data_status=doc["data_status"],
+        data_status=cast(DataStatus, data_status),
     )
 
 
@@ -146,14 +161,30 @@ def _steep_slope(slope_deg: float | None) -> Caveat | None:
         raise ValueError(f"slope_deg must be within 0-90 degrees, got {slope_deg}")
     if slope_deg <= SLOPE_THRESHOLD_DEG:
         return None
-    shown = f"{slope_deg:.1f}"
-    if float(shown) <= SLOPE_THRESHOLD_DEG:  # e.g. 30.01 must not read "30.0° > 30°"
-        shown = f"{slope_deg:.2f}"
     reason = (
-        f"slope {shown}° > {SLOPE_THRESHOLD_DEG:g}°: steep terrain distorts radar "
+        f"{_slope_above_threshold(slope_deg)}: steep terrain distorts radar "
         "backscatter (slope from ~30 m GLO-30 DEM, smoothed)."
     )
     return _caveat("steep_slope", triggered=True, reason=reason)
+
+
+SLOPE_MAX_DECIMALS = 6
+"""Most decimals shown for a slope; closer values read 'slope just above 30°'."""
+
+
+def _slope_above_threshold(slope_deg: float) -> str:
+    """Show a slope already known to exceed the threshold without it reading as the threshold.
+
+    Uses the fewest decimals (1 to ``SLOPE_MAX_DECIMALS``) whose shown value is still strictly
+    greater than the threshold: 34.24 -> "slope 34.2° > 30°", 30.01 -> "slope 30.01° > 30°".
+    A value closer to the threshold than that reads "slope just above 30°".
+    """
+    threshold = f"{SLOPE_THRESHOLD_DEG:g}°"
+    for decimals in range(1, SLOPE_MAX_DECIMALS + 1):
+        shown = f"{slope_deg:.{decimals}f}"
+        if float(shown) > SLOPE_THRESHOLD_DEG:
+            return f"slope {shown}° > {threshold}"
+    return f"slope just above {threshold}"
 
 
 def _radar_shadow_layover(code: int | None) -> Caveat | None:

@@ -4,7 +4,7 @@ Module: `api/caveats.py`, tested by `api/tests/test_caveats.py`. It turns values
 
 A caveat says that something other than fire can explain, distort or blur the **observed radar change** at a pixel. A caveat that fires does not mean the change is false, and the absence of caveats does not confirm fire, burned area or severity.
 
-The module is a pure function. Reading the COGs and wiring the result into `GET /api/inspect/point` belong to EV-01 and IN-02. It changes no contract.
+The module is a pure function. It changes no contract. `api/raster.py` wires it into `GET /api/inspect/point`: for a valid pixel it samples `slope.tif` and `layover_shadow.tif` (only when `export.json` records `terrain.json`; otherwise both are unknown), `perimeter_edge.tif`, and reads `weather.json` only when `export.json` lists it in `outputs` with a matching sha256. A tampered or malformed `weather.json`, or an out-of-range input, is a 503, never a silent fallback to the generic cautions.
 
 ## Inputs
 
@@ -30,7 +30,7 @@ Items are returned in the order of the contract enum. An **invalid radar pixel r
 | `vegetation_structure` | never (no per-pixel rule yet) | always listed as the generic caution |
 | `near_perimeter_edge` | pixel in the 50 m band | not listed |
 
-`reason` states the rule and the value, for example `slope 34.2° > 30°`. The slope is shown with one decimal, or two when one decimal would round onto the threshold (30.01° is shown as `30.01°`, never `30.0° > 30°`).
+`reason` states the rule and the value, for example `slope 34.2° > 30°`. The slope is shown with the fewest decimals, from one up to six, whose shown value is still strictly greater than 30° (34.24° is shown as `34.2°`, 30.01° as `30.01°`, never `30.0° > 30°`). A slope even closer to the threshold, such as 30.0000001°, reads `slope just above 30°` instead of a rounded number.
 
 ### Soil moisture
 

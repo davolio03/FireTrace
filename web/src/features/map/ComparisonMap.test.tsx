@@ -61,6 +61,8 @@ vi.mock('maplibre-gl', () => ({
     setLayoutProperty = vi.fn()
     setPaintProperty = vi.fn()
     fitBounds = vi.fn()
+    flyTo = vi.fn()
+    setFilter = vi.fn()
     getCenter = vi.fn(() => ({ lng: -121.4, lat: 35.9 }))
     getZoom = vi.fn(() => 11)
     getBearing = vi.fn(() => 0)

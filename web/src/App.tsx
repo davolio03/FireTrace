@@ -18,6 +18,7 @@ import {
   NotebookPen,
   Play,
   Route,
+  ScanSearch,
   X,
 } from 'lucide-react'
 import storyJson from './story/story.json'
@@ -32,6 +33,7 @@ import { loadCaseData } from './data/caseData'
 import { CaseMap } from './features/map/CaseMap'
 import { LocationMap } from './features/map/LocationMap'
 import { Inspector } from './features/inspector/Inspector'
+import { ZonesPanel } from './features/zones/ZonesPanel'
 import { MetricsPanel } from './features/metrics/MetricsPanel'
 import { WeatherPanel } from './features/weather/WeatherPanel'
 import { ProfilePanel } from './features/profile/ProfilePanel'
@@ -46,10 +48,11 @@ import { layersAreRenderable, type Layer } from './features/map/layers'
 
 type CaseData = Awaited<ReturnType<typeof loadCaseData>>['case']
 type WorkspacePanel =
-  'layers' | 'inspect' | 'transect' | 'annotations' | 'results'
+  'layers' | 'inspect' | 'zones' | 'transect' | 'annotations' | 'results'
 const workspacePanels = [
   { id: 'layers', label: 'Layers', icon: Layers },
   { id: 'inspect', label: 'Inspect', icon: Crosshair },
+  { id: 'zones', label: 'Zones', icon: ScanSearch },
   { id: 'transect', label: 'Transect', icon: Route },
   { id: 'annotations', label: 'Annotations', icon: NotebookPen },
   { id: 'results', label: 'Results', icon: BarChart3 },
@@ -590,6 +593,9 @@ function AppContent() {
                         <div hidden={activePanel !== 'inspect'}>
                           <Inspector caseData={caseData} />
                         </div>
+                        <div hidden={activePanel !== 'zones'}>
+                          <ZonesPanel />
+                        </div>
                         <div hidden={activePanel !== 'transect'}>
                           <ProfilePanel onSample={setProfileSample} />
                         </div>
@@ -622,7 +628,7 @@ function AppContent() {
             </div>
           </div>
         )}
-      </div>
+      </div>{' '}
     </main>
   )
 }

@@ -6,6 +6,7 @@
 # optional and are merged only when their manifest (terrain.json / optical.json /
 # weather_meta.json / highlight_meta.json / review_zones_meta.json) exists. highlight_dir is
 # the XP-01 P1 mask; review_zones_dir is the XP-04 P1 zone list (needs highlight and terrain).
+# terrain_tiles_dir holds the AP-07 relief pyramid (tiles.json); it is copied to terrain/ (DT-09).
 # Case identity fields below are not produced by any pipeline stage: name, location and
 # fire_start come from docs/PRODUCT.md and the CAL FIRE incident page.
 
@@ -24,6 +25,7 @@ weather_dir = "data/interim/weather"
 optical_dir = "data/interim/optical"
 highlight_dir = "data/interim/highlight"
 review_zones_dir = "data/interim/review_zones"
+terrain_tiles_dir = "data/interim/terrain_tiles"
 output_dir = "data/processed/web"
 
 [[sources]]

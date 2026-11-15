@@ -19,6 +19,8 @@ const map = vi.hoisted(() => ({
   setPaintProperty: vi.fn(),
   fitBounds: vi.fn(),
   loaded: vi.fn(() => true),
+  flyTo: vi.fn(),
+  setFilter: vi.fn(),
   canvas: {
     style: { cursor: '' },
     toDataURL: () => 'data:image/png;base64,AAAA',
@@ -45,10 +47,16 @@ vi.mock('maplibre-gl', () => ({
     setLayoutProperty = map.setLayoutProperty
     setPaintProperty = map.setPaintProperty
     fitBounds = map.fitBounds
+    flyTo = map.flyTo
+    setFilter = map.setFilter
     getCanvas = () => map.canvas
     loaded = map.loaded
     off = map.off
     project = map.project
+    getCenter = () => ({ lng: 0, lat: 0 })
+    getZoom = () => 0
+    getBearing = () => 0
+    getPitch = () => 0
   },
   Marker: class {
     constructor(options?: unknown) {
@@ -274,6 +282,7 @@ describe('case map', () => {
       'firetrace-optical_after',
       'firetrace-perimeter-casing',
       'firetrace-perimeter',
+      'firetrace-review-zone-selected',
     ])
     act(() => {
       mapStore.getState().toggleLayer('perimeter')
@@ -314,6 +323,26 @@ describe('case map', () => {
   it('draws overlay content on top of the map', () => {
     render(<CaseMap overlay={<p>Story card</p>} />)
     expect(screen.getByText('Story card')).toBeTruthy()
+  })
+
+  it('flies to camera changes (not on mount) and highlights the selected zone', () => {
+    render(<CaseMap />)
+    expect(map.flyTo).not.toHaveBeenCalled()
+    act(() =>
+      mapStore.getState().flyTo({ center: [-121.4, 35.9], zoom: 12 }, 1000),
+    )
+    expect(map.flyTo).toHaveBeenCalledWith(
+      expect.objectContaining({
+        center: [-121.4, 35.9],
+        zoom: 12,
+        duration: 1000,
+      }),
+    )
+    act(() => mapStore.getState().select({ type: 'zone', zoneId: 'CO-01' }))
+    expect(map.setFilter).toHaveBeenLastCalledWith(
+      'firetrace-review-zone-selected',
+      ['==', ['get', 'zone_id'], 'CO-01'],
+    )
   })
 
   it('does not fit bounds when the manifest contains no raster', () => {

@@ -1,6 +1,6 @@
 # FireTrace architecture — precompute, serve, inspect
 
-**Existing:** executable contracts, mock assets, board tooling, a Python 3.11/uv scaffold with NISAR ingest, and an initial web scaffold. **Planned, not implemented:** the remaining pipeline processing, API endpoints, the web data journey and real processed web artifacts. The [proposal](propuesta.md) governs scientific scope; its illustrative stack is superseded by the upstream choices below.
+**Implemented:** executable contracts and fixtures, the offline pipeline from NISAR ingest to the web bundle, the contract API over the numerical rasters and the React web application. Real Plaskett outputs are published as GitHub releases, not committed ([STATUS](STATUS.md)). **Not done:** deployment and independent validation. The [proposal](propuesta.md) governs scientific scope; its illustrative stack is superseded by the upstream choices below.
 
 ## Fixed stack and boundaries
 
@@ -13,23 +13,23 @@
 | Optional | deck.gl if needed; PyTorch for P1 | Not a P0 dependency |
 | Quality | ruff + pytest; eslint + prettier + vitest | Real tests/lint/build once source exists |
 
-The root `pyproject.toml` is a single uv project shared by `pipeline/` and `api/`; it declares their fixed-stack runtime dependencies and a `dev` group. The web scaffold has a dependency manifest and initial map; it does not yet consume scientific data. Stack changes require an ADR and human Kanvas approval. [TEAM](TEAM.md) records human responsibility; directory names are boundaries, not proof of working modules.
+The root `pyproject.toml` is a single uv project shared by `pipeline/` and `api/`; it declares their fixed-stack runtime dependencies and a `dev` group. The web consumes the real bundle or the contract fixtures. Stack changes require an ADR and human Kanvas approval. [TEAM](TEAM.md) records human responsibility; directory names are boundaries, not proof of working modules.
 
 ## Data flow and current implementation boundary
 
 ```text
 Local NISAR HH/HV t1/t2 powers + dated reference perimeter
-  -> planned offline pipeline: validity, dB, continuous HH/HV change
-  -> planned numerical COGs + data/processed/web/ contract outputs
-       -> planned static web consumption of metadata, stats and display PNGs
-       -> planned FastAPI point lookup from numerical products
+  -> offline pipeline: validity, dB, continuous HH/HV change, context, P1 stages
+  -> numerical COGs (data/interim/) + data/processed/web/ contract outputs
+       -> static web consumption of metadata, stats and display PNGs
+       -> FastAPI point and transect lookup from the numerical products
 
 contracts/fixtures/ -> existing synthetic contract examples for parallel work
 ```
 
 The real web directory mirrors `contracts/fixtures/web/`: `case.json`, `stats.json`, `layers.json`, `perimeter.geojson` and `layers/<id>.png`. It is not a tile-server architecture. Display PNGs use four geographic corners and contract-supplied legends; inspection never reconstructs values from colors.
 
-Planned web configuration is `VITE_DATA_BASE_URL`, `VITE_API_BASE_URL` and `VITE_USE_MOCKS`. Mock mode uses MSW fixtures for `/api/*` and must show MOCK visibly. No web mock harness exists yet. Generated TypeScript types must come from [OpenAPI](../contracts/openapi.yaml), not manually maintained parallel interfaces.
+Web configuration is `VITE_DATA_BASE_URL`, `VITE_API_BASE_URL` and `VITE_USE_MOCKS`. Mock mode (the default unless `VITE_USE_MOCKS=false`) uses MSW fixtures for `/api/*` and shows MOCK visibly. Generated TypeScript types must come from [OpenAPI](../contracts/openapi.yaml), not manually maintained parallel interfaces.
 
 ## Geographic and numerical invariants
 
@@ -40,11 +40,13 @@ Planned web configuration is `VITE_DATA_BASE_URL`, `VITE_API_BASE_URL` and `VITE
 5. Layer corners, bounding boxes, perimeter geometry and `lon`/`lat` queries are **EPSG:4326**. Resolve queries back to actual analysis-grid pixels and return their center/row/column. Never calculate scientific area from Web Mercator PNGs or longitude/latitude degrees.
 6. Tie numerical values, styles, statistics and provenance to the same processing result. A successful schema check does not prove this identity or geographic correctness.
 
-The proposed real continuous baseline combines absolute HH/HV log-ratio magnitudes. The mock fixture's median/MAD description is not a validated pipeline method: normalization domain/scaling, zero-MAD behavior and parameters still require scientific agreement. Physical confounds and the dated reference must remain visible.
+The real continuous baseline combines absolute HH/HV log-ratio magnitudes. Its normalization domain, scaling and zero-MAD behaviour were agreed and are implemented as documented in [change index](methods/change-index.md) and [CONTRACTS](CONTRACTS.md). Agreement is not validation: physical confounds and the dated reference must remain visible ([LIMITATIONS](LIMITATIONS.md)).
 
 ## Service boundary
 
 [Executable contracts](../contracts/README.md) define `/api/health`, `/api/case`, `/api/stats`, `/api/layers`, `/api/inspect/point` and `POST /api/inspect/profile`. A point outside the AOI returns 200 with `valid=false`, `pixel=null` and null values; invalid query parameters use 422. The transect samples the same verified grid at a positive `spacing_m`, keeps masked or out-of-grid positions with null values, includes the final endpoint once, caps the response at 2,000 samples and reports perimeter crossings; malformed bodies use 422. No region endpoint or authentication/deployment design is implemented.
+
+Locally, the API reads `data/processed/web` plus `data/interim/{sar,change,perimeter[,terrain]}` from one verified generation (`FIRETRACE_DATA_ROOT` selects another local root). The web dev/preview server proxies `/api` to the API and `/data` to a static server for the bundle, so local real-data mode shares one browser origin and the API configures no CORS; a hosted deployment remains DL-01.
 
 COG names in current board proposals are implementation intentions, not a complete internal storage manifest. Record the numerical artifact layout, input integrity identifiers, crop/configuration and code/dependency versions during pipeline implementation. Extend shared metadata only through the contract process.
 
@@ -83,9 +85,11 @@ Internal, gitignored pipeline products on the 10 m EPSG:32610 crop grid. They ar
 | XP-04 review zones (P1) | `data/interim/review_zones/review_zones.geojson` + `review_zones_meta.json` | Contract `review-zones.schema.json`: ranked CO/NI/CI zones (XP-01 mask; NI smoothed index `<= 0.0`; 8-connected, >= 5 ha, top 10 per kind) with pixel-based area, HH/HV and index medians, distance to the perimeter and EV-02 caveat shares; input checksums and per-kind counts ([method](methods/review-zones.md)) |
 | DT-04 export | `data/processed/web/{case,layers}.json` + `layers/<id>.png` | Web contract bundle: EPSG:3857 RGBA PNGs (nearest, common-mask transparency, shared stretches), corners and legends, `case.json` from the upstream manifests ([method](methods/web-export.md)) |
 | DT-04 export | `data/processed/web/{stats.json,perimeter.geojson,weather.json}` | Byte-for-byte copies of the CH-02, DT-03 and (optional) DT-06 products, plus merged DT-05 terrain layers when present; with the optional XP-01 result, `stats.json` gets its `highlight` block and `layers/highlight_mask.png` is added; with the optional XP-04 result, `review_zones.geojson` is copied byte for byte and listed as the `review_zones` layer |
+| AP-07 terrain tiles | `data/interim/terrain_tiles/{tiles.json,<z>/<x>/<y>.png}` | Terrarium relief pyramid (zoom 8-12) from the pinned GLO-30 DEM tiles, display context only ([method](methods/terrain-tiles.md)) |
+| DT-04 export | `data/processed/web/terrain/{tiles.json,<z>/<x>/<y>.png}` | Optional byte-for-byte copy of the relief tiles, verified tile by tile and tied to the DT-05 DEM (DT-09) |
 | DT-04 export | `data/processed/web/export.json` | Not a contract file: input and output sha256, optional inputs merged, web grid, resampling, stretch rules and domains |
 
-COGs use 256 px deflate blocks and nearest-neighbour overviews for display only; scientific lookups read the full-resolution level. DT-02, CH-01, DT-03, CH-02, DT-05, DT-06, DT-07, XP-01, XP-02, XP-04 and DT-04 publish through the shared `pipeline/publishing.py`: each builds the whole set in a sibling `.<name>.staging` directory and swaps it into place only when complete, keeping the previous set in `.<name>.previous` until the swap succeeds, so a failed run keeps the previous complete set. The swap is the commit point; a later failure to remove the backup is only printed as a `<stage> warning` on stderr (never raised) and the backup is kept. If an interrupted swap left the output missing and only `.<name>.previous`, that backup is restored before anything else. Nothing is deleted recursively: owned regular files are unlinked one by one and the emptied directories removed with `rmdir`, and each directory's identity (device, inode) is re-checked before every deletion, so a foreign entry or a directory swapped for a link/junction stops the removal. Threat model: one publisher per output directory and nobody else editing it; Windows Python has no handle-based (`dir_fd`) deletion, so a hostile process of the same user racing between that re-check and a deletion is out of scope. Each stage refuses to run when the output directory or either sibling holds anything it does not own (unknown names, or directories, symlinks or junctions under owned names), and when an input, or any entry of an input directory after resolving links and junctions, is or lies inside one of those three paths. File names recorded in manifests must be bare names inside their input directory. Filesystem errors during these checks become the stage's own error (exit code 2). Interim rasters are decoded from the same in-memory bytes whose sha256 was checked; the multi-GB raw inputs (full GCOV scenes, the GCOV `.h5`, the DEM tile) are still hashed and then opened by path.
+COGs use 256 px deflate blocks and nearest-neighbour overviews for display only; scientific lookups read the full-resolution level. DT-02, CH-01, DT-03, CH-02, DT-05, DT-06, DT-07, XP-01, XP-02, XP-04, the AP-07 terrain tiles and DT-04 publish through the shared `pipeline/publishing.py`: each builds the whole set in a sibling `.<name>.staging` directory and swaps it into place only when complete, keeping the previous set in `.<name>.previous` until the swap succeeds, so a failed run keeps the previous complete set. The swap is the commit point; a later failure to remove the backup is only printed as a `<stage> warning` on stderr (never raised) and the backup is kept. If an interrupted swap left the output missing and only `.<name>.previous`, that backup is restored before anything else. Nothing is deleted recursively: owned regular files are unlinked one by one and the emptied directories removed bottom-up with `rmdir`, and the identity (device, inode) of every directory from the output root down is re-checked before every deletion, so a foreign entry or a directory swapped for a link/junction stops the removal. Threat model: one publisher per output directory and nobody else editing it; Windows Python has no handle-based (`dir_fd`) deletion, so a hostile process of the same user racing between that re-check and a deletion is out of scope. Each stage refuses to run when the output directory or either sibling holds anything it does not own (unknown names, or directories, symlinks or junctions under owned names). Ownership is decided from names and entry kinds, never from a manifest inside the tree: fixed names, plus fixed-depth name patterns for tile pyramids (`<z>/<x>/<y>.png`), and when an input, or any entry of an input directory after resolving links and junctions, is or lies inside one of those three paths. File names recorded in manifests must be bare names inside their input directory. Filesystem errors during these checks become the stage's own error (exit code 2). Interim rasters are decoded from the same in-memory bytes whose sha256 was checked; the multi-GB raw inputs (full GCOV scenes, the GCOV `.h5`, the DEM tile) are still hashed and then opened by path.
 
 ## Reproducibility, diagnostics and deployment
 

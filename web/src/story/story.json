@@ -21,7 +21,7 @@
       "id": "context",
       "title": "A wildfire in Big Sur",
       "panel": "none",
-      "body_md": "The **Plaskett Fire** started on 26 August in the Santa Lucia Mountains. The official perimeter, mapped from infrared flights on 14 September, covers about 12,100 ha of steep terrain.",
+      "body_md": "The **Plaskett Fire** started on 26 August in the Big Sur mountains. The official perimeter, mapped from infrared imagery on 14 September, covers about 12,100 ha of steep terrain.",
       "camera": {
         "center": [-121.41, 35.88],
         "zoom": 11.2,
@@ -96,7 +96,7 @@
       "id": "highlight",
       "title": "Where radar and perimeter agree",
       "panel": "none",
-      "body_md": "The strongest changes cover about 1,050 ha, almost all inside the perimeter, yet only 9 % of it. Many patches follow slopes and drainages: a reason for **caution**, not a finding.",
+      "body_md": "The strongest changes cover about 1,050 ha, almost all inside the perimeter, yet only 9 % of it. Terrain and vegetation also alter radar signals: a reason for **caution**, not a finding.",
       "camera": {
         "center": [-121.38, 35.93],
         "zoom": 11.8,

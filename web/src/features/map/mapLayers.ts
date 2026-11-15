@@ -102,3 +102,22 @@ export function syncMapLayers(
     }
   }
 }
+
+const zoneHighlightId = 'firetrace-review-zone-selected'
+
+export function addZoneHighlight(map: MapLibreMap, url: string) {
+  map.addSource('firetrace-review-zones', { type: 'geojson', data: url })
+  map.addLayer({
+    id: zoneHighlightId,
+    type: 'line',
+    source: 'firetrace-review-zones',
+    filter: ['==', ['get', 'zone_id'], ''],
+    // Okabe-Ito vermillion: distinguishable under common colour-blindness.
+    paint: { 'line-color': '#D55E00', 'line-width': 4 },
+  })
+}
+
+export function setZoneHighlight(map: MapLibreMap, id: string | null) {
+  if (!map.getLayer(zoneHighlightId)) return
+  map.setFilter(zoneHighlightId, ['==', ['get', 'zone_id'], id ?? ''])
+}

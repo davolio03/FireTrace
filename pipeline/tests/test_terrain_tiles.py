@@ -164,7 +164,7 @@ def test_refuses_to_replace_foreign_content(case, capsys) -> None:
     out.mkdir(parents=True)
     (out / "notes.txt").write_text("keep me")
     assert tt.main(["--config", str(write_config())]) == 2
-    assert "foreign entries" in capsys.readouterr().err
+    assert "does not own" in capsys.readouterr().err
     assert (out / "notes.txt").read_text() == "keep me"
 
 
@@ -181,3 +181,68 @@ def test_rejects_invalid_configuration(case, capsys, override, message) -> None:
     _, write_config = case
     assert tt.main(["--config", str(write_config(**override))]) == 2
     assert message in capsys.readouterr().err
+
+
+# --------------------------------------------------------------------------- DT-09 publishing
+
+
+def test_tile_tree_owns_exactly_the_pyramid_layout() -> None:
+    spec = tt.TILE_TREE
+    assert spec.owns_file("tiles.json", "file")
+    level1 = spec.child("12", "dir")
+    assert level1 is not None and spec.child("012", "dir") is None
+    level2 = level1.child("664", "dir")
+    assert level2 is not None and level2.owns_file("1607.png", "file")
+    assert not level2.owns_file("tiles.json", "file")
+    assert level2.child("1", "dir") is None
+    assert tt.TILE_NAME.fullmatch("12/664/1607.png")
+    for bad in ("12/664/01.png", "../1/2.png", "1/2/3.png/", "1\2\3.png", "1/2/3.PNG"):
+        assert not tt.TILE_NAME.fullmatch(bad), bad
+
+
+def test_foreign_entry_deep_in_the_output_is_refused_and_kept(case, capsys) -> None:
+    root, write_config = case
+    config = write_config()
+    assert tt.main(["--config", str(config)]) == 0
+    out = root / "out" / "terrain_tiles"
+    deep = next((out / "10").iterdir()) / "keep.txt"
+    deep.write_text("mine")
+    assert tt.main(["--config", str(config)]) == 2
+    assert "does not own" in capsys.readouterr().err
+    assert deep.read_text() == "mine"
+    assert (out / "tiles.json").is_file(), "the previous pyramid is kept"
+
+
+def test_rerun_with_other_zooms_replaces_the_whole_pyramid(case) -> None:
+    root, write_config = case
+    assert tt.main(["--config", str(write_config())]) == 0
+    out = root / "out" / "terrain_tiles"
+    assert (out / "9").is_dir()
+    assert tt.main(["--config", str(write_config(minzoom=10, maxzoom=10))]) == 0
+    assert not (out / "9").exists()
+    manifest = json.loads((out / "tiles.json").read_text())
+    assert sorted(p.name for p in out.iterdir()) == ["10", "tiles.json"]
+    assert all(name.startswith("10/") for name in manifest["firetrace"]["outputs"])
+
+
+def test_stale_backup_with_foreign_content_is_never_deleted(case, capsys) -> None:
+    root, write_config = case
+    previous = root / "out" / ".terrain_tiles.previous"
+    previous.mkdir(parents=True)
+    (previous / "keep.txt").write_text("mine")
+    assert tt.main(["--config", str(write_config())]) == 2
+    assert "does not own" in capsys.readouterr().err
+    assert (previous / "keep.txt").read_text() == "mine"
+    assert not (root / "out" / "terrain_tiles").exists()
+
+
+def test_output_dir_may_not_hold_the_dem(case, capsys) -> None:
+    root, write_config = case
+    assert tt.main(["--config", str(write_config(output_dir=str(root)))]) == 2
+    assert "separate" in capsys.readouterr().err
+    assert (root / "dem.tif").is_file()
+
+
+def test_stage_never_deletes_recursively() -> None:
+    source = Path(tt.__file__).read_text(encoding="utf-8")
+    assert "rmtree" not in source and "import shutil" not in source

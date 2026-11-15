@@ -1,0 +1,12 @@
+FireTrace Explorer
+Copyright 2026 FireTrace Explorer contributors
+
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+AI-tool use: parts of the code, tests and documentation in this repository
+were written with AI coding agents (Claude Code and Codex through T3 Code,
+and OpenCode with Claude models), under human review. See docs/AI_USE.md.
+
+Third-party data, software and references, with their licences and the
+attribution they require, are listed in docs/REFERENCES.md. Data are not
+distributed in this repository and keep their own licences.

@@ -1,6 +1,8 @@
 # Plaskett demo — target 90–120 seconds
 
-**Not yet rehearsed:** no running app, real-processing acceptance or deployed endpoint is established by this foundation. Never present synthetic fixtures as real radar evidence.
+**Not yet rehearsed:** the web runs locally on the real bundle (IN-01 evidence below), but no timed rehearsal or deployed endpoint exists. Never present synthetic fixtures as real radar evidence.
+
+Real data: GitHub releases `data-web-plaskett-f66c4d9` (web bundle) and `data-interim-plaskett-f66c4d9` (analysis rasters for the API), both from commit `f66c4d9`; download commands are in the [README](../README.md#run-it-locally).
 
 ## Planned sequence
 
@@ -55,6 +57,48 @@ In a second terminal, from `web/`:
 ```sh
 VITE_USE_MOCKS=false VITE_DATA_BASE_URL=http://127.0.0.1:5190 npm run dev -- --host 127.0.0.1 --port 5189 --strictPort
 ```
+
+## IN-03 guided story on real data — 2026-11-15
+
+**Checked:** the 7-step guided story and the context layers play on the real bundle without mock data, and every figure in `web/src/story/story.json` traces to a real product field or a cited source. This is a display and wording check, not scientific validation.
+
+- Bundle: release `data-web-plaskett-f66c4d9` (`sha256sum -c SHA256SUMS.txt`: OK). It has no `terrain/tiles.json`, so the story stays 2D on the published bundle. For this check, a scratch copy outside the repository added the real Copernicus GLO-30 tiles from `contracts/fixtures/web/terrain/` (46 tiles, `data_status: real`); `uv run contracts/tools/validate.py <copy>`: OK. Publishing the tiles in the bundle is proposed as DT-09.
+- Served on loopback as in the IN-01 procedure (`127.0.0.1:5190`, CORS limited to `http://127.0.0.1:5189`); web on `127.0.0.1:5189` with `VITE_USE_MOCKS=false`, Node v26.13.1, vite 8.3.8. The page must be opened at `127.0.0.1`, not `localhost`, or the CORS rule blocks the data.
+- All 7 steps played in order with autoplay paused: no MOCK text on any step; relief shown on every step ("Relief ×1.6 · Copernicus DEM GLO-30"); step 3 crossfaded the Sentinel-2 smoke scene (2026-08-30) into the real HV after layer; steps 5–7 showed the real index legend (−1.28 to 3.81); step 6 showed the real highlight mask inside the perimeter.
+- Requests to the data server: 19 from the page (4 JSON manifests, 12 layer PNGs), all 200; the server log recorded 92 terrain-tile requests, all 200, and no 4xx/5xx. Basemap tiles came from OpenStreetMap.
+- The analysis view's rainfall panel showed the real NASA GPM IMERG Late V07C daily series with no MOCK notice.
+- Screenshots of steps 1–3 and 5–7 are in the gitignored `data/processed/in03-evidence/`.
+- Not checked: the inspector API behind "Explore the evidence" (IN-02) and deployment (DL-01).
+
+### Story figure trace
+
+| Step | Statement | Source → value |
+| --- | --- | --- |
+| orbit | NASA–ISRO mission, about 747 km up | [NASA NISAR mission overview](https://science.nasa.gov/mission/nisar/mission-overview/): "Orbit Altitude 747 km", partnership NASA and ISRO |
+| orbit | 16 August and 3 October 2026, same descending track | `case.json` `epochs.t1/t2.datetime` 2026-08-16 / 2026-10-03, `acquisition.direction` descending, track 42 |
+| context | Started on 26 August, Big Sur | `case.json` `fire_start` 2026-08-26 (CAL FIRE source), `location` Big Sur, Monterey County |
+| context | Perimeter mapped from infrared imagery on 14 September | `perimeter.geojson` `MapMethod` "IR Image Interpretation", `PolygonDateTime` 2026-09-14T20:44Z |
+| context | About 12,100 ha | `stats.json` `inside_perimeter.area_ha` 12,134.98 (WFIGS 29,992.9 acres = 12,137.7 ha) |
+| context | Steep terrain | DT-05 [terrain](methods/terrain.md): median slope 20.4°, 14.4 % of the crop > 30° |
+| smoke | Sentinel-2 smoke plume during the fire | [optical](methods/optical.md): `S2A_10SFE_20260830_0_L2A`, large smoke plume over the Plaskett area |
+| smoke | L-band wavelength about 24 cm | NASA NISAR mission overview: "L-band: 24 cm" |
+| change-index | Higher inside, distributions overlap | `stats.json` median 0.50 inside vs −0.22 outside; inside p25 −0.29 < outside p95 1.60 |
+| highlight | About 1,050 ha, almost all inside, 9 % of the perimeter | `stats.json` `highlight.area_ha` 1,049.66, `inside_ha` 1,049.2; 1,049.2 / 12,134.98 = 8.6 % |
+
+Removed: "many patches follow slopes and drainages". Across the ten `change_inside_perimeter` zones in `review_zones.geojson`, the share of pixels above 30° (`steep_slope` fraction) ranges from 1 % to 25 % and averages 7.8 % by area, below the 14.4 % crop share; drainages are not measured. `docs/methods/highlight.md` (XP-01) still contains the same sentence; its owner should review it. A rain sentence was not added: the story test deliberately excludes rain and soil-moisture claims, and the rainfall series is shown in its own panel.
+
+## IN-02 real inspector and transect — 2026-11-15
+
+**Checked:** the API serves verified values from the Plaskett rasters, the inspector and transect endpoints answer through the Vite same-origin proxy with `data_status: real`, and the numerical responses match independent rasterio reads. This is integration evidence, not scientific validation.
+
+- Artifacts: GitHub releases `data-web-plaskett-f66c4d9` (`firetrace-web-plaskett.zip`, SHA-256 `8f0084f1…0ed578`) and `data-interim-plaskett-f66c4d9` (`firetrace-interim-plaskett.zip`, SHA-256 `5b132f2c…f0f893`), both reporting pipeline commit `f66c4d9`. Downloaded with `gh release download` into the gitignored `data/`; both `SHA256SUMS.txt` compared locally with `Get-FileHash`, and extraction kept `data/processed/web/` plus `data/interim/{sar,change,perimeter,terrain}/`.
+- `uv run contracts/tools/validate.py data/processed/web`: exit 0 (`OK: contract satisfied`).
+- `FIRETRACE_DATA_ROOT=data uv run pytest api/tests/test_real_data.py -q`: 5 passed, 1 skipped in 5.92 s. The skip is the masked-pixel case: this bundle reports 100% valid coverage, so no masked pixel exists; `api/tests/test_raster.py` covers that path with a synthetic mask. The passing checks compare both point cases (inside/outside the operational perimeter) and out-of-AOI nulls against independent rasterio reads, plus the percentile, terrain, projected pixel centre and a horizontal transect (samples, null inheritance, length, crossings). The test also verifies `export.json.inputs` against the interim manifest checksums and that all manifests share one 10 m EPSG:32610 grid.
+- Local stack: `uv run uvicorn api.main:app --host 127.0.0.1 --port 8000`, `python -m http.server 8001 … --directory data/processed/web` and `npm run preview -- --host 127.0.0.1 --port 4173`. Through the Vite proxy, `GET /api/health` returned `{"status":"ok","data_status":"real"}`, `GET /data/case.json` returned case `plaskett-2026` with `contract_version` 1.2.0 and method `abs-logratio-hhhv-v1`, and `GET /api/inspect/point?lon=-121.3984559&lat=35.9254517` returned row 712/col 848, `valid=true`, `perimeter_relation=inside`, HH −8.4516/−11.8078 dB (delta −3.3561), HV and change index/percentile from the same pixel, and terrain elevation 555.857 m. Values are truncated here for readability; the test compares them with an absolute tolerance of 1e-6 dB or the reported field precision.
+- `POST /api/inspect/profile` through the proxy sampled a 1,624.245 m horizontal line at 100 m spacing: 18 samples, `truncated=false`, `data_status=real`; this line did not cross the perimeter, and the crossing logic is covered by the passing real-data test and the synthetic API tests.
+- Failure paths: `lon=abc` returned 422; an out-of-AOI point returned 200 with `pixel=null`, `valid=false`, `perimeter_relation=unknown` and null values; a second API started against an empty data root returned 503 for the same point. The inspector maps 422, 503 and network failure to distinct messages without showing the server `detail` or local paths (component tests).
+- `VITE_USE_MOCKS=false VITE_DATA_BASE_URL=/data/ VITE_API_BASE_URL= npx vite build --outDir dist-real` produced no `browser-*.js` MSW chunk, so the real-mode bundle does not import the service worker. The default quality build still includes the mock worker for fallback.
+- Limits: there is no click-through browser screenshot of the inspector and transect in this record; a human should open the proxy recipe with `VITE_USE_MOCKS=false` and confirm the panels show the same values without the MOCK notice. The 2026-09-14 perimeter predates the after observation and is not pixel-level ground truth. Terrain is context, not an explanation of the radar change. No contract, threshold or caveat semantics changed.
 
 ## Human delivery checklist
 

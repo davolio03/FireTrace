@@ -8,7 +8,12 @@ import { ComparisonOverlay } from './ComparisonOverlay'
 import { comparisonLabel, isSupportedComparison } from './comparison'
 import { LayerControls } from './LayerControls'
 import { type Layer, visibleMapLayers } from './layers'
-import { addMapLayers, syncMapLayers } from './mapLayers'
+import {
+  addMapLayers,
+  addZoneHighlight,
+  setZoneHighlight,
+  syncMapLayers,
+} from './mapLayers'
 import { createBaseMapStyle, layerBounds } from './mapStyle'
 import { ProfileOverlay } from './ProfileOverlay'
 import type { LonLat } from '../../state/mapStore'
@@ -140,6 +145,15 @@ export function CaseMap({
         )
       }
       addMapLayers(map, displayed, dataBaseUrl, showError)
+      const zoneLayer = layers.find((layer) => layer.id === 'review_zones')
+      if (zoneLayer?.url) {
+        addZoneHighlight(
+          map,
+          `${dataBaseUrl.replace(/\/+$/, '')}/${zoneLayer.url}`,
+        )
+      }
+      const current = mapStore.getState().selection
+      setZoneHighlight(map, current.type === 'zone' ? current.zoneId : null)
       syncLayers()
     })
     return () => {
@@ -176,6 +190,14 @@ export function CaseMap({
     if (first) return
     setSweep((value) => value + 1)
   }, [primary, tool, selection.type, compare, visibleSignature])
+
+  useEffect(() => {
+    if (!primary) return
+    setZoneHighlight(
+      primary,
+      selection.type === 'zone' ? selection.zoneId : null,
+    )
+  }, [primary, selection])
 
   useEffect(() => {
     if (!primary || selection.type !== 'point') return

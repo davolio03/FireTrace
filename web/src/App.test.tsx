@@ -137,6 +137,12 @@ describe('application scaffold', () => {
     fireEvent.keyDown(document.body, { key: '3' })
     expect(
       screen
+        .getByRole('button', { name: 'Zones' })
+        .getAttribute('aria-pressed'),
+    ).toBe('true')
+    fireEvent.keyDown(document.body, { key: '4' })
+    expect(
+      screen
         .getByRole('button', { name: 'Transect' })
         .getAttribute('aria-pressed'),
     ).toBe('true')
