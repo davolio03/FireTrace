@@ -4,7 +4,7 @@ import mapWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url'
 import { mapStore, useMapStore } from '../../state/mapStore'
 import { ComparisonControls, type ComparisonDates } from './ComparisonControls'
 import { ComparisonOverlay } from './ComparisonOverlay'
-import { isSupportedComparison } from './comparison'
+import { comparisonLabel, isSupportedComparison } from './comparison'
 import { LayerControls } from './LayerControls'
 import { type Layer, visibleMapLayers } from './layers'
 import { addMapLayers, syncMapLayers } from './mapLayers'
@@ -143,15 +143,13 @@ export function CaseMap({
                 aria-hidden="true"
                 className="pointer-events-none absolute left-2 top-2 rounded bg-white px-2 py-1 text-xs text-slate-900"
               >
-                Before — {dates.before} —{' '}
-                {compare.left.endsWith('_hv') ? 'HV' : 'HH'}
+                {comparisonLabel(compare.left, layers, dates)}
               </span>
               <span
                 aria-hidden="true"
                 className="pointer-events-none absolute right-2 top-2 rounded bg-white px-2 py-1 text-xs text-slate-900"
               >
-                After — {dates.after} —{' '}
-                {compare.right.endsWith('_hv') ? 'HV' : 'HH'}
+                {comparisonLabel(compare.right, layers, dates)}
               </span>
             </>
           )}

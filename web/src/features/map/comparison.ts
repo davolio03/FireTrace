@@ -16,10 +16,15 @@ export function isSupportedComparison(
   layers: Layer[],
 ) {
   if (!compare) return false
-  const pairMatches = (['HH', 'HV'] as const).some((polarization) => {
-    const pair = comparisonPair(polarization)
-    return compare.left === pair.left && compare.right === pair.right
-  })
+  const pairMatches =
+    (['HH', 'HV'] as const).some((polarization) => {
+      const pair = comparisonPair(polarization)
+      return compare.left === pair.left && compare.right === pair.right
+    }) ||
+    (['optical_during', 'optical_after'].includes(compare.left) &&
+      ['sar_t1_hh', 'sar_t2_hh', 'sar_t1_hv', 'sar_t2_hv'].includes(
+        compare.right,
+      ))
   const available = (id: LayerId) =>
     layers.some(
       (layer) =>
@@ -29,4 +34,16 @@ export function isSupportedComparison(
         layer.coordinates?.length === 4,
     )
   return pairMatches && available(compare.left) && available(compare.right)
+}
+
+export function comparisonLabel(
+  id: LayerId,
+  layers: Layer[],
+  dates: { before: string; after: string },
+) {
+  const layer = layers.find((item) => item.id === id)
+  if (id.startsWith('optical_'))
+    return `${layer?.title ?? 'Optical image'} — ${typeof layer?.acquired === 'string' ? layer.acquired : 'Date unavailable'}`
+  const date = id.startsWith('sar_t1_') ? dates.before : dates.after
+  return `${id.startsWith('sar_t1_') ? 'Before' : 'After'} — ${date} — ${id.endsWith('_hv') ? 'HV' : 'HH'}`
 }

@@ -39,14 +39,16 @@ describe('layer controls', () => {
     expect(mapStore.getState().visible).toEqual(['perimeter'])
   })
 
-  it('shows contract legends and units without exposing P1 or context layers', () => {
+  it('shows contract legends and units while hiding P1 layers', () => {
     render(<LayerControls layers={layers} />)
     expect(screen.getAllByText('dB').length).toBeGreaterThan(0)
     expect(
       screen.getByText('Official fire perimeter', { selector: 'span' }),
     ).toBeTruthy()
     expect(screen.queryByRole('checkbox', { name: /highlighted/i })).toBeNull()
-    expect(screen.queryByRole('checkbox', { name: /optical/i })).toBeNull()
+    expect(screen.getAllByRole('checkbox', { name: /optical/i })).toHaveLength(
+      2,
+    )
   })
 
   it('explains stacking order and disables opacity for hidden layers', () => {

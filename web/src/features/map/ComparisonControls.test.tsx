@@ -57,7 +57,10 @@ describe('before and after controls', () => {
     render(
       <ComparisonControls
         layers={layers.filter(
-          (layer) => layer.id !== 'sar_t2_hh' && layer.id !== 'sar_t2_hv',
+          (layer) =>
+            layer.id !== 'sar_t2_hh' &&
+            layer.id !== 'sar_t2_hv' &&
+            layer.group !== 'optical_context',
         )}
         dates={dates}
       />,

@@ -5,6 +5,7 @@ import { CaseMap } from './features/map/CaseMap'
 import { LocationMap } from './features/map/LocationMap'
 import { Inspector } from './features/inspector/Inspector'
 import { MetricsPanel } from './features/metrics/MetricsPanel'
+import { WeatherPanel } from './features/weather/WeatherPanel'
 import type { ComparisonDates } from './features/map/ComparisonControls'
 import { layersAreRenderable, type Layer } from './features/map/layers'
 
@@ -199,6 +200,7 @@ function AppContent() {
           </div>
           <Inspector caseData={caseData} />
           <MetricsPanel />
+          <WeatherPanel dates={dates} />
         </>
       )}
     </main>
