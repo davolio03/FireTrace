@@ -5,8 +5,10 @@ import {
   screen,
   waitFor,
 } from '@testing-library/react'
+import type { ReactNode } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import caseFixture from '../../contracts/fixtures/web/case.json'
+import storyJson from './story/story.json'
 import App from './App'
 
 vi.mock('./data/caseData', () => ({
@@ -20,11 +22,14 @@ vi.mock('./data/caseData', () => ({
 vi.mock('./features/map/CaseMap', () => ({
   CaseMap: ({
     dates = { before: '', after: '' },
+    overlay = null,
   }: {
     dates?: { before: string; after: string }
+    overlay?: ReactNode
   }) => (
     <div role="region" aria-label="Map of Big Sur">
       {dates.before} / {dates.after}
+      {overlay}
     </div>
   ),
 }))
@@ -58,6 +63,38 @@ describe('application scaffold', () => {
     expect(
       screen.getByRole('button', { name: /explore analysis/i }),
     ).toBeTruthy()
+  })
+
+  it('starts the guided story from the overview and leaves it with Esc', async () => {
+    render(<App />)
+    const watch = await screen.findByRole('button', {
+      name: /watch the story \(2 min\)/i,
+    })
+    fireEvent.click(watch)
+    const card = screen.getByRole('region', { name: /guided story/i })
+    expect(card.textContent).toContain(storyJson.steps[0].title)
+    expect(card.textContent).toContain('MOCK data')
+    expect(screen.queryByRole('button', { name: /play story/i })).toBeNull()
+    fireEvent.keyDown(document.body, { key: 'Escape' })
+    expect(screen.queryByRole('region', { name: /guided story/i })).toBeNull()
+    expect(
+      screen.getByRole('button', { name: /resume story · 1\/6/i }),
+    ).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: /back to overview/i }))
+  })
+
+  it('hides the story when it was written for another case', async () => {
+    const { loadCaseData } = await import('./data/caseData')
+    vi.mocked(loadCaseData).mockResolvedValueOnce({
+      case: { ...caseFixture, case_id: 'another-fire' },
+      stats: { data_status: 'mock' },
+      layers: { data_status: 'mock', layers: [] },
+    } as unknown as Awaited<ReturnType<typeof loadCaseData>>)
+    render(<App />)
+    expect(await screen.findByText(caseFixture.fire_start)).toBeTruthy()
+    expect(
+      screen.queryByRole('button', { name: /watch the story/i }),
+    ).toBeNull()
   })
 
   it('reports failure when the case manifest cannot be loaded', async () => {

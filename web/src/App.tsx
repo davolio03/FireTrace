@@ -1,5 +1,13 @@
-import { useEffect, useState } from 'react'
+import { type SyntheticEvent, useEffect, useState } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import storyJson from './story/story.json'
+import { parseStory } from './features/story/story'
+import { StoryPlayer } from './features/story/StoryPlayer'
+import { storyDurationMs } from './features/story/timing'
+import {
+  usePrefersReducedMotion,
+  useStoryPlayer,
+} from './features/story/useStoryPlayer'
 import { loadCaseData } from './data/caseData'
 import { CaseMap } from './features/map/CaseMap'
 import { LocationMap } from './features/map/LocationMap'
@@ -12,6 +20,11 @@ import type { ComparisonDates } from './features/map/ComparisonControls'
 import { layersAreRenderable, type Layer } from './features/map/layers'
 
 type CaseData = Awaited<ReturnType<typeof loadCaseData>>['case']
+
+const productionStory = parseStory(storyJson)
+const storyMinutes = productionStory
+  ? Math.max(1, Math.round(storyDurationMs(productionStory.steps) / 60_000))
+  : 0
 
 function isValidSource(
   value: unknown,
@@ -51,6 +64,21 @@ function AppContent() {
   const [caseData, setCaseData] = useState<CaseData | null>(null)
   const [view, setView] = useState<'overview' | 'analysis'>('overview')
   const [profileSample, setProfileSample] = useState<LonLat | null>(null)
+  const reducedMotion = usePrefersReducedMotion()
+  // Only play the story written for the loaded case.
+  const story =
+    productionStory && caseData?.case_id === productionStory.case_id
+      ? productionStory
+      : null
+  const player = useStoryPlayer(story, layers, reducedMotion)
+  const pauseOnInteraction = (event: SyntheticEvent) => {
+    if (
+      player.status === 'playing' &&
+      event.target instanceof Element &&
+      !event.target.closest('[data-story-card]')
+    )
+      player.pause()
+  }
 
   useEffect(() => {
     let active = true
@@ -177,29 +205,75 @@ function AppContent() {
                 )}
             </div>
           )}
-          <button
-            type="button"
-            onClick={() => setView('analysis')}
-            className="mt-6 rounded bg-slate-900 px-4 py-2 text-white focus-visible:outline-2 focus-visible:outline-offset-2"
-          >
-            Explore analysis
-          </button>
+          <div className="mt-6 flex flex-wrap gap-3">
+            {player.available && (
+              <button
+                type="button"
+                onClick={() => {
+                  setView('analysis')
+                  player.start(0)
+                }}
+                className="rounded bg-slate-900 px-4 py-2 text-white focus-visible:outline-2 focus-visible:outline-offset-2"
+              >
+                Watch the story ({storyMinutes} min)
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setView('analysis')}
+              className={
+                player.available
+                  ? 'rounded border px-4 py-2 focus-visible:outline-2 focus-visible:outline-offset-2'
+                  : 'rounded bg-slate-900 px-4 py-2 text-white focus-visible:outline-2 focus-visible:outline-offset-2'
+              }
+            >
+              Explore analysis
+            </button>
+          </div>
         </>
       ) : (
         <>
-          <button
-            type="button"
-            onClick={() => setView('overview')}
-            className="mt-4 rounded border px-4 py-2 focus-visible:outline-2 focus-visible:outline-offset-2"
+          <div className="mt-4 flex flex-wrap gap-3">
+            <button
+              type="button"
+              onClick={() => {
+                player.exit()
+                setView('overview')
+              }}
+              className="rounded border px-4 py-2 focus-visible:outline-2 focus-visible:outline-offset-2"
+            >
+              Back to overview
+            </button>
+            {player.available && !player.active && (
+              <button
+                type="button"
+                onClick={() => player.start(0)}
+                className="rounded border px-4 py-2 focus-visible:outline-2 focus-visible:outline-offset-2"
+              >
+                Play story
+              </button>
+            )}
+          </div>
+          <div
+            className="mt-6 overflow-hidden rounded-lg border border-slate-300"
+            onPointerDownCapture={pauseOnInteraction}
+            onWheelCapture={pauseOnInteraction}
+            onKeyDownCapture={pauseOnInteraction}
           >
-            Back to overview
-          </button>
-          <div className="mt-6 overflow-hidden rounded-lg border border-slate-300">
             <CaseMap
               layers={layers}
               dates={dates}
               dataBaseUrl={import.meta.env.VITE_DATA_BASE_URL || '/'}
               profileSample={profileSample}
+              overlay={
+                player.available ? (
+                  <StoryPlayer
+                    player={player}
+                    isMock={status === 'mock'}
+                    reducedMotion={reducedMotion}
+                  />
+                ) : null
+              }
             />
           </div>
           <Inspector caseData={caseData} />

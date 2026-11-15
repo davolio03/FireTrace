@@ -16,3 +16,13 @@
 body {
   margin: 0;
 }
+
+/* Guided story: time left on the current step. */
+@keyframes story-progress {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}

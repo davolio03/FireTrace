@@ -1,0 +1,119 @@
+{
+  "contract_version": "1.2.0",
+  "case_id": "plaskett-2026",
+  "title": "Plaskett Fire through the eyes of NISAR",
+  "steps": [
+    {
+      "id": "context",
+      "title": "A wildfire in Big Sur",
+      "panel": "none",
+      "body_md": "The **Plaskett Fire** started on 26 August 2026 in the Santa Lucia Mountains of Big Sur. Its official perimeter, mapped from infrared flights on 14 September, covers about 12,100 ha. NISAR imaged the area on 16 August and 3 October.",
+      "camera": {
+        "center": [-121.3865, 35.916],
+        "zoom": 10.5,
+        "duration_ms": 2500
+      },
+      "layers": {
+        "visible": ["hillshade", "perimeter"],
+        "opacity": {
+          "hillshade": 0.7
+        }
+      }
+    },
+    {
+      "id": "smoke",
+      "title": "Smoke hides the ground, radar does not",
+      "panel": "none",
+      "body_md": "During the fire, an optical Sentinel-2 image shows a **smoke plume** over the area. NISAR's L-band radar, with a wavelength of about 24 cm, passes through smoke and cloud. Right: the radar image after the fire.",
+      "camera": {
+        "center": [-121.3865, 35.916],
+        "zoom": 11,
+        "duration_ms": 2000
+      },
+      "layers": {
+        "visible": ["optical_during", "sar_t2_hv", "perimeter"]
+      },
+      "compare": {
+        "left": "optical_during",
+        "right": "sar_t2_hv",
+        "position": 0.9,
+        "animate_to": 0.3
+      }
+    },
+    {
+      "id": "before-after",
+      "title": "What the radar observed",
+      "panel": "none",
+      "body_md": "Same orbit and viewing geometry, before (16 August) and after (3 October). HV backscatter responds to vegetation volume, so it typically **drops** where foliage and branches were lost. This is the **observation**, not yet an interpretation.",
+      "camera": {
+        "center": [-121.3865, 35.916],
+        "zoom": 11.5,
+        "duration_ms": 2000
+      },
+      "layers": {
+        "visible": ["sar_t1_hv", "sar_t2_hv", "perimeter"]
+      },
+      "compare": {
+        "left": "sar_t1_hv",
+        "right": "sar_t2_hv",
+        "position": 0.5,
+        "animate_to": 0.15
+      }
+    },
+    {
+      "id": "change-index",
+      "title": "Measuring how much changed",
+      "panel": "none",
+      "body_md": "The change index combines how much HH and HV changed, up or down. It is higher inside the perimeter than outside, but the two distributions **overlap**. A high index means large radar change, *not* confirmed fire.",
+      "camera": {
+        "center": [-121.3865, 35.916],
+        "zoom": 11,
+        "duration_ms": 2000
+      },
+      "layers": {
+        "visible": ["change_index", "perimeter"],
+        "opacity": {
+          "change_index": 0.8
+        }
+      }
+    },
+    {
+      "id": "highlight",
+      "title": "Where radar and perimeter agree",
+      "panel": "none",
+      "body_md": "The strongest, smoothed changes cover about 1,050 ha, almost all inside the perimeter, yet only about 9 % of it: the radar does not flag the whole fire area. Many patches follow slopes and drainages, a reason for **caution**.",
+      "camera": {
+        "center": [-121.3865, 35.916],
+        "zoom": 11.5,
+        "duration_ms": 2000
+      },
+      "layers": {
+        "visible": ["change_index", "highlight_mask", "perimeter"],
+        "opacity": {
+          "change_index": 0.5
+        }
+      }
+    },
+    {
+      "id": "evidence",
+      "title": "Check the evidence yourself",
+      "panel": "inspector",
+      "body_md": "Inspect any pixel: dB values before and after, the HH and HV change, the method and its caveats. The perimeter is an operational outline, not ground truth; moisture, terrain and geometry also change the signal. **Radar change is not confirmed fire.**",
+      "camera": {
+        "center": [-121.380849, 35.965833],
+        "zoom": 12.5,
+        "duration_ms": 2500
+      },
+      "layers": {
+        "visible": ["change_index", "perimeter"],
+        "opacity": {
+          "change_index": 0.8
+        }
+      },
+      "focus": {
+        "type": "point",
+        "point": [-121.380849, 35.965833]
+      }
+    }
+  ]
+}
